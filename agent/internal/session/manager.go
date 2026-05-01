@@ -27,6 +27,7 @@ type CreateSessionRequest struct {
 	ProviderID     string `json:"provider_id"`
 	Provider       string `json:"provider,omitempty"`
 	ProjectID      string `json:"project_id"`
+	Purpose        string `json:"purpose,omitempty"`
 	Workdir        string `json:"workdir"`
 	Model          string `json:"model"`
 	Effort         string `json:"effort"`
@@ -66,6 +67,7 @@ func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (
 
 	providerReq := provider.CreateSessionRequest{
 		ProjectID:      req.ProjectID,
+		Purpose:        req.Purpose,
 		Workdir:        req.Workdir,
 		Model:          req.Model,
 		Effort:         req.Effort,
@@ -189,8 +191,13 @@ func (m *Manager) ListSessions(ctx context.Context, projectID, providerName, wor
 		seen[ps.ID] = true
 		if db, ok := dbMap[ps.ID]; ok {
 			// Provider thread has DB metadata — merge model etc.
-			ps.Model = db.Model
+			ps.Model = firstNonEmpty(db.Model, ps.Model)
 			ps.ProjectID = db.ProjectID
+			ps.Purpose = db.Purpose
+			ps.Workdir = firstNonEmpty(ps.Workdir, db.Workdir)
+			ps.ApprovalPolicy = firstNonEmpty(ps.ApprovalPolicy, db.ApprovalPolicy)
+			ps.SandboxMode = firstNonEmpty(ps.SandboxMode, db.SandboxMode)
+			ps.Config = db.Config
 		} else {
 			ps.ProjectID = projectID
 		}
@@ -206,6 +213,15 @@ func (m *Manager) ListSessions(ctx context.Context, projectID, providerName, wor
 	}
 
 	return result, nil
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // GetEvents reads thread events from provider-backed history. Agent does not
@@ -363,6 +379,7 @@ func (m *Manager) ForkSession(ctx context.Context, sessionID string) (*provider.
 		ProviderID:     sess.ProviderID,
 		ThreadID:       newThreadID,
 		ProjectID:      sess.ProjectID,
+		Purpose:        sess.Purpose,
 		Workdir:        sess.Workdir,
 		Status:         string(provider.SessionStatusRunning),
 		RunnerType:     sess.RunnerType,

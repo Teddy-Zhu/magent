@@ -200,6 +200,18 @@ abstract class AppLocalizations {
   /// **'No data'**
   String get noData;
 
+  /// No description provided for @operationFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Operation failed'**
+  String get operationFailed;
+
+  /// No description provided for @agentConnectionFailure.
+  ///
+  /// In en, this message translates to:
+  /// **'Connection failed. Check the agent.'**
+  String get agentConnectionFailure;
+
   /// No description provided for @navAgents.
   ///
   /// In en, this message translates to:
@@ -301,6 +313,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Connection failed'**
   String get agentsConnectFailed;
+
+  /// No description provided for @agentsDefaultName.
+  ///
+  /// In en, this message translates to:
+  /// **'My Agent'**
+  String get agentsDefaultName;
 
   /// No description provided for @projectsTitle.
   ///
@@ -446,6 +464,12 @@ abstract class AppLocalizations {
   /// **'Failed to create session'**
   String get sessionsCreateFailed;
 
+  /// No description provided for @sessionsLoadConfigFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load config'**
+  String get sessionsLoadConfigFailed;
+
   /// No description provided for @sessionsQuickQuestion.
   ///
   /// In en, this message translates to:
@@ -566,6 +590,12 @@ abstract class AppLocalizations {
   /// **'Git Status'**
   String get gitTitle;
 
+  /// No description provided for @gitChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'Changes'**
+  String get gitChanges;
+
   /// No description provided for @gitCommit.
   ///
   /// In en, this message translates to:
@@ -619,6 +649,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'No branches found'**
   String get gitNoBranches;
+
+  /// No description provided for @gitCurrentBranch.
+  ///
+  /// In en, this message translates to:
+  /// **'current'**
+  String get gitCurrentBranch;
 
   /// No description provided for @gitCommitMsg.
   ///
@@ -722,6 +758,48 @@ abstract class AppLocalizations {
   /// **'Show the last conversation when entering a session'**
   String get settingsSessionOpenAtBottomSub;
 
+  /// No description provided for @settingsShowAiCommitSessions.
+  ///
+  /// In en, this message translates to:
+  /// **'Show AI commit sessions'**
+  String get settingsShowAiCommitSessions;
+
+  /// No description provided for @settingsShowAiCommitSessionsSub.
+  ///
+  /// In en, this message translates to:
+  /// **'Include sessions created only for commit message generation'**
+  String get settingsShowAiCommitSessionsSub;
+
+  /// No description provided for @settingsAppearance.
+  ///
+  /// In en, this message translates to:
+  /// **'Appearance'**
+  String get settingsAppearance;
+
+  /// No description provided for @settingsThemeMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Theme mode'**
+  String get settingsThemeMode;
+
+  /// No description provided for @themeSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'Follow system'**
+  String get themeSystem;
+
+  /// No description provided for @themeLight.
+  ///
+  /// In en, this message translates to:
+  /// **'Light'**
+  String get themeLight;
+
+  /// No description provided for @themeDark.
+  ///
+  /// In en, this message translates to:
+  /// **'Dark'**
+  String get themeDark;
+
   /// No description provided for @settingsGit.
   ///
   /// In en, this message translates to:
@@ -799,6 +877,1044 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Version'**
   String get settingsVersion;
+
+  /// No description provided for @fieldRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Required'**
+  String get fieldRequired;
+
+  /// No description provided for @select.
+  ///
+  /// In en, this message translates to:
+  /// **'Select'**
+  String get select;
+
+  /// No description provided for @selectedCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} selected'**
+  String selectedCount(int count);
+
+  /// No description provided for @processing.
+  ///
+  /// In en, this message translates to:
+  /// **'Processing...'**
+  String get processing;
+
+  /// No description provided for @noAgentConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'No agent connected'**
+  String get noAgentConnected;
+
+  /// No description provided for @untitledProject.
+  ///
+  /// In en, this message translates to:
+  /// **'Untitled Project'**
+  String get untitledProject;
+
+  /// No description provided for @agentSelected.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent selected'**
+  String get agentSelected;
+
+  /// No description provided for @agentUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Agent updated'**
+  String get agentUpdated;
+
+  /// No description provided for @agentConnected.
+  ///
+  /// In en, this message translates to:
+  /// **'Connected successfully'**
+  String get agentConnected;
+
+  /// No description provided for @agentRemoved.
+  ///
+  /// In en, this message translates to:
+  /// **'\"{name}\" removed'**
+  String agentRemoved(Object name);
+
+  /// No description provided for @agentsRemove.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove Agent'**
+  String get agentsRemove;
+
+  /// No description provided for @agentsRemoveConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove \"{name}\"? This will disconnect from this agent.'**
+  String agentsRemoveConfirm(Object name);
+
+  /// No description provided for @agentsRemoveAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Remove'**
+  String get agentsRemoveAction;
+
+  /// No description provided for @agentsEmptySub.
+  ///
+  /// In en, this message translates to:
+  /// **'Connect a local or remote agent to manage projects and sessions.'**
+  String get agentsEmptySub;
+
+  /// No description provided for @agentsSaveVerify.
+  ///
+  /// In en, this message translates to:
+  /// **'Save & Verify'**
+  String get agentsSaveVerify;
+
+  /// No description provided for @projectsEmptySub.
+  ///
+  /// In en, this message translates to:
+  /// **'Add a workspace directory to create sessions, review changes, and browse files.'**
+  String get projectsEmptySub;
+
+  /// No description provided for @statusRunning.
+  ///
+  /// In en, this message translates to:
+  /// **'Running'**
+  String get statusRunning;
+
+  /// No description provided for @statusCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Completed'**
+  String get statusCompleted;
+
+  /// No description provided for @statusStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Stopped'**
+  String get statusStopped;
+
+  /// No description provided for @statusFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed'**
+  String get statusFailed;
+
+  /// No description provided for @statusLost.
+  ///
+  /// In en, this message translates to:
+  /// **'Lost'**
+  String get statusLost;
+
+  /// No description provided for @statusUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown'**
+  String get statusUnknown;
+
+  /// No description provided for @sessionsEmptyYet.
+  ///
+  /// In en, this message translates to:
+  /// **'No sessions yet'**
+  String get sessionsEmptyYet;
+
+  /// No description provided for @sessionsEmptySub.
+  ///
+  /// In en, this message translates to:
+  /// **'Start a new AI coding session'**
+  String get sessionsEmptySub;
+
+  /// No description provided for @sessionPurposeAiCommit.
+  ///
+  /// In en, this message translates to:
+  /// **'AI commit'**
+  String get sessionPurposeAiCommit;
+
+  /// No description provided for @sessionsLoadMore.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} older sessions hidden. Tap to load.'**
+  String sessionsLoadMore(int count);
+
+  /// No description provided for @timeDaysAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{count}d ago'**
+  String timeDaysAgo(int count);
+
+  /// No description provided for @timeHoursAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{count}h ago'**
+  String timeHoursAgo(int count);
+
+  /// No description provided for @timeMinutesAgo.
+  ///
+  /// In en, this message translates to:
+  /// **'{count}m ago'**
+  String timeMinutesAgo(int count);
+
+  /// No description provided for @timeNow.
+  ///
+  /// In en, this message translates to:
+  /// **'now'**
+  String get timeNow;
+
+  /// No description provided for @chatSendFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Send failed'**
+  String get chatSendFailed;
+
+  /// No description provided for @chatStartFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Start failed'**
+  String get chatStartFailed;
+
+  /// No description provided for @chatInterruptFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Interrupt failed'**
+  String get chatInterruptFailed;
+
+  /// No description provided for @chatStopFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop failed'**
+  String get chatStopFailed;
+
+  /// No description provided for @chatApprovalFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Approval failed'**
+  String get chatApprovalFailed;
+
+  /// No description provided for @chatLoadSkillsFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load skills'**
+  String get chatLoadSkillsFailed;
+
+  /// No description provided for @chatRunningTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Currently processing'**
+  String get chatRunningTitle;
+
+  /// No description provided for @chatRunningSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose how to handle this new message'**
+  String get chatRunningSubtitle;
+
+  /// No description provided for @chatQueueMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Add to queue'**
+  String get chatQueueMessage;
+
+  /// No description provided for @chatQueueMessageSub.
+  ///
+  /// In en, this message translates to:
+  /// **'Send automatically after the current reply finishes.'**
+  String get chatQueueMessageSub;
+
+  /// No description provided for @chatInterruptAndSend.
+  ///
+  /// In en, this message translates to:
+  /// **'Interrupt and send'**
+  String get chatInterruptAndSend;
+
+  /// No description provided for @chatInterruptAndSendSub.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop the current reply, then process this message immediately.'**
+  String get chatInterruptAndSendSub;
+
+  /// No description provided for @chatSessionLostTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Session unavailable'**
+  String get chatSessionLostTitle;
+
+  /// No description provided for @chatSessionLostContent.
+  ///
+  /// In en, this message translates to:
+  /// **'This session no longer exists on the server. It may have been removed after the server restarted. Create a new session to continue.'**
+  String get chatSessionLostContent;
+
+  /// No description provided for @chatInterruptSent.
+  ///
+  /// In en, this message translates to:
+  /// **'Interrupt request sent'**
+  String get chatInterruptSent;
+
+  /// No description provided for @chatStopSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop session'**
+  String get chatStopSession;
+
+  /// No description provided for @chatStopConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Stop this session?'**
+  String get chatStopConfirm;
+
+  /// No description provided for @chatSessionStopped.
+  ///
+  /// In en, this message translates to:
+  /// **'Session stopped'**
+  String get chatSessionStopped;
+
+  /// No description provided for @chatNoSkills.
+  ///
+  /// In en, this message translates to:
+  /// **'No skills available'**
+  String get chatNoSkills;
+
+  /// No description provided for @chatMissingProject.
+  ///
+  /// In en, this message translates to:
+  /// **'Current session is missing project information'**
+  String get chatMissingProject;
+
+  /// No description provided for @chatRefresh.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh'**
+  String get chatRefresh;
+
+  /// No description provided for @chatCreateNewSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Create new session'**
+  String get chatCreateNewSession;
+
+  /// No description provided for @chatSessionEnded.
+  ///
+  /// In en, this message translates to:
+  /// **'Session ended'**
+  String get chatSessionEnded;
+
+  /// No description provided for @chatNoMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'No messages yet'**
+  String get chatNoMessages;
+
+  /// No description provided for @chatSessionNotStarted.
+  ///
+  /// In en, this message translates to:
+  /// **'Session not started'**
+  String get chatSessionNotStarted;
+
+  /// No description provided for @chatStarting.
+  ///
+  /// In en, this message translates to:
+  /// **'Starting...'**
+  String get chatStarting;
+
+  /// No description provided for @chatStartSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Start session'**
+  String get chatStartSession;
+
+  /// No description provided for @chatNewSession.
+  ///
+  /// In en, this message translates to:
+  /// **'New session'**
+  String get chatNewSession;
+
+  /// No description provided for @chatPlan.
+  ///
+  /// In en, this message translates to:
+  /// **'Plan'**
+  String get chatPlan;
+
+  /// No description provided for @chatReasoningSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Reasoning summary'**
+  String get chatReasoningSummary;
+
+  /// No description provided for @chatDiffSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Change summary'**
+  String get chatDiffSummary;
+
+  /// No description provided for @chatCommandOutput.
+  ///
+  /// In en, this message translates to:
+  /// **'Command output'**
+  String get chatCommandOutput;
+
+  /// No description provided for @chatFileChangeOutput.
+  ///
+  /// In en, this message translates to:
+  /// **'File change output'**
+  String get chatFileChangeOutput;
+
+  /// No description provided for @chatCommand.
+  ///
+  /// In en, this message translates to:
+  /// **'Command'**
+  String get chatCommand;
+
+  /// No description provided for @chatFileChange.
+  ///
+  /// In en, this message translates to:
+  /// **'File change'**
+  String get chatFileChange;
+
+  /// No description provided for @chatReadFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Read file'**
+  String get chatReadFile;
+
+  /// No description provided for @chatTurnStarted.
+  ///
+  /// In en, this message translates to:
+  /// **'Started processing...'**
+  String get chatTurnStarted;
+
+  /// No description provided for @chatTurnCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Processing completed'**
+  String get chatTurnCompleted;
+
+  /// No description provided for @chatTurnFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Processing failed'**
+  String get chatTurnFailed;
+
+  /// No description provided for @chatApprovalResolved.
+  ///
+  /// In en, this message translates to:
+  /// **'Approval handled'**
+  String get chatApprovalResolved;
+
+  /// No description provided for @chatExited.
+  ///
+  /// In en, this message translates to:
+  /// **'Session exited (code: {code})'**
+  String chatExited(Object code);
+
+  /// No description provided for @chatPlanUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Plan updated'**
+  String get chatPlanUpdated;
+
+  /// No description provided for @chatReasoningUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'Reasoning summary updated'**
+  String get chatReasoningUpdated;
+
+  /// No description provided for @chatFileUpdated.
+  ///
+  /// In en, this message translates to:
+  /// **'File updated'**
+  String get chatFileUpdated;
+
+  /// No description provided for @chatFileCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} files'**
+  String chatFileCount(int count);
+
+  /// No description provided for @chatRunningQueued.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating reply, {count} messages queued'**
+  String chatRunningQueued(int count);
+
+  /// No description provided for @chatRunningHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating reply. Send again to queue or interrupt.'**
+  String get chatRunningHint;
+
+  /// No description provided for @chatQueuedInputs.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} messages queued'**
+  String chatQueuedInputs(int count);
+
+  /// No description provided for @chatTemplatesTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'History and templates'**
+  String get chatTemplatesTooltip;
+
+  /// No description provided for @chatSkillsTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Use skill'**
+  String get chatSkillsTooltip;
+
+  /// No description provided for @chatFilesTooltip.
+  ///
+  /// In en, this message translates to:
+  /// **'Reference workspace file'**
+  String get chatFilesTooltip;
+
+  /// No description provided for @chatChooseSkill.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose skill'**
+  String get chatChooseSkill;
+
+  /// No description provided for @chatChooseWorkspaceFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose workspace file'**
+  String get chatChooseWorkspaceFile;
+
+  /// No description provided for @chatCollapsedEvents.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} older messages hidden'**
+  String chatCollapsedEvents(int count);
+
+  /// No description provided for @expand.
+  ///
+  /// In en, this message translates to:
+  /// **'Expand'**
+  String get expand;
+
+  /// No description provided for @collapse.
+  ///
+  /// In en, this message translates to:
+  /// **'Collapse'**
+  String get collapse;
+
+  /// No description provided for @approvalRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Approval required'**
+  String get approvalRequired;
+
+  /// No description provided for @approvalUnknownAction.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown operation'**
+  String get approvalUnknownAction;
+
+  /// No description provided for @approvalAllowSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Allow for session'**
+  String get approvalAllowSession;
+
+  /// No description provided for @templatesSaveAs.
+  ///
+  /// In en, this message translates to:
+  /// **'Save as template'**
+  String get templatesSaveAs;
+
+  /// No description provided for @templatesNameHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Template name'**
+  String get templatesNameHint;
+
+  /// No description provided for @templatesRecent.
+  ///
+  /// In en, this message translates to:
+  /// **'Recent messages'**
+  String get templatesRecent;
+
+  /// No description provided for @templatesSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'Saved templates'**
+  String get templatesSaved;
+
+  /// No description provided for @templatesNoRecent.
+  ///
+  /// In en, this message translates to:
+  /// **'No recent messages'**
+  String get templatesNoRecent;
+
+  /// No description provided for @templatesNoSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'No saved templates'**
+  String get templatesNoSaved;
+
+  /// No description provided for @templatesDelete.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete template'**
+  String get templatesDelete;
+
+  /// No description provided for @providersTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Providers'**
+  String get providersTitle;
+
+  /// No description provided for @providersEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No providers found'**
+  String get providersEmpty;
+
+  /// No description provided for @providersAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Available'**
+  String get providersAvailable;
+
+  /// No description provided for @providersUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Unavailable'**
+  String get providersUnavailable;
+
+  /// No description provided for @providersNotAvailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Not available'**
+  String get providersNotAvailable;
+
+  /// No description provided for @providersBinary.
+  ///
+  /// In en, this message translates to:
+  /// **'Binary'**
+  String get providersBinary;
+
+  /// No description provided for @providersMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Mode'**
+  String get providersMode;
+
+  /// No description provided for @providersCapabilities.
+  ///
+  /// In en, this message translates to:
+  /// **'Capabilities'**
+  String get providersCapabilities;
+
+  /// No description provided for @providersUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Unknown'**
+  String get providersUnknown;
+
+  /// No description provided for @capabilityResume.
+  ///
+  /// In en, this message translates to:
+  /// **'Resume'**
+  String get capabilityResume;
+
+  /// No description provided for @capabilityFork.
+  ///
+  /// In en, this message translates to:
+  /// **'Fork'**
+  String get capabilityFork;
+
+  /// No description provided for @capabilitySteer.
+  ///
+  /// In en, this message translates to:
+  /// **'Steer'**
+  String get capabilitySteer;
+
+  /// No description provided for @capabilityInterrupt.
+  ///
+  /// In en, this message translates to:
+  /// **'Interrupt'**
+  String get capabilityInterrupt;
+
+  /// No description provided for @capabilityCompact.
+  ///
+  /// In en, this message translates to:
+  /// **'Compact'**
+  String get capabilityCompact;
+
+  /// No description provided for @capabilityRollback.
+  ///
+  /// In en, this message translates to:
+  /// **'Rollback'**
+  String get capabilityRollback;
+
+  /// No description provided for @capabilityApproval.
+  ///
+  /// In en, this message translates to:
+  /// **'Approval'**
+  String get capabilityApproval;
+
+  /// No description provided for @capabilityFileSystem.
+  ///
+  /// In en, this message translates to:
+  /// **'File System'**
+  String get capabilityFileSystem;
+
+  /// No description provided for @capabilityMcp.
+  ///
+  /// In en, this message translates to:
+  /// **'MCP'**
+  String get capabilityMcp;
+
+  /// No description provided for @capabilityPty.
+  ///
+  /// In en, this message translates to:
+  /// **'PTY'**
+  String get capabilityPty;
+
+  /// No description provided for @capabilityStreaming.
+  ///
+  /// In en, this message translates to:
+  /// **'Streaming'**
+  String get capabilityStreaming;
+
+  /// No description provided for @capabilityStructuredOutput.
+  ///
+  /// In en, this message translates to:
+  /// **'Structured Output'**
+  String get capabilityStructuredOutput;
+
+  /// No description provided for @cacheClear.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear'**
+  String get cacheClear;
+
+  /// No description provided for @cacheClearAll.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear All'**
+  String get cacheClearAll;
+
+  /// No description provided for @cacheClearAllCaches.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear All Caches'**
+  String get cacheClearAllCaches;
+
+  /// No description provided for @cacheClearAllDisplayCaches.
+  ///
+  /// In en, this message translates to:
+  /// **'Clear All Display Caches'**
+  String get cacheClearAllDisplayCaches;
+
+  /// No description provided for @cacheClearConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'This removes local display caches only. Provider history, Git state, and files remain the source of truth.'**
+  String get cacheClearConfirm;
+
+  /// No description provided for @cacheGitDisplay.
+  ///
+  /// In en, this message translates to:
+  /// **'Git Display Cache'**
+  String get cacheGitDisplay;
+
+  /// No description provided for @cacheFileDisplay.
+  ///
+  /// In en, this message translates to:
+  /// **'File Display Cache'**
+  String get cacheFileDisplay;
+
+  /// No description provided for @cacheSessionDisplay.
+  ///
+  /// In en, this message translates to:
+  /// **'Session Display Cache'**
+  String get cacheSessionDisplay;
+
+  /// No description provided for @cacheCleared.
+  ///
+  /// In en, this message translates to:
+  /// **'{name} cache cleared'**
+  String cacheCleared(Object name);
+
+  /// No description provided for @cacheEntries.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} entries'**
+  String cacheEntries(int count);
+
+  /// No description provided for @gitStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get gitStatus;
+
+  /// No description provided for @gitLog.
+  ///
+  /// In en, this message translates to:
+  /// **'Log'**
+  String get gitLog;
+
+  /// No description provided for @gitPull.
+  ///
+  /// In en, this message translates to:
+  /// **'Pull'**
+  String get gitPull;
+
+  /// No description provided for @gitRoot.
+  ///
+  /// In en, this message translates to:
+  /// **'Root'**
+  String get gitRoot;
+
+  /// No description provided for @gitPullFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Pull failed'**
+  String get gitPullFailed;
+
+  /// No description provided for @gitPullSuccessful.
+  ///
+  /// In en, this message translates to:
+  /// **'Pull successful'**
+  String get gitPullSuccessful;
+
+  /// No description provided for @gitPushSuccessful.
+  ///
+  /// In en, this message translates to:
+  /// **'Push successful'**
+  String get gitPushSuccessful;
+
+  /// No description provided for @gitStageFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Stage failed'**
+  String get gitStageFailed;
+
+  /// No description provided for @gitUnstageFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Unstage failed'**
+  String get gitUnstageFailed;
+
+  /// No description provided for @gitDiscardFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard failed'**
+  String get gitDiscardFailed;
+
+  /// No description provided for @gitDiscardChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard changes'**
+  String get gitDiscardChanges;
+
+  /// No description provided for @gitDiscardChangesConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard changes in {count} files? This cannot be undone.'**
+  String gitDiscardChangesConfirm(int count);
+
+  /// No description provided for @gitForcePush.
+  ///
+  /// In en, this message translates to:
+  /// **'Force Push'**
+  String get gitForcePush;
+
+  /// No description provided for @gitForcePushConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Force push will overwrite remote history. Continue?'**
+  String get gitForcePushConfirm;
+
+  /// No description provided for @gitStaged.
+  ///
+  /// In en, this message translates to:
+  /// **'Staged'**
+  String get gitStaged;
+
+  /// No description provided for @gitUnstaged.
+  ///
+  /// In en, this message translates to:
+  /// **'Unstaged'**
+  String get gitUnstaged;
+
+  /// No description provided for @gitWorkingTreeClean.
+  ///
+  /// In en, this message translates to:
+  /// **'Working tree clean'**
+  String get gitWorkingTreeClean;
+
+  /// No description provided for @gitNoStagedFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'No staged files'**
+  String get gitNoStagedFiles;
+
+  /// No description provided for @gitNoUnstagedFiles.
+  ///
+  /// In en, this message translates to:
+  /// **'No unstaged files'**
+  String get gitNoUnstagedFiles;
+
+  /// No description provided for @gitNoFilesChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'No files changed'**
+  String get gitNoFilesChanged;
+
+  /// No description provided for @gitBinaryFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Binary file'**
+  String get gitBinaryFile;
+
+  /// No description provided for @gitBinaryFileDiffUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Binary file - cannot display diff'**
+  String get gitBinaryFileDiffUnavailable;
+
+  /// No description provided for @gitNoTextChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'No text changes'**
+  String get gitNoTextChanges;
+
+  /// No description provided for @gitCannotDisplayImage.
+  ///
+  /// In en, this message translates to:
+  /// **'Cannot display image - no file API'**
+  String get gitCannotDisplayImage;
+
+  /// No description provided for @gitImageDataUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Image data not available'**
+  String get gitImageDataUnavailable;
+
+  /// No description provided for @gitLoadImageFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load image'**
+  String get gitLoadImageFailed;
+
+  /// No description provided for @gitLoadDiffFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Failed to load Diff'**
+  String get gitLoadDiffFailed;
+
+  /// No description provided for @gitAiMessageGenerated.
+  ///
+  /// In en, this message translates to:
+  /// **'AI message generated'**
+  String get gitAiMessageGenerated;
+
+  /// No description provided for @gitAiReturnedEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'AI returned empty response'**
+  String get gitAiReturnedEmpty;
+
+  /// No description provided for @gitAiSuggestionFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'AI suggestion failed'**
+  String get gitAiSuggestionFailed;
+
+  /// No description provided for @gitCommitMessageRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Commit message is required'**
+  String get gitCommitMessageRequired;
+
+  /// No description provided for @gitCommitSuccessful.
+  ///
+  /// In en, this message translates to:
+  /// **'Commit successful'**
+  String get gitCommitSuccessful;
+
+  /// No description provided for @gitCommitMessageHint.
+  ///
+  /// In en, this message translates to:
+  /// **'feat: describe your changes...'**
+  String get gitCommitMessageHint;
+
+  /// No description provided for @gitAiSuggest.
+  ///
+  /// In en, this message translates to:
+  /// **'AI suggest'**
+  String get gitAiSuggest;
+
+  /// No description provided for @gitGenerating.
+  ///
+  /// In en, this message translates to:
+  /// **'Generating...'**
+  String get gitGenerating;
+
+  /// No description provided for @gitAiGenerateMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'AI Generate Message'**
+  String get gitAiGenerateMessage;
+
+  /// No description provided for @gitStageAllChanges.
+  ///
+  /// In en, this message translates to:
+  /// **'Stage all changes (-a)'**
+  String get gitStageAllChanges;
+
+  /// No description provided for @wrap.
+  ///
+  /// In en, this message translates to:
+  /// **'Wrap'**
+  String get wrap;
+
+  /// No description provided for @noWrap.
+  ///
+  /// In en, this message translates to:
+  /// **'No wrap'**
+  String get noWrap;
+
+  /// No description provided for @enableWrap.
+  ///
+  /// In en, this message translates to:
+  /// **'Enable wrap'**
+  String get enableWrap;
+
+  /// No description provided for @disableWrap.
+  ///
+  /// In en, this message translates to:
+  /// **'Disable wrap'**
+  String get disableWrap;
+
+  /// No description provided for @loadMore.
+  ///
+  /// In en, this message translates to:
+  /// **'Load more'**
+  String get loadMore;
+
+  /// No description provided for @filesReadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Read failed'**
+  String get filesReadFailed;
+
+  /// No description provided for @filesLoadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Load failed'**
+  String get filesLoadFailed;
+
+  /// No description provided for @filesNoSubdirectories.
+  ///
+  /// In en, this message translates to:
+  /// **'No subdirectories'**
+  String get filesNoSubdirectories;
+
+  /// No description provided for @filesSelectPath.
+  ///
+  /// In en, this message translates to:
+  /// **'Select: {path}'**
+  String filesSelectPath(Object path);
 }
 
 class _AppLocalizationsDelegate

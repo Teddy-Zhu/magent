@@ -60,6 +60,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get noData => 'No data';
 
   @override
+  String get operationFailed => 'Operation failed';
+
+  @override
+  String get agentConnectionFailure => 'Connection failed. Check the agent.';
+
+  @override
   String get navAgents => 'Agents';
 
   @override
@@ -111,6 +117,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get agentsConnectFailed => 'Connection failed';
+
+  @override
+  String get agentsDefaultName => 'My Agent';
 
   @override
   String get projectsTitle => 'Projects';
@@ -188,6 +197,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sessionsCreateFailed => 'Failed to create session';
 
   @override
+  String get sessionsLoadConfigFailed => 'Failed to load config';
+
+  @override
   String get sessionsQuickQuestion => 'Quick Question';
 
   @override
@@ -248,6 +260,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get gitTitle => 'Git Status';
 
   @override
+  String get gitChanges => 'Changes';
+
+  @override
   String get gitCommit => 'Commit';
 
   @override
@@ -273,6 +288,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get gitNoBranches => 'No branches found';
+
+  @override
+  String get gitCurrentBranch => 'current';
 
   @override
   String get gitCommitMsg => 'Commit message';
@@ -330,6 +348,28 @@ class AppLocalizationsEn extends AppLocalizations {
       'Show the last conversation when entering a session';
 
   @override
+  String get settingsShowAiCommitSessions => 'Show AI commit sessions';
+
+  @override
+  String get settingsShowAiCommitSessionsSub =>
+      'Include sessions created only for commit message generation';
+
+  @override
+  String get settingsAppearance => 'Appearance';
+
+  @override
+  String get settingsThemeMode => 'Theme mode';
+
+  @override
+  String get themeSystem => 'Follow system';
+
+  @override
+  String get themeLight => 'Light';
+
+  @override
+  String get themeDark => 'Dark';
+
+  @override
   String get settingsGit => 'Git Operations';
 
   @override
@@ -367,4 +407,565 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsVersion => 'Version';
+
+  @override
+  String get fieldRequired => 'Required';
+
+  @override
+  String get select => 'Select';
+
+  @override
+  String selectedCount(int count) {
+    return '$count selected';
+  }
+
+  @override
+  String get processing => 'Processing...';
+
+  @override
+  String get noAgentConnected => 'No agent connected';
+
+  @override
+  String get untitledProject => 'Untitled Project';
+
+  @override
+  String get agentSelected => 'Agent selected';
+
+  @override
+  String get agentUpdated => 'Agent updated';
+
+  @override
+  String get agentConnected => 'Connected successfully';
+
+  @override
+  String agentRemoved(Object name) {
+    return '\"$name\" removed';
+  }
+
+  @override
+  String get agentsRemove => 'Remove Agent';
+
+  @override
+  String agentsRemoveConfirm(Object name) {
+    return 'Remove \"$name\"? This will disconnect from this agent.';
+  }
+
+  @override
+  String get agentsRemoveAction => 'Remove';
+
+  @override
+  String get agentsEmptySub =>
+      'Connect a local or remote agent to manage projects and sessions.';
+
+  @override
+  String get agentsSaveVerify => 'Save & Verify';
+
+  @override
+  String get projectsEmptySub =>
+      'Add a workspace directory to create sessions, review changes, and browse files.';
+
+  @override
+  String get statusRunning => 'Running';
+
+  @override
+  String get statusCompleted => 'Completed';
+
+  @override
+  String get statusStopped => 'Stopped';
+
+  @override
+  String get statusFailed => 'Failed';
+
+  @override
+  String get statusLost => 'Lost';
+
+  @override
+  String get statusUnknown => 'Unknown';
+
+  @override
+  String get sessionsEmptyYet => 'No sessions yet';
+
+  @override
+  String get sessionsEmptySub => 'Start a new AI coding session';
+
+  @override
+  String get sessionPurposeAiCommit => 'AI commit';
+
+  @override
+  String sessionsLoadMore(int count) {
+    return '$count older sessions hidden. Tap to load.';
+  }
+
+  @override
+  String timeDaysAgo(int count) {
+    return '${count}d ago';
+  }
+
+  @override
+  String timeHoursAgo(int count) {
+    return '${count}h ago';
+  }
+
+  @override
+  String timeMinutesAgo(int count) {
+    return '${count}m ago';
+  }
+
+  @override
+  String get timeNow => 'now';
+
+  @override
+  String get chatSendFailed => 'Send failed';
+
+  @override
+  String get chatStartFailed => 'Start failed';
+
+  @override
+  String get chatInterruptFailed => 'Interrupt failed';
+
+  @override
+  String get chatStopFailed => 'Stop failed';
+
+  @override
+  String get chatApprovalFailed => 'Approval failed';
+
+  @override
+  String get chatLoadSkillsFailed => 'Failed to load skills';
+
+  @override
+  String get chatRunningTitle => 'Currently processing';
+
+  @override
+  String get chatRunningSubtitle => 'Choose how to handle this new message';
+
+  @override
+  String get chatQueueMessage => 'Add to queue';
+
+  @override
+  String get chatQueueMessageSub =>
+      'Send automatically after the current reply finishes.';
+
+  @override
+  String get chatInterruptAndSend => 'Interrupt and send';
+
+  @override
+  String get chatInterruptAndSendSub =>
+      'Stop the current reply, then process this message immediately.';
+
+  @override
+  String get chatSessionLostTitle => 'Session unavailable';
+
+  @override
+  String get chatSessionLostContent =>
+      'This session no longer exists on the server. It may have been removed after the server restarted. Create a new session to continue.';
+
+  @override
+  String get chatInterruptSent => 'Interrupt request sent';
+
+  @override
+  String get chatStopSession => 'Stop session';
+
+  @override
+  String get chatStopConfirm => 'Stop this session?';
+
+  @override
+  String get chatSessionStopped => 'Session stopped';
+
+  @override
+  String get chatNoSkills => 'No skills available';
+
+  @override
+  String get chatMissingProject =>
+      'Current session is missing project information';
+
+  @override
+  String get chatRefresh => 'Refresh';
+
+  @override
+  String get chatCreateNewSession => 'Create new session';
+
+  @override
+  String get chatSessionEnded => 'Session ended';
+
+  @override
+  String get chatNoMessages => 'No messages yet';
+
+  @override
+  String get chatSessionNotStarted => 'Session not started';
+
+  @override
+  String get chatStarting => 'Starting...';
+
+  @override
+  String get chatStartSession => 'Start session';
+
+  @override
+  String get chatNewSession => 'New session';
+
+  @override
+  String get chatPlan => 'Plan';
+
+  @override
+  String get chatReasoningSummary => 'Reasoning summary';
+
+  @override
+  String get chatDiffSummary => 'Change summary';
+
+  @override
+  String get chatCommandOutput => 'Command output';
+
+  @override
+  String get chatFileChangeOutput => 'File change output';
+
+  @override
+  String get chatCommand => 'Command';
+
+  @override
+  String get chatFileChange => 'File change';
+
+  @override
+  String get chatReadFile => 'Read file';
+
+  @override
+  String get chatTurnStarted => 'Started processing...';
+
+  @override
+  String get chatTurnCompleted => 'Processing completed';
+
+  @override
+  String get chatTurnFailed => 'Processing failed';
+
+  @override
+  String get chatApprovalResolved => 'Approval handled';
+
+  @override
+  String chatExited(Object code) {
+    return 'Session exited (code: $code)';
+  }
+
+  @override
+  String get chatPlanUpdated => 'Plan updated';
+
+  @override
+  String get chatReasoningUpdated => 'Reasoning summary updated';
+
+  @override
+  String get chatFileUpdated => 'File updated';
+
+  @override
+  String chatFileCount(int count) {
+    return '$count files';
+  }
+
+  @override
+  String chatRunningQueued(int count) {
+    return 'Generating reply, $count messages queued';
+  }
+
+  @override
+  String get chatRunningHint =>
+      'Generating reply. Send again to queue or interrupt.';
+
+  @override
+  String chatQueuedInputs(int count) {
+    return '$count messages queued';
+  }
+
+  @override
+  String get chatTemplatesTooltip => 'History and templates';
+
+  @override
+  String get chatSkillsTooltip => 'Use skill';
+
+  @override
+  String get chatFilesTooltip => 'Reference workspace file';
+
+  @override
+  String get chatChooseSkill => 'Choose skill';
+
+  @override
+  String get chatChooseWorkspaceFile => 'Choose workspace file';
+
+  @override
+  String chatCollapsedEvents(int count) {
+    return '$count older messages hidden';
+  }
+
+  @override
+  String get expand => 'Expand';
+
+  @override
+  String get collapse => 'Collapse';
+
+  @override
+  String get approvalRequired => 'Approval required';
+
+  @override
+  String get approvalUnknownAction => 'Unknown operation';
+
+  @override
+  String get approvalAllowSession => 'Allow for session';
+
+  @override
+  String get templatesSaveAs => 'Save as template';
+
+  @override
+  String get templatesNameHint => 'Template name';
+
+  @override
+  String get templatesRecent => 'Recent messages';
+
+  @override
+  String get templatesSaved => 'Saved templates';
+
+  @override
+  String get templatesNoRecent => 'No recent messages';
+
+  @override
+  String get templatesNoSaved => 'No saved templates';
+
+  @override
+  String get templatesDelete => 'Delete template';
+
+  @override
+  String get providersTitle => 'Providers';
+
+  @override
+  String get providersEmpty => 'No providers found';
+
+  @override
+  String get providersAvailable => 'Available';
+
+  @override
+  String get providersUnavailable => 'Unavailable';
+
+  @override
+  String get providersNotAvailable => 'Not available';
+
+  @override
+  String get providersBinary => 'Binary';
+
+  @override
+  String get providersMode => 'Mode';
+
+  @override
+  String get providersCapabilities => 'Capabilities';
+
+  @override
+  String get providersUnknown => 'Unknown';
+
+  @override
+  String get capabilityResume => 'Resume';
+
+  @override
+  String get capabilityFork => 'Fork';
+
+  @override
+  String get capabilitySteer => 'Steer';
+
+  @override
+  String get capabilityInterrupt => 'Interrupt';
+
+  @override
+  String get capabilityCompact => 'Compact';
+
+  @override
+  String get capabilityRollback => 'Rollback';
+
+  @override
+  String get capabilityApproval => 'Approval';
+
+  @override
+  String get capabilityFileSystem => 'File System';
+
+  @override
+  String get capabilityMcp => 'MCP';
+
+  @override
+  String get capabilityPty => 'PTY';
+
+  @override
+  String get capabilityStreaming => 'Streaming';
+
+  @override
+  String get capabilityStructuredOutput => 'Structured Output';
+
+  @override
+  String get cacheClear => 'Clear';
+
+  @override
+  String get cacheClearAll => 'Clear All';
+
+  @override
+  String get cacheClearAllCaches => 'Clear All Caches';
+
+  @override
+  String get cacheClearAllDisplayCaches => 'Clear All Display Caches';
+
+  @override
+  String get cacheClearConfirm =>
+      'This removes local display caches only. Provider history, Git state, and files remain the source of truth.';
+
+  @override
+  String get cacheGitDisplay => 'Git Display Cache';
+
+  @override
+  String get cacheFileDisplay => 'File Display Cache';
+
+  @override
+  String get cacheSessionDisplay => 'Session Display Cache';
+
+  @override
+  String cacheCleared(Object name) {
+    return '$name cache cleared';
+  }
+
+  @override
+  String cacheEntries(int count) {
+    return '$count entries';
+  }
+
+  @override
+  String get gitStatus => 'Status';
+
+  @override
+  String get gitLog => 'Log';
+
+  @override
+  String get gitPull => 'Pull';
+
+  @override
+  String get gitRoot => 'Root';
+
+  @override
+  String get gitPullFailed => 'Pull failed';
+
+  @override
+  String get gitPullSuccessful => 'Pull successful';
+
+  @override
+  String get gitPushSuccessful => 'Push successful';
+
+  @override
+  String get gitStageFailed => 'Stage failed';
+
+  @override
+  String get gitUnstageFailed => 'Unstage failed';
+
+  @override
+  String get gitDiscardFailed => 'Discard failed';
+
+  @override
+  String get gitDiscardChanges => 'Discard changes';
+
+  @override
+  String gitDiscardChangesConfirm(int count) {
+    return 'Discard changes in $count files? This cannot be undone.';
+  }
+
+  @override
+  String get gitForcePush => 'Force Push';
+
+  @override
+  String get gitForcePushConfirm =>
+      'Force push will overwrite remote history. Continue?';
+
+  @override
+  String get gitStaged => 'Staged';
+
+  @override
+  String get gitUnstaged => 'Unstaged';
+
+  @override
+  String get gitWorkingTreeClean => 'Working tree clean';
+
+  @override
+  String get gitNoStagedFiles => 'No staged files';
+
+  @override
+  String get gitNoUnstagedFiles => 'No unstaged files';
+
+  @override
+  String get gitNoFilesChanged => 'No files changed';
+
+  @override
+  String get gitBinaryFile => 'Binary file';
+
+  @override
+  String get gitBinaryFileDiffUnavailable =>
+      'Binary file - cannot display diff';
+
+  @override
+  String get gitNoTextChanges => 'No text changes';
+
+  @override
+  String get gitCannotDisplayImage => 'Cannot display image - no file API';
+
+  @override
+  String get gitImageDataUnavailable => 'Image data not available';
+
+  @override
+  String get gitLoadImageFailed => 'Failed to load image';
+
+  @override
+  String get gitLoadDiffFailed => 'Failed to load Diff';
+
+  @override
+  String get gitAiMessageGenerated => 'AI message generated';
+
+  @override
+  String get gitAiReturnedEmpty => 'AI returned empty response';
+
+  @override
+  String get gitAiSuggestionFailed => 'AI suggestion failed';
+
+  @override
+  String get gitCommitMessageRequired => 'Commit message is required';
+
+  @override
+  String get gitCommitSuccessful => 'Commit successful';
+
+  @override
+  String get gitCommitMessageHint => 'feat: describe your changes...';
+
+  @override
+  String get gitAiSuggest => 'AI suggest';
+
+  @override
+  String get gitGenerating => 'Generating...';
+
+  @override
+  String get gitAiGenerateMessage => 'AI Generate Message';
+
+  @override
+  String get gitStageAllChanges => 'Stage all changes (-a)';
+
+  @override
+  String get wrap => 'Wrap';
+
+  @override
+  String get noWrap => 'No wrap';
+
+  @override
+  String get enableWrap => 'Enable wrap';
+
+  @override
+  String get disableWrap => 'Disable wrap';
+
+  @override
+  String get loadMore => 'Load more';
+
+  @override
+  String get filesReadFailed => 'Read failed';
+
+  @override
+  String get filesLoadFailed => 'Load failed';
+
+  @override
+  String get filesNoSubdirectories => 'No subdirectories';
+
+  @override
+  String filesSelectPath(Object path) {
+    return 'Select: $path';
+  }
 }

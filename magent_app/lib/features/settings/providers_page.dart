@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class ProvidersPage extends ConsumerStatefulWidget {
   const ProvidersPage({super.key});
@@ -43,12 +44,13 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
-      appBar: AppBar(title: const Text('Providers')),
+      appBar: AppBar(title: Text(l10n.providersTitle)),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _providers.isEmpty
-          ? const Center(child: Text('No providers found'))
+          ? Center(child: Text(l10n.providersEmpty))
           : ListView.builder(
               itemCount: _providers.length,
               itemBuilder: (context, index) => _ProviderTile(
@@ -81,6 +83,7 @@ class _ProviderTile extends StatelessWidget {
     final version = provider['version'] as String? ?? '';
     final runMode = provider['run_mode'] as String? ?? '';
     final available = status == 'available';
+    final l10n = AppLocalizations.of(context)!;
 
     return ListTile(
       leading: _buildIcon(name, available),
@@ -89,7 +92,7 @@ class _ProviderTile extends StatelessWidget {
         [
           if (version.isNotEmpty) 'v$version',
           if (runMode.isNotEmpty) runMode,
-          if (!available) provider['error'] ?? 'Not available',
+          if (!available) provider['error'] ?? l10n.providersNotAvailable,
         ].join(' · '),
         style: TextStyle(color: available ? null : Colors.grey),
       ),
@@ -100,7 +103,7 @@ class _ProviderTile extends StatelessWidget {
           borderRadius: BorderRadius.circular(12),
         ),
         child: Text(
-          available ? 'Available' : 'Unavailable',
+          available ? l10n.providersAvailable : l10n.providersUnavailable,
           style: TextStyle(
             fontSize: 12,
             color: available ? Colors.green[700] : Colors.grey,
@@ -139,6 +142,7 @@ class _ProviderDetailSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final caps = provider['capabilities'] as Map<String, dynamic>? ?? {};
+    final l10n = AppLocalizations.of(context)!;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.6,
@@ -162,39 +166,63 @@ class _ProviderDetailSheet extends StatelessWidget {
               ),
             ),
             Text(
-              provider['name'] ?? 'Unknown',
+              provider['name'] ?? l10n.providersUnknown,
               style: Theme.of(context).textTheme.headlineSmall,
             ),
             const SizedBox(height: 8),
             if (provider['binary'] != null)
               Text(
-                'Binary: ${provider['binary']}',
+                '${l10n.providersBinary}: ${provider['binary']}',
                 style: TextStyle(color: Colors.grey[600]),
               ),
             if (provider['run_mode'] != null)
               Text(
-                'Mode: ${provider['run_mode']}',
+                '${l10n.providersMode}: ${provider['run_mode']}',
                 style: TextStyle(color: Colors.grey[600]),
               ),
             const Divider(height: 24),
             Text(
-              'Capabilities',
+              l10n.providersCapabilities,
               style: Theme.of(context).textTheme.titleMedium,
             ),
             const SizedBox(height: 8),
-            _buildCapTile('Resume', caps['supports_resume'] ?? false),
-            _buildCapTile('Fork', caps['supports_fork'] ?? false),
-            _buildCapTile('Steer', caps['supports_steer'] ?? false),
-            _buildCapTile('Interrupt', caps['supports_interrupt'] ?? false),
-            _buildCapTile('Compact', caps['supports_compact'] ?? false),
-            _buildCapTile('Rollback', caps['supports_rollback'] ?? false),
-            _buildCapTile('Approval', caps['supports_approval'] ?? false),
-            _buildCapTile('File System', caps['supports_file_system'] ?? false),
-            _buildCapTile('MCP', caps['supports_mcp'] ?? false),
-            _buildCapTile('PTY', caps['supports_pty'] ?? false),
-            _buildCapTile('Streaming', caps['streaming_output'] ?? false),
             _buildCapTile(
-              'Structured Output',
+              l10n.capabilityResume,
+              caps['supports_resume'] ?? false,
+            ),
+            _buildCapTile(l10n.capabilityFork, caps['supports_fork'] ?? false),
+            _buildCapTile(
+              l10n.capabilitySteer,
+              caps['supports_steer'] ?? false,
+            ),
+            _buildCapTile(
+              l10n.capabilityInterrupt,
+              caps['supports_interrupt'] ?? false,
+            ),
+            _buildCapTile(
+              l10n.capabilityCompact,
+              caps['supports_compact'] ?? false,
+            ),
+            _buildCapTile(
+              l10n.capabilityRollback,
+              caps['supports_rollback'] ?? false,
+            ),
+            _buildCapTile(
+              l10n.capabilityApproval,
+              caps['supports_approval'] ?? false,
+            ),
+            _buildCapTile(
+              l10n.capabilityFileSystem,
+              caps['supports_file_system'] ?? false,
+            ),
+            _buildCapTile(l10n.capabilityMcp, caps['supports_mcp'] ?? false),
+            _buildCapTile(l10n.capabilityPty, caps['supports_pty'] ?? false),
+            _buildCapTile(
+              l10n.capabilityStreaming,
+              caps['streaming_output'] ?? false,
+            ),
+            _buildCapTile(
+              l10n.capabilityStructuredOutput,
               caps['structured_output'] ?? false,
             ),
           ],

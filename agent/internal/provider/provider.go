@@ -47,6 +47,7 @@ type ProviderConfig struct {
 
 type CreateSessionRequest struct {
 	ProjectID      string         `json:"project_id"`
+	Purpose        string         `json:"purpose,omitempty"`
 	Workdir        string         `json:"workdir"`
 	Model          string         `json:"model"`
 	Effort         string         `json:"effort,omitempty"`
@@ -171,6 +172,7 @@ type Session struct {
 	ProviderID     string         `json:"provider_id"`
 	ThreadID       string         `json:"thread_id"`
 	ProjectID      string         `json:"project_id"`
+	Purpose        string         `json:"purpose,omitempty"`
 	Title          string         `json:"title"`
 	Workdir        string         `json:"workdir"`
 	Status         string         `json:"status"`

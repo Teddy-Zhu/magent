@@ -29,7 +29,6 @@ func main() {
 			logLevel, _ := cmd.Flags().GetString("log-level")
 			logLevels, _ := cmd.Flags().GetString("log-levels")
 
-			log.Info("main", "loading config from %q", cfgFile)
 			cfg, err := config.Load(cfgFile)
 			if err != nil {
 				return fmt.Errorf("failed to load config: %w", err)
@@ -45,8 +44,8 @@ func main() {
 				log.ApplyComponentLevels(logLevels)
 			}
 
-			log.Debug("main", "config loaded: host=%s port=%d rate_limit=%d log_level=%s log_levels=%v",
-				cfg.Server.Host, cfg.Server.Port, cfg.Server.RateLimitPerMin, effectiveLogLevel, cfg.LogLevels)
+			log.Debug("main", "config loaded: file=%q host=%s port=%d rate_limit=%d log_level=%s log_levels=%v cli_log_levels=%q",
+				cfgFile, cfg.Server.Host, cfg.Server.Port, cfg.Server.RateLimitPerMin, effectiveLogLevel, cfg.LogLevels, logLevels)
 
 			log.Info("main", "opening database magent.db")
 			store, err := storage.Open("magent.db")

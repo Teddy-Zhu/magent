@@ -5,6 +5,7 @@ import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
 import 'package:magent_app/features/git/widgets/commit_sheet.dart';
 import 'package:magent_app/features/git/widgets/diff_sheet.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class ProjectChangesTab extends StatefulWidget {
   final String projectId;
@@ -137,7 +138,9 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
       setState(() => _selectedPaths.clear());
       await _load();
     } catch (e) {
-      if (mounted) _showError(e, action: 'Stage failed');
+      if (mounted) {
+        _showError(e, action: AppLocalizations.of(context)!.gitStageFailed);
+      }
     } finally {
       if (mounted) setState(() => _operating = false);
     }
@@ -151,7 +154,9 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
       setState(() => _selectedPaths.clear());
       await _load();
     } catch (e) {
-      if (mounted) _showError(e, action: 'Unstage failed');
+      if (mounted) {
+        _showError(e, action: AppLocalizations.of(context)!.gitUnstageFailed);
+      }
     } finally {
       if (mounted) setState(() => _operating = false);
     }
@@ -162,16 +167,23 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('放弃更改'),
-        content: Text('确定放弃 ${_selectedPaths.length} 个文件的更改？此操作不可撤销。'),
+        title: Text(AppLocalizations.of(context)!.gitDiscardChanges),
+        content: Text(
+          AppLocalizations.of(
+            context,
+          )!.gitDiscardChangesConfirm(_selectedPaths.length),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(AppLocalizations.of(context)!.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('放弃', style: TextStyle(color: Colors.red)),
+            child: Text(
+              AppLocalizations.of(context)!.gitDiscard,
+              style: const TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -183,7 +195,9 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
         setState(() => _selectedPaths.clear());
         await _load();
       } catch (e) {
-        if (mounted) _showError(e, action: 'Discard failed');
+        if (mounted) {
+          _showError(e, action: AppLocalizations.of(context)!.gitDiscardFailed);
+        }
       } finally {
         if (mounted) setState(() => _operating = false);
       }
@@ -196,15 +210,17 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
       await widget.git.push(widget.projectId, force: force);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Push successful'),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.gitPushSuccessful),
             backgroundColor: Colors.green,
           ),
         );
         await _load();
       }
     } catch (e) {
-      if (mounted) _showError(e, action: 'Push failed');
+      if (mounted) {
+        _showError(e, action: AppLocalizations.of(context)!.gitPushFailed);
+      }
     } finally {
       if (mounted) setState(() => _pushing = false);
     }
@@ -213,7 +229,11 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
   void _showError(Object error, {String? action}) {
     final msg = error is String
         ? error
-        : userFriendlyErrorMessage(error, action: action);
+        : localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            error,
+            action: action,
+          );
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
@@ -245,23 +265,21 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Force Push'),
-        content: const Text(
-          'Force push will overwrite remote history. Continue?',
-        ),
+        title: Text(AppLocalizations.of(context)!.gitForcePush),
+        content: Text(AppLocalizations.of(context)!.gitForcePushConfirm),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+            child: Text(AppLocalizations.of(context)!.cancel),
           ),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
               _push(force: true);
             },
-            child: const Text(
-              'Force Push',
-              style: TextStyle(color: Colors.red),
+            child: Text(
+              AppLocalizations.of(context)!.gitForcePush,
+              style: const TextStyle(color: Colors.red),
             ),
           ),
         ],
@@ -271,6 +289,7 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -293,8 +312,8 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
               child: TabBar(
                 controller: _tabController,
                 tabs: [
-                  Tab(text: 'Staged ($stagedCount)'),
-                  Tab(text: 'Unstaged (${_unstagedFiles.length})'),
+                  Tab(text: '${l10n.gitStaged} ($stagedCount)'),
+                  Tab(text: '${l10n.gitUnstaged} (${_unstagedFiles.length})'),
                 ],
               ),
             ),
@@ -315,7 +334,7 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            'Working tree clean',
+                            l10n.gitWorkingTreeClean,
                             style: TextStyle(
                               color: Colors.grey[500],
                               fontSize: 15,
@@ -330,20 +349,20 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
         if (_operating)
           Container(
             color: Colors.black.withValues(alpha: 0.05),
-            child: const Center(
+            child: Center(
               child: Card(
                 child: Padding(
-                  padding: EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(16),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      SizedBox(
+                      const SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-                      SizedBox(width: 12),
-                      Text('Processing...'),
+                      const SizedBox(width: 12),
+                      Text(AppLocalizations.of(context)!.processing),
                     ],
                   ),
                 ),
@@ -428,7 +447,9 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
         children: hasSelection
             ? [
                 Text(
-                  '${_selectedPaths.length} selected',
+                  AppLocalizations.of(
+                    context,
+                  )!.selectedCount(_selectedPaths.length),
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 13,
@@ -441,9 +462,9 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                     child: FilledButton(
                       onPressed: _operating ? null : _unstageSelected,
                       style: _barFilledStyle(),
-                      child: const Text(
-                        'Unstage',
-                        style: TextStyle(fontSize: 12),
+                      child: Text(
+                        AppLocalizations.of(context)!.gitUnstage,
+                        style: const TextStyle(fontSize: 12),
                       ),
                     ),
                   )
@@ -453,9 +474,9 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                     child: FilledButton(
                       onPressed: _operating ? null : _stageSelected,
                       style: _barFilledStyle(),
-                      child: const Text(
-                        'Stage',
-                        style: TextStyle(fontSize: 12),
+                      child: Text(
+                        AppLocalizations.of(context)!.gitStage,
+                        style: const TextStyle(fontSize: 12),
                       ),
                     ),
                   ),
@@ -465,9 +486,9 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                     child: OutlinedButton(
                       onPressed: _operating ? null : _discardSelected,
                       style: _barOutlinedStyle(),
-                      child: const Text(
-                        'Discard',
-                        style: TextStyle(fontSize: 12, color: Colors.red),
+                      child: Text(
+                        AppLocalizations.of(context)!.gitDiscard,
+                        style: const TextStyle(fontSize: 12, color: Colors.red),
                       ),
                     ),
                   ),
@@ -490,7 +511,10 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                   child: OutlinedButton.icon(
                     onPressed: _currentFiles.isNotEmpty ? _selectAll : null,
                     icon: const Icon(Icons.checklist, size: 16),
-                    label: const Text('Select', style: TextStyle(fontSize: 12)),
+                    label: Text(
+                      AppLocalizations.of(context)!.select,
+                      style: const TextStyle(fontSize: 12),
+                    ),
                     style: _barOutlinedStyle(horizontal: 10),
                   ),
                 ),
@@ -503,9 +527,9 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                           ? _openCommitSheet
                           : null,
                       icon: const Icon(Icons.commit, size: 16),
-                      label: const Text(
-                        'Commit',
-                        style: TextStyle(fontSize: 12),
+                      label: Text(
+                        AppLocalizations.of(context)!.gitCommit,
+                        style: const TextStyle(fontSize: 12),
                       ),
                       style: _barFilledStyle(horizontal: 10),
                     ),
@@ -563,7 +587,9 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     if (files.isEmpty) {
       return Center(
         child: Text(
-          _isStagedTab ? 'No staged files' : 'No unstaged files',
+          _isStagedTab
+              ? AppLocalizations.of(context)!.gitNoStagedFiles
+              : AppLocalizations.of(context)!.gitNoUnstagedFiles,
           style: TextStyle(color: Colors.grey[500]),
         ),
       );
@@ -702,13 +728,19 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
           TextButton.icon(
             onPressed: widget.onViewLog,
             icon: const Icon(Icons.history, size: 16),
-            label: const Text('Commit Log', style: TextStyle(fontSize: 12)),
+            label: Text(
+              AppLocalizations.of(context)!.gitCommitLog,
+              style: const TextStyle(fontSize: 12),
+            ),
           ),
           const SizedBox(width: 8),
           TextButton.icon(
             onPressed: widget.onViewBranches,
             icon: const Icon(Icons.account_tree, size: 16),
-            label: const Text('Branches', style: TextStyle(fontSize: 12)),
+            label: Text(
+              AppLocalizations.of(context)!.gitBranches,
+              style: const TextStyle(fontSize: 12),
+            ),
           ),
         ],
       ),

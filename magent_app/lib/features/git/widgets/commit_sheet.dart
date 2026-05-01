@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 /// Shared bottom sheet for commit operations.
 class CommitSheet extends StatefulWidget {
@@ -64,26 +65,30 @@ class _CommitSheetState extends State<CommitSheet> {
   }
 
   Future<void> _suggestMessage() async {
+    final l10n = AppLocalizations.of(context)!;
     setState(() => _suggesting = true);
     try {
       final message = await widget.git.suggestCommitMessage(widget.projectId);
       if (mounted && message.isNotEmpty) {
         _messageController.text = message;
-        _showSuccess('AI message generated');
+        _showSuccess(l10n.gitAiMessageGenerated);
       } else if (mounted) {
-        _showError('AI returned empty response');
+        _showError(l10n.gitAiReturnedEmpty);
       }
     } catch (e) {
-      _showError(userFriendlyErrorMessage(e, action: 'AI suggestion failed'));
+      _showError(
+        localizedErrorMessage(l10n, e, action: l10n.gitAiSuggestionFailed),
+      );
     } finally {
       if (mounted) setState(() => _suggesting = false);
     }
   }
 
   Future<void> _commit() async {
+    final l10n = AppLocalizations.of(context)!;
     final message = _messageController.text.trim();
     if (message.isEmpty) {
-      _showError('Commit message is required');
+      _showError(l10n.gitCommitMessageRequired);
       return;
     }
 
@@ -91,13 +96,13 @@ class _CommitSheetState extends State<CommitSheet> {
     try {
       await widget.git.commit(widget.projectId, message, all: _commitAll);
       widget.onCommitted?.call();
-      _showSuccess('Commit successful');
+      _showSuccess(l10n.gitCommitSuccessful);
       if (mounted) {
         await Future.delayed(const Duration(milliseconds: 600));
         if (mounted) Navigator.pop(context);
       }
     } catch (e) {
-      _showError(userFriendlyErrorMessage(e, action: 'Commit failed'));
+      _showError(localizedErrorMessage(l10n, e, action: l10n.gitCommitFailed));
     } finally {
       if (mounted) setState(() => _committing = false);
     }
@@ -105,6 +110,7 @@ class _CommitSheetState extends State<CommitSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Padding(
       padding: EdgeInsets.only(
         bottom: MediaQuery.of(context).viewInsets.bottom,
@@ -129,9 +135,9 @@ class _CommitSheetState extends State<CommitSheet> {
                   children: [
                     const Icon(Icons.commit, size: 18),
                     const SizedBox(width: 8),
-                    const Text(
-                      'Commit',
-                      style: TextStyle(
+                    Text(
+                      l10n.gitCommit,
+                      style: const TextStyle(
                         fontWeight: FontWeight.w600,
                         fontSize: 16,
                       ),
@@ -152,11 +158,11 @@ class _CommitSheetState extends State<CommitSheet> {
                     TextField(
                       controller: _messageController,
                       decoration: InputDecoration(
-                        labelText: 'Commit message',
-                        hintText: 'feat: describe your changes...',
+                        labelText: l10n.gitCommitMsg,
+                        hintText: l10n.gitCommitMessageHint,
                         border: const OutlineInputBorder(),
                         suffixIcon: Tooltip(
-                          message: 'AI suggest',
+                          message: l10n.gitAiSuggest,
                           child: IconButton(
                             icon: _suggesting
                                 ? const SizedBox(
@@ -188,13 +194,15 @@ class _CommitSheetState extends State<CommitSheet> {
                               )
                             : const Icon(Icons.auto_awesome, size: 16),
                         label: Text(
-                          _suggesting ? 'Generating...' : 'AI Generate Message',
+                          _suggesting
+                              ? l10n.gitGenerating
+                              : l10n.gitAiGenerateMessage,
                         ),
                       ),
                     ),
                     const SizedBox(height: 12),
                     CheckboxListTile(
-                      title: const Text('Stage all changes (-a)'),
+                      title: Text(l10n.gitStageAllChanges),
                       value: _commitAll,
                       onChanged: (v) => setState(() => _commitAll = v ?? false),
                       controlAffinity: ListTileControlAffinity.leading,
@@ -210,7 +218,7 @@ class _CommitSheetState extends State<CommitSheet> {
                               child: CircularProgressIndicator(strokeWidth: 2),
                             )
                           : const Icon(Icons.commit),
-                      label: const Text('Commit'),
+                      label: Text(l10n.gitCommit),
                       style: FilledButton.styleFrom(
                         minimumSize: const Size.fromHeight(44),
                       ),

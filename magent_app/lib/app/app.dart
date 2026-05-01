@@ -3,6 +3,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:magent_app/app/lifecycle_sync.dart';
 import 'package:magent_app/app/router.dart';
+import 'package:magent_app/core/providers/app_settings_provider.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
 
 class MagentApp extends ConsumerWidget {
@@ -10,11 +11,15 @@ class MagentApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    final themeMode = ref
+        .watch(themeModeControllerProvider)
+        .maybeWhen(data: (value) => value, orElse: () => ThemeMode.system);
     return LifecycleSync(
       child: MaterialApp.router(
         title: 'Magent',
         theme: _buildTheme(Brightness.light),
         darkTheme: _buildTheme(Brightness.dark),
+        themeMode: themeMode,
         localizationsDelegates: const [
           AppLocalizations.delegate,
           GlobalMaterialLocalizations.delegate,

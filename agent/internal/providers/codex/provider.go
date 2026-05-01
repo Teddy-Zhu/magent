@@ -23,6 +23,7 @@ type CodexConfig struct {
 type sessionMeta struct {
 	Model          string
 	Workdir        string
+	Purpose        string
 	ApprovalPolicy string
 	SandboxMode    string
 	Effort         string
@@ -149,6 +150,7 @@ func (p *CodexProvider) CreateSession(ctx context.Context, req provider.CreateSe
 	p.meta[sessionID] = &sessionMeta{
 		Model:          req.Model,
 		Workdir:        req.Workdir,
+		Purpose:        req.Purpose,
 		ApprovalPolicy: req.ApprovalPolicy,
 		SandboxMode:    req.SandboxMode,
 		Effort:         req.Effort,
@@ -174,6 +176,7 @@ func (p *CodexProvider) CreateSession(ctx context.Context, req provider.CreateSe
 		ProviderID:     "codex",
 		ThreadID:       threadID,
 		ProjectID:      req.ProjectID,
+		Purpose:        req.Purpose,
 		Workdir:        req.Workdir,
 		Status:         string(provider.SessionStatusRunning),
 		RunnerType:     "app-server",

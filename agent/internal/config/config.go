@@ -11,19 +11,19 @@ import (
 )
 
 type Config struct {
-	Server    ServerConfig    `mapstructure:"server"`
-	Auth      AuthConfig      `mapstructure:"auth"`
-	Workspace WorkspaceConfig `mapstructure:"workspace"`
+	Server    ServerConfig      `mapstructure:"server"`
+	Auth      AuthConfig        `mapstructure:"auth"`
+	Workspace WorkspaceConfig   `mapstructure:"workspace"`
 	LogLevel  string            `mapstructure:"log_level"`
 	LogLevels map[string]string `mapstructure:"log_levels"`
 }
 
 type ServerConfig struct {
-	Host             string        `mapstructure:"host"`
-	Port             int           `mapstructure:"port"`
-	ReadTimeout      time.Duration `mapstructure:"read_timeout"`
-	WriteTimeout     time.Duration `mapstructure:"write_timeout"`
-	RateLimitPerMin  int           `mapstructure:"rate_limit_per_min"`
+	Host            string        `mapstructure:"host"`
+	Port            int           `mapstructure:"port"`
+	ReadTimeout     time.Duration `mapstructure:"read_timeout"`
+	WriteTimeout    time.Duration `mapstructure:"write_timeout"`
+	RateLimitPerMin int           `mapstructure:"rate_limit_per_min"`
 }
 
 type AuthConfig struct {

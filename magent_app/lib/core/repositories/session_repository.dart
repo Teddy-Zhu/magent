@@ -149,6 +149,7 @@ class SessionRepository implements SessionSyncStore {
           providerId: Value(map['provider_id']?.toString() ?? ''),
           threadId: Value(map['thread_id']?.toString()),
           projectId: Value(projectId),
+          purpose: Value(map['purpose']?.toString()),
           workdir: Value(map['workdir']?.toString()),
           title: Value(map['title']?.toString() ?? map['preview']?.toString()),
           status: Value(_extractStatus(map)),
@@ -313,6 +314,7 @@ class SessionRepository implements SessionSyncStore {
               existing?.threadId,
         ),
         projectId: Value(projectId),
+        purpose: Value(data['purpose']?.toString() ?? existing?.purpose),
         workdir: Value(data['workdir']?.toString() ?? existing?.workdir),
         title: Value(
           data['title']?.toString() ??
@@ -374,6 +376,7 @@ class SessionRepository implements SessionSyncStore {
         providerId: Value(existing.providerId),
         threadId: Value(existing.threadId),
         projectId: Value(existing.projectId),
+        purpose: Value(existing.purpose),
         workdir: Value(existing.workdir),
         title: Value(existing.title),
         status: Value(nextStatus),
@@ -635,6 +638,7 @@ class SessionRepository implements SessionSyncStore {
       'provider_id': s.providerId,
       'thread_id': s.threadId,
       'project_id': s.projectId,
+      'purpose': s.purpose,
       'workdir': s.workdir,
       'title': s.title,
       'status': s.status,

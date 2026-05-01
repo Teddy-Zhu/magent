@@ -16,6 +16,7 @@ func (s *SQLite) migrate() error {
 			provider_id TEXT NOT NULL,
 			thread_id TEXT,
 			project_id TEXT NOT NULL,
+			purpose TEXT,
 			title TEXT,
 			workdir TEXT,
 			last_status TEXT,
@@ -81,6 +82,7 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 	hasLastSeq := false
 	hasApprovalMode := false
 	hasApprovalPolicy := false
+	hasPurpose := false
 	for rows.Next() {
 		var cid int
 		var name, typ string
@@ -101,12 +103,14 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 			hasApprovalMode = true
 		case "approval_policy":
 			hasApprovalPolicy = true
+		case "purpose":
+			hasPurpose = true
 		}
 	}
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	if !hasStatus && !hasLastSeq && hasLastStatus && hasApprovalPolicy && !hasApprovalMode {
+	if !hasStatus && !hasLastSeq && hasLastStatus && hasApprovalPolicy && !hasApprovalMode && hasPurpose {
 		return nil
 	}
 	lastStatusExpr := "status"
@@ -123,6 +127,10 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 	} else if hasApprovalPolicy {
 		approvalPolicyExpr = "approval_policy"
 	}
+	purposeExpr := "NULL"
+	if hasPurpose {
+		purposeExpr = "purpose"
+	}
 
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sessions_new (
@@ -130,6 +138,7 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 			provider_id TEXT NOT NULL,
 			thread_id TEXT,
 			project_id TEXT NOT NULL,
+			purpose TEXT,
 			title TEXT,
 			workdir TEXT,
 			last_status TEXT,
@@ -144,7 +153,7 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 		);
 
 		INSERT OR REPLACE INTO sessions_new (
-			id, provider_id, thread_id, project_id, title, workdir, last_status,
+			id, provider_id, thread_id, project_id, purpose, title, workdir, last_status,
 			runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at
 		)
 		SELECT
@@ -152,6 +161,7 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 			provider_id,
 			thread_id,
 			project_id,
+			` + purposeExpr + `,
 			title,
 			workdir,
 			` + lastStatusExpr + `,

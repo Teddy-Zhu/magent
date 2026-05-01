@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class DirPickerSheet extends StatefulWidget {
   final String? initialPath;
@@ -140,7 +141,11 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _entries.isEmpty
-                  ? const Center(child: Text('No subdirectories'))
+                  ? Center(
+                      child: Text(
+                        AppLocalizations.of(context)!.filesNoSubdirectories,
+                      ),
+                    )
                   : ListView.builder(
                       controller: scrollController,
                       itemCount: _entries.length,
@@ -166,7 +171,9 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
                 width: double.infinity,
                 child: FilledButton(
                   onPressed: () => Navigator.pop(context, _currentPath),
-                  child: Text('Select: $_currentPath'),
+                  child: Text(
+                    AppLocalizations.of(context)!.filesSelectPath(_currentPath),
+                  ),
                 ),
               ),
             ),

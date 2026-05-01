@@ -4,6 +4,7 @@ import 'package:uuid/uuid.dart';
 import 'package:magent_app/core/api/api_client.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class AgentConnectPage extends StatefulWidget {
   const AgentConnectPage({super.key});
@@ -14,7 +15,7 @@ class AgentConnectPage extends StatefulWidget {
 
 class _AgentConnectPageState extends State<AgentConnectPage> {
   final _formKey = GlobalKey<FormState>();
-  final _nameController = TextEditingController(text: 'My Agent');
+  final _nameController = TextEditingController();
   final _urlController = TextEditingController(text: 'http://');
   final _tokenController = TextEditingController();
   final _storage = AgentStorage();
@@ -44,15 +45,20 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Connected successfully')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(AppLocalizations.of(context)!.agentConnected)),
+        );
         context.go('/projects');
       }
     } catch (e) {
       if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '连接失败'))),
+          SnackBar(
+            content: Text(
+              localizedErrorMessage(l10n, e, action: l10n.agentsConnectFailed),
+            ),
+          ),
         );
       }
     } finally {
@@ -62,8 +68,12 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    if (_nameController.text.isEmpty) {
+      _nameController.text = l10n.agentsDefaultName;
+    }
     return Scaffold(
-      appBar: AppBar(title: const Text('Connect Agent')),
+      appBar: AppBar(title: Text(l10n.agentsConnect)),
       body: Padding(
         padding: const EdgeInsets.all(16),
         child: Form(
@@ -72,31 +82,34 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
             children: [
               TextFormField(
                 controller: _nameController,
-                decoration: const InputDecoration(
-                  labelText: 'Agent Name',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: l10n.agentsName,
+                  border: const OutlineInputBorder(),
                 ),
-                validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+                validator: (v) =>
+                    v?.isEmpty ?? true ? l10n.fieldRequired : null,
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _urlController,
-                decoration: const InputDecoration(
-                  labelText: 'Agent URL',
+                decoration: InputDecoration(
+                  labelText: l10n.agentsUrl,
                   hintText: 'http://192.168.1.100:9000',
-                  border: OutlineInputBorder(),
+                  border: const OutlineInputBorder(),
                 ),
-                validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+                validator: (v) =>
+                    v?.isEmpty ?? true ? l10n.fieldRequired : null,
               ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: _tokenController,
-                decoration: const InputDecoration(
-                  labelText: 'Token',
-                  border: OutlineInputBorder(),
+                decoration: InputDecoration(
+                  labelText: l10n.agentsToken,
+                  border: const OutlineInputBorder(),
                 ),
                 obscureText: true,
-                validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+                validator: (v) =>
+                    v?.isEmpty ?? true ? l10n.fieldRequired : null,
               ),
               const SizedBox(height: 24),
               SizedBox(
@@ -106,7 +119,7 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
                   onPressed: _connecting ? null : _connect,
                   child: _connecting
                       ? const CircularProgressIndicator()
-                      : const Text('Connect'),
+                      : Text(l10n.agentsConnect),
                 ),
               ),
             ],

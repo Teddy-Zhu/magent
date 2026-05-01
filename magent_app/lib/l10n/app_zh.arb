@@ -19,6 +19,8 @@
   "loading": "加载中...",
   "error": "错误",
   "noData": "暂无数据",
+  "operationFailed": "操作失败",
+  "agentConnectionFailure": "连接失败，请检查 agent",
 
   "navAgents": "代理",
   "navProjects": "项目",
@@ -38,6 +40,7 @@
   "agentsToken": "令牌",
   "agentsSaveFailed": "保存失败",
   "agentsConnectFailed": "连接失败",
+  "agentsDefaultName": "我的 Agent",
 
   "projectsTitle": "项目",
   "projectsEmpty": "暂无项目",
@@ -64,6 +67,7 @@
   "sessionsPromptHint": "描述你想做什么...",
   "sessionsCreateBtn": "启动会话",
   "sessionsCreateFailed": "创建会话失败",
+  "sessionsLoadConfigFailed": "加载配置失败",
   "sessionsQuickQuestion": "快速提问",
   "sessionsAutoCode": "自动编码",
   "sessionsFullTrust": "完全信任",
@@ -89,6 +93,7 @@
   "chatDeny": "拒绝",
 
   "gitTitle": "Git 状态",
+  "gitChanges": "变更",
   "gitCommit": "提交",
   "gitPush": "推送",
   "gitStage": "暂存",
@@ -98,6 +103,7 @@
   "gitBranches": "分支",
   "gitNoCommits": "暂无提交记录",
   "gitNoBranches": "暂无分支",
+  "gitCurrentBranch": "当前",
   "gitCommitMsg": "提交信息",
   "gitCommitFailed": "提交失败",
   "gitPushFailed": "推送失败",
@@ -117,6 +123,13 @@
   "settingsSession": "会话",
   "settingsSessionOpenAtBottom": "进入会话默认定位到底部",
   "settingsSessionOpenAtBottomSub": "打开会话时自动显示最后一条对话",
+  "settingsShowAiCommitSessions": "显示 AI 生成提交信息会话",
+  "settingsShowAiCommitSessionsSub": "在会话列表中包含仅用于生成提交信息的会话",
+  "settingsAppearance": "外观",
+  "settingsThemeMode": "主题模式",
+  "themeSystem": "跟随系统",
+  "themeLight": "亮色",
+  "themeDark": "暗色",
   "settingsGit": "Git 操作",
   "settingsGitManage": "Git 管理",
   "settingsGitManageSub": "状态、提交记录和分支",
@@ -129,5 +142,290 @@
   "settingsCacheManage": "缓存管理",
   "settingsCacheManageSub": "查看和清除缓存数据",
   "settingsAbout": "关于",
-  "settingsVersion": "版本"
+  "settingsVersion": "版本",
+
+  "fieldRequired": "必填",
+  "select": "选择",
+  "selectedCount": "已选择 {count} 项",
+  "@selectedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "processing": "处理中...",
+  "noAgentConnected": "未连接 Agent",
+  "untitledProject": "未命名项目",
+  "agentSelected": "已选择 Agent",
+  "agentUpdated": "Agent 已更新",
+  "agentConnected": "连接成功",
+  "agentRemoved": "已移除「{name}」",
+  "@agentRemoved": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "agentsRemove": "移除 Agent",
+  "agentsRemoveConfirm": "确定移除「{name}」？这会断开与该 Agent 的连接。",
+  "@agentsRemoveConfirm": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "agentsRemoveAction": "移除",
+  "agentsEmptySub": "连接本地或远程 Agent 后即可管理项目和会话。",
+  "agentsSaveVerify": "保存并验证",
+
+  "projectsEmptySub": "添加一个工作目录后即可创建会话、查看变更和浏览文件。",
+
+  "statusRunning": "运行中",
+  "statusCompleted": "已完成",
+  "statusStopped": "已停止",
+  "statusFailed": "失败",
+  "statusLost": "已丢失",
+  "statusUnknown": "未知",
+
+  "sessionsEmptyYet": "暂无会话",
+  "sessionsEmptySub": "启动一个新的 AI 编码会话",
+  "sessionPurposeAiCommit": "AI 提交",
+  "sessionsLoadMore": "还有 {count} 个更早会话，点击加载",
+  "@sessionsLoadMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "timeDaysAgo": "{count} 天前",
+  "@timeDaysAgo": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "timeHoursAgo": "{count} 小时前",
+  "@timeHoursAgo": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "timeMinutesAgo": "{count} 分钟前",
+  "@timeMinutesAgo": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "timeNow": "刚刚",
+
+  "chatSendFailed": "发送失败",
+  "chatStartFailed": "启动失败",
+  "chatInterruptFailed": "中断失败",
+  "chatStopFailed": "停止失败",
+  "chatApprovalFailed": "审批失败",
+  "chatLoadSkillsFailed": "加载技能失败",
+  "chatRunningTitle": "当前正在处理",
+  "chatRunningSubtitle": "选择这条新消息的处理方式",
+  "chatQueueMessage": "加入等待队列",
+  "chatQueueMessageSub": "当前回复完成后自动发送，适合追加新任务。",
+  "chatInterruptAndSend": "打断并发送",
+  "chatInterruptAndSendSub": "停止当前回复，再立刻处理这条消息。",
+  "chatSessionLostTitle": "会话已失效",
+  "chatSessionLostContent": "此会话在服务器上已不存在，可能是因为服务器重启。请创建新会话。",
+  "chatInterruptSent": "已发送中断请求",
+  "chatStopSession": "停止会话",
+  "chatStopConfirm": "确定要停止此会话吗？",
+  "chatSessionStopped": "会话已停止",
+  "chatNoSkills": "当前没有可用技能",
+  "chatMissingProject": "当前会话缺少项目信息",
+  "chatRefresh": "刷新",
+  "chatCreateNewSession": "创建新会话",
+  "chatSessionEnded": "会话已结束",
+  "chatNoMessages": "暂无消息",
+  "chatSessionNotStarted": "会话未启动",
+  "chatStarting": "启动中...",
+  "chatStartSession": "启动会话",
+  "chatNewSession": "新建会话",
+  "chatPlan": "计划",
+  "chatReasoningSummary": "推理摘要",
+  "chatDiffSummary": "变更摘要",
+  "chatCommandOutput": "命令输出",
+  "chatFileChangeOutput": "文件变更输出",
+  "chatCommand": "命令",
+  "chatFileChange": "文件变更",
+  "chatReadFile": "读取文件",
+  "chatTurnStarted": "开始处理...",
+  "chatTurnCompleted": "处理完成",
+  "chatTurnFailed": "处理失败",
+  "chatApprovalResolved": "审批已处理",
+  "chatExited": "会话已退出 (code: {code})",
+  "@chatExited": {
+    "placeholders": {
+      "code": {}
+    }
+  },
+  "chatPlanUpdated": "计划已更新",
+  "chatReasoningUpdated": "推理摘要已更新",
+  "chatFileUpdated": "文件已更新",
+  "chatFileCount": "{count} 个文件",
+  "@chatFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatRunningQueued": "正在生成回复，队列中还有 {count} 条消息",
+  "@chatRunningQueued": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatRunningHint": "正在生成回复，继续发送可选择排队或打断后发送",
+  "chatQueuedInputs": "已加入等待队列：{count} 条",
+  "@chatQueuedInputs": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatTemplatesTooltip": "历史消息和模板",
+  "chatSkillsTooltip": "调用技能",
+  "chatFilesTooltip": "引用工作区文件",
+  "chatChooseSkill": "选择技能",
+  "chatChooseWorkspaceFile": "选择工作区文件",
+  "chatCollapsedEvents": "已折叠 {count} 条更早消息",
+  "@chatCollapsedEvents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "expand": "展开",
+  "collapse": "收起",
+  "approvalRequired": "需要审批",
+  "approvalUnknownAction": "未知操作",
+  "approvalAllowSession": "本次允许",
+
+  "templatesSaveAs": "保存为模板",
+  "templatesNameHint": "模板名称",
+  "templatesRecent": "最近消息",
+  "templatesSaved": "保存的模板",
+  "templatesNoRecent": "暂无最近消息",
+  "templatesNoSaved": "暂无保存的模板",
+  "templatesDelete": "删除模板",
+
+  "providersTitle": "提供者",
+  "providersEmpty": "暂无提供者",
+  "providersAvailable": "可用",
+  "providersUnavailable": "不可用",
+  "providersNotAvailable": "不可用",
+  "providersBinary": "执行文件",
+  "providersMode": "模式",
+  "providersCapabilities": "能力",
+  "providersUnknown": "未知",
+  "capabilityResume": "恢复会话",
+  "capabilityFork": "派生会话",
+  "capabilitySteer": "追加指令",
+  "capabilityInterrupt": "中断",
+  "capabilityCompact": "压缩上下文",
+  "capabilityRollback": "回滚",
+  "capabilityApproval": "审批",
+  "capabilityFileSystem": "文件系统",
+  "capabilityMcp": "MCP",
+  "capabilityPty": "PTY",
+  "capabilityStreaming": "流式输出",
+  "capabilityStructuredOutput": "结构化输出",
+
+  "cacheClear": "清除",
+  "cacheClearAll": "全部清除",
+  "cacheClearAllCaches": "清除所有缓存",
+  "cacheClearAllDisplayCaches": "清除所有展示缓存",
+  "cacheClearConfirm": "这只会移除本地展示缓存。Provider 历史、Git 状态和文件仍以真实数据为准。",
+  "cacheGitDisplay": "Git 展示缓存",
+  "cacheFileDisplay": "文件展示缓存",
+  "cacheSessionDisplay": "会话展示缓存",
+  "cacheCleared": "{name} 缓存已清除",
+  "@cacheCleared": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "cacheEntries": "{count} 条记录",
+  "@cacheEntries": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+
+  "gitStatus": "状态",
+  "gitLog": "记录",
+  "gitPull": "拉取",
+  "gitRoot": "根目录",
+  "gitPullFailed": "拉取失败",
+  "gitPullSuccessful": "拉取成功",
+  "gitPushSuccessful": "推送成功",
+  "gitStageFailed": "暂存失败",
+  "gitUnstageFailed": "取消暂存失败",
+  "gitDiscardFailed": "丢弃失败",
+  "gitDiscardChanges": "放弃更改",
+  "gitDiscardChangesConfirm": "确定放弃 {count} 个文件的更改？此操作不可撤销。",
+  "@gitDiscardChangesConfirm": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "gitForcePush": "强制推送",
+  "gitForcePushConfirm": "强制推送会覆盖远端历史，是否继续？",
+  "gitStaged": "已暂存",
+  "gitUnstaged": "未暂存",
+  "gitWorkingTreeClean": "工作区干净",
+  "gitNoStagedFiles": "暂无已暂存文件",
+  "gitNoUnstagedFiles": "暂无未暂存文件",
+  "gitNoFilesChanged": "没有文件变更",
+  "gitBinaryFile": "二进制文件",
+  "gitBinaryFileDiffUnavailable": "二进制文件无法显示 Diff",
+  "gitNoTextChanges": "没有文本变更",
+  "gitCannotDisplayImage": "无法显示图片：缺少文件 API",
+  "gitImageDataUnavailable": "图片数据不可用",
+  "gitLoadImageFailed": "加载图片失败",
+  "gitLoadDiffFailed": "加载 Diff 失败",
+  "gitAiMessageGenerated": "AI 已生成提交信息",
+  "gitAiReturnedEmpty": "AI 返回内容为空",
+  "gitAiSuggestionFailed": "AI 生成失败",
+  "gitCommitMessageRequired": "提交信息不能为空",
+  "gitCommitSuccessful": "提交成功",
+  "gitCommitMessageHint": "feat: describe your changes...",
+  "gitAiSuggest": "AI 建议",
+  "gitGenerating": "生成中...",
+  "gitAiGenerateMessage": "AI 生成提交信息",
+  "gitStageAllChanges": "暂存所有更改 (-a)",
+  "wrap": "换行",
+  "noWrap": "不换行",
+  "enableWrap": "启用换行",
+  "disableWrap": "关闭换行",
+  "loadMore": "加载更多",
+
+  "filesReadFailed": "读取失败",
+  "filesLoadFailed": "加载失败",
+  "filesNoSubdirectories": "没有子目录",
+  "filesSelectPath": "选择：{path}",
+  "@filesSelectPath": {
+    "placeholders": {
+      "path": {}
+    }
+  }
 }

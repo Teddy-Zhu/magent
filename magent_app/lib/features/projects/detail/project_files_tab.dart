@@ -8,6 +8,7 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class ProjectFilesTab extends StatefulWidget {
   final String projectId;
@@ -71,7 +72,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = userFriendlyErrorMessage(e);
+          _error = localizedErrorMessage(AppLocalizations.of(context)!, e);
         });
       }
     }
@@ -107,8 +108,8 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       await widget.git.pull(widget.projectId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Pull successful'),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.gitPullSuccessful),
             backgroundColor: Colors.green,
           ),
         );
@@ -118,7 +119,13 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(userFriendlyErrorMessage(e, action: 'Pull 失败')),
+            content: Text(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
+                e,
+                action: AppLocalizations.of(context)!.gitPullFailed,
+              ),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -133,8 +140,8 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       await widget.git.push(widget.projectId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Push successful'),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.gitPushSuccessful),
             backgroundColor: Colors.green,
           ),
         );
@@ -143,7 +150,13 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(userFriendlyErrorMessage(e, action: 'Push 失败')),
+            content: Text(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
+                e,
+                action: AppLocalizations.of(context)!.gitPushFailed,
+              ),
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -166,6 +179,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
   @override
   Widget build(BuildContext context) {
     final canGoUp = _pathStack.length > 1;
+    final l10n = AppLocalizations.of(context)!;
 
     return PopScope(
       canPop: !canGoUp,
@@ -194,7 +208,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                       minHeight: 32,
                     ),
                     onPressed: _navigateToRoot,
-                    tooltip: 'Root',
+                    tooltip: l10n.gitRoot,
                   ),
                 const SizedBox(width: 4),
                 Expanded(
@@ -217,7 +231,10 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                   child: OutlinedButton.icon(
                     onPressed: () => _showGitLog(context),
                     icon: const Icon(Icons.history, size: 14),
-                    label: const Text('Log', style: TextStyle(fontSize: 11)),
+                    label: Text(
+                      l10n.gitLog,
+                      style: const TextStyle(fontSize: 11),
+                    ),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       minimumSize: Size.zero,
@@ -238,7 +255,10 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                             child: CircularProgressIndicator(strokeWidth: 1.5),
                           )
                         : const Icon(Icons.download, size: 14),
-                    label: const Text('Pull', style: TextStyle(fontSize: 11)),
+                    label: Text(
+                      l10n.gitPull,
+                      style: const TextStyle(fontSize: 11),
+                    ),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       minimumSize: Size.zero,
@@ -253,7 +273,10 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                   child: OutlinedButton.icon(
                     onPressed: _push,
                     icon: const Icon(Icons.upload, size: 14),
-                    label: const Text('Push', style: TextStyle(fontSize: 11)),
+                    label: Text(
+                      l10n.gitPush,
+                      style: const TextStyle(fontSize: 11),
+                    ),
                     style: OutlinedButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 8),
                       minimumSize: Size.zero,
@@ -373,7 +396,15 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         _showImageSheetFromRaw(path, resp);
       }
     } catch (e) {
-      if (mounted) _showSnackBar(userFriendlyErrorMessage(e, action: '读取失败'));
+      if (mounted) {
+        _showSnackBar(
+          localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            e,
+            action: AppLocalizations.of(context)!.filesReadFailed,
+          ),
+        );
+      }
     }
   }
 
@@ -440,7 +471,15 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         ).whenComplete(notifier.dispose);
       }
     } catch (e) {
-      if (mounted) _showSnackBar(userFriendlyErrorMessage(e, action: '读取失败'));
+      if (mounted) {
+        _showSnackBar(
+          localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            e,
+            action: AppLocalizations.of(context)!.filesReadFailed,
+          ),
+        );
+      }
     }
   }
 
@@ -476,7 +515,15 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         ).whenComplete(notifier.dispose);
       }
     } catch (e) {
-      if (mounted) _showSnackBar(userFriendlyErrorMessage(e, action: '读取失败'));
+      if (mounted) {
+        _showSnackBar(
+          localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            e,
+            action: AppLocalizations.of(context)!.filesReadFailed,
+          ),
+        );
+      }
     }
   }
 
@@ -681,9 +728,12 @@ class _GitLogSheetState extends State<_GitLogSheet> {
                 children: [
                   const Icon(Icons.history, size: 18),
                   const SizedBox(width: 8),
-                  const Text(
-                    'Commit Log',
-                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                  Text(
+                    AppLocalizations.of(context)!.gitCommitLog,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 16,
+                    ),
                   ),
                   const Spacer(),
                   IconButton(
@@ -697,7 +747,9 @@ class _GitLogSheetState extends State<_GitLogSheet> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _commits.isEmpty
-                  ? const Center(child: Text('No commits'))
+                  ? Center(
+                      child: Text(AppLocalizations.of(context)!.gitNoCommits),
+                    )
                   : NotificationListener<ScrollNotification>(
                       onNotification: (n) {
                         if (n is ScrollEndNotification &&
@@ -775,7 +827,7 @@ class _GitLogSheetState extends State<_GitLogSheet> {
       if (diff.inDays > 0) return '${diff.inDays}d';
       if (diff.inHours > 0) return '${diff.inHours}h';
       if (diff.inMinutes > 0) return '${diff.inMinutes}m';
-      return 'now';
+      return AppLocalizations.of(context)!.timeNow;
     } catch (_) {
       return timestamp;
     }
@@ -889,9 +941,11 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: widget.hash));
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Copied'),
-                              duration: Duration(seconds: 1),
+                            SnackBar(
+                              content: Text(
+                                AppLocalizations.of(context)!.copied,
+                              ),
+                              duration: const Duration(seconds: 1),
                             ),
                           );
                         },
@@ -914,7 +968,11 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _files.isEmpty
-                  ? const Center(child: Text('No files changed'))
+                  ? Center(
+                      child: Text(
+                        AppLocalizations.of(context)!.gitNoFilesChanged,
+                      ),
+                    )
                   : ListView.builder(
                       controller: scrollController,
                       itemCount: _files.length,
@@ -1029,7 +1087,11 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _content = userFriendlyErrorMessage(e, action: '加载失败');
+          _content = localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            e,
+            action: AppLocalizations.of(context)!.filesLoadFailed,
+          );
         });
       }
     }
@@ -1062,7 +1124,9 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
                     ),
                   ),
                   Tooltip(
-                    message: _wrap ? 'No wrap' : 'Wrap',
+                    message: _wrap
+                        ? AppLocalizations.of(context)!.noWrap
+                        : AppLocalizations.of(context)!.wrap,
                     child: IconButton(
                       icon: Icon(
                         _wrap ? Icons.wrap_text : Icons.horizontal_rule,
@@ -1076,9 +1140,9 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: _content));
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Copied'),
-                          duration: Duration(seconds: 1),
+                        SnackBar(
+                          content: Text(AppLocalizations.of(context)!.copied),
+                          duration: const Duration(seconds: 1),
                         ),
                       );
                     },
@@ -1366,7 +1430,9 @@ class _CodeSheetState extends State<_CodeSheet> {
                         ),
                       ),
                       Tooltip(
-                        message: _wrap ? 'No wrap' : 'Wrap',
+                        message: _wrap
+                            ? AppLocalizations.of(context)!.noWrap
+                            : AppLocalizations.of(context)!.wrap,
                         child: IconButton(
                           icon: Icon(
                             _wrap ? Icons.wrap_text : Icons.horizontal_rule,
@@ -1380,9 +1446,11 @@ class _CodeSheetState extends State<_CodeSheet> {
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: content));
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Copied'),
-                              duration: Duration(seconds: 1),
+                            SnackBar(
+                              content: Text(
+                                AppLocalizations.of(context)!.copied,
+                              ),
+                              duration: const Duration(seconds: 1),
                             ),
                           );
                         },
@@ -1467,7 +1535,9 @@ class _TextFileSheetState extends State<_TextFileSheet> {
                         ),
                       ),
                       Tooltip(
-                        message: _wrap ? 'No wrap' : 'Wrap',
+                        message: _wrap
+                            ? AppLocalizations.of(context)!.noWrap
+                            : AppLocalizations.of(context)!.wrap,
                         child: IconButton(
                           icon: Icon(
                             _wrap ? Icons.wrap_text : Icons.horizontal_rule,
@@ -1481,9 +1551,11 @@ class _TextFileSheetState extends State<_TextFileSheet> {
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: content));
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Copied'),
-                              duration: Duration(seconds: 1),
+                            SnackBar(
+                              content: Text(
+                                AppLocalizations.of(context)!.copied,
+                              ),
+                              duration: const Duration(seconds: 1),
                             ),
                           );
                         },

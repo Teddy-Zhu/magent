@@ -14,6 +14,7 @@ import 'package:magent_app/core/session/session_language.dart';
 import 'package:magent_app/core/services/app_settings_service.dart';
 import 'package:magent_app/core/services/message_template_service.dart';
 import 'package:magent_app/features/sessions/widgets/message_template_sheet.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   final String sessionId;
@@ -309,14 +310,30 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       } else {
         _restoreInputDraft(previousInput, previousItems, previousSkills);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '发送失败'))),
+          SnackBar(
+            content: Text(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
+                e,
+                action: AppLocalizations.of(context)!.chatSendFailed,
+              ),
+            ),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         _restoreInputDraft(previousInput, previousItems, previousSkills);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '发送失败'))),
+          SnackBar(
+            content: Text(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
+                e,
+                action: AppLocalizations.of(context)!.chatSendFailed,
+              ),
+            ),
+          ),
         );
       }
     }
@@ -340,6 +357,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Future<String?> _chooseRunningSendMode() {
+    final l10n = AppLocalizations.of(context)!;
     return showModalBottomSheet<String>(
       context: context,
       showDragHandle: true,
@@ -347,26 +365,26 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const ListTile(
-              leading: Icon(Icons.bolt_outlined),
-              title: Text('当前正在处理'),
-              subtitle: Text('选择这条新消息的处理方式'),
+            ListTile(
+              leading: const Icon(Icons.bolt_outlined),
+              title: Text(l10n.chatRunningTitle),
+              subtitle: Text(l10n.chatRunningSubtitle),
             ),
             ListTile(
               leading: const Icon(Icons.playlist_add),
-              title: const Text('加入等待队列'),
-              subtitle: const Text('当前回复完成后自动发送，适合追加新任务'),
+              title: Text(l10n.chatQueueMessage),
+              subtitle: Text(l10n.chatQueueMessageSub),
               onTap: () => Navigator.pop(ctx, _sendModeQueue),
             ),
             ListTile(
               leading: const Icon(Icons.stop_circle_outlined),
-              title: const Text('打断并发送'),
-              subtitle: const Text('停止当前回复，再立刻处理这条消息'),
+              title: Text(l10n.chatInterruptAndSend),
+              subtitle: Text(l10n.chatInterruptAndSendSub),
               onTap: () => Navigator.pop(ctx, _sendModeInterruptThenSend),
             ),
             ListTile(
               leading: const Icon(Icons.close),
-              title: const Text('取消'),
+              title: Text(l10n.cancel),
               onTap: () => Navigator.pop(ctx),
             ),
             const SizedBox(height: 8),
@@ -377,22 +395,23 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   void _showSessionLostDialog() {
+    final l10n = AppLocalizations.of(context)!;
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('会话已失效'),
-        content: const Text('此会话在服务器上已不存在，可能是因为服务器重启。请创建新会话。'),
+        title: Text(l10n.chatSessionLostTitle),
+        content: Text(l10n.chatSessionLostContent),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('取消'),
+            child: Text(l10n.cancel),
           ),
           FilledButton(
             onPressed: () {
               Navigator.pop(ctx);
               context.pop();
             },
-            child: const Text('返回'),
+            child: Text(l10n.back),
           ),
         ],
       ),
@@ -413,13 +432,29 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         _showSessionLostDialog();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '启动失败'))),
+          SnackBar(
+            content: Text(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
+                e,
+                action: AppLocalizations.of(context)!.chatStartFailed,
+              ),
+            ),
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '启动失败'))),
+          SnackBar(
+            content: Text(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
+                e,
+                action: AppLocalizations.of(context)!.chatStartFailed,
+              ),
+            ),
+          ),
         );
       }
     } finally {
@@ -433,13 +468,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       await _api!.session.interrupt(widget.sessionId);
       if (mounted) {
         setState(() => _turnActive = false);
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('已发送中断请求')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.chatInterruptSent),
+          ),
+        );
       }
     } on DioException catch (e) {
       if (mounted) {
-        final msg = userFriendlyErrorMessage(e, action: '中断失败');
+        final l10n = AppLocalizations.of(context)!;
+        final msg = localizedErrorMessage(
+          l10n,
+          e,
+          action: l10n.chatInterruptFailed,
+        );
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(msg)));
@@ -447,7 +489,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '中断失败'))),
+          SnackBar(
+            content: Text(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
+                e,
+                action: AppLocalizations.of(context)!.chatInterruptFailed,
+              ),
+            ),
+          ),
         );
       }
     }
@@ -455,19 +505,23 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _stop() async {
     if (_api == null) return;
+    final l10n = AppLocalizations.of(context)!;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('停止会话'),
-        content: const Text('确定要停止此会话吗？'),
+        title: Text(l10n.chatStopSession),
+        content: Text(l10n.chatStopConfirm),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(l10n.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('停止', style: TextStyle(color: Colors.red)),
+            child: Text(
+              l10n.chatStop,
+              style: const TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -482,12 +536,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         });
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(const SnackBar(content: Text('会话已停止')));
+        ).showSnackBar(SnackBar(content: Text(l10n.chatSessionStopped)));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '停止失败'))),
+          SnackBar(
+            content: Text(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
+                e,
+                action: AppLocalizations.of(context)!.chatStopFailed,
+              ),
+            ),
+          ),
         );
       }
     }
@@ -500,7 +562,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '审批失败'))),
+          SnackBar(
+            content: Text(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
+                e,
+                action: AppLocalizations.of(context)!.chatApprovalFailed,
+              ),
+            ),
+          ),
         );
       }
     }
@@ -571,9 +641,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
     if (!mounted) return;
     if (_skills.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('当前没有可用技能')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppLocalizations.of(context)!.chatNoSkills)),
+      );
       return;
     }
     final selected = await _SkillPickerSheet.show(context, _skills);
@@ -598,7 +668,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     } catch (e) {
       if (!mounted || !showError) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(userFriendlyErrorMessage(e, action: '加载技能失败'))),
+        SnackBar(
+          content: Text(
+            localizedErrorMessage(
+              AppLocalizations.of(context)!,
+              e,
+              action: AppLocalizations.of(context)!.chatLoadSkillsFailed,
+            ),
+          ),
+        ),
       );
     }
   }
@@ -608,9 +686,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final projectId = await _resolveProjectId();
     if (!mounted) return;
     if (projectId == null || projectId.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('当前会话缺少项目信息')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.chatMissingProject),
+        ),
+      );
       return;
     }
     final selected = await _WorkspaceFilePickerSheet.show(
@@ -783,8 +863,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final status = SessionStatuses.normalizeOrStopped(_session?['status']);
-    final title = _session?['title'] as String? ?? 'Session';
+    final title = _session?['title'] as String? ?? l10n.chatTitle;
     final provider = _session == null
         ? null
         : canonicalProviderId(Map<String, dynamic>.from(_session!));
@@ -802,7 +883,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 _StatusDot(status: status),
                 const SizedBox(width: 4),
                 Text(
-                  SessionStatuses.label(status),
+                  _sessionStatusLabel(l10n, status),
                   style: TextStyle(fontSize: 12, color: _statusColor(status)),
                 ),
                 if (provider != null && provider.isNotEmpty) ...[
@@ -823,13 +904,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           IconButton(
             icon: const Icon(Icons.refresh),
             onPressed: _loadItems,
-            tooltip: '刷新',
+            tooltip: l10n.chatRefresh,
           ),
           if (_isRunning)
             IconButton(
               icon: const Icon(Icons.stop_circle_outlined),
               onPressed: _stop,
-              tooltip: '停止会话',
+              tooltip: l10n.chatStopSession,
               color: Colors.red,
             ),
         ],
@@ -869,6 +950,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Widget _buildEmptyState() {
+    final l10n = AppLocalizations.of(context)!;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -876,7 +958,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey[300]),
           const SizedBox(height: 12),
           Text(
-            _isExited ? '会话已结束' : '暂无消息',
+            _isExited ? l10n.chatSessionEnded : l10n.chatNoMessages,
             style: TextStyle(color: Colors.grey[500], fontSize: 15),
           ),
           if (_isExited) ...[
@@ -885,7 +967,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               onPressed: () =>
                   context.push('/sessions/${widget.sessionId}/fork'),
               icon: const Icon(Icons.fork_right, size: 16),
-              label: const Text('创建新会话'),
+              label: Text(l10n.chatCreateNewSession),
             ),
           ],
         ],
@@ -894,6 +976,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Widget _buildIdleBar() {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
       decoration: BoxDecoration(
@@ -916,7 +999,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ),
           const SizedBox(height: 8),
           Text(
-            '会话未启动',
+            l10n.chatSessionNotStarted,
             style: TextStyle(color: Colors.grey[600], fontSize: 14),
           ),
           const SizedBox(height: 12),
@@ -929,7 +1012,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.play_arrow),
-            label: Text(_resuming ? '启动中...' : '启动会话'),
+            label: Text(_resuming ? l10n.chatStarting : l10n.chatStartSession),
           ),
         ],
       ),
@@ -937,6 +1020,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Widget _buildExitedBar() {
+    final l10n = AppLocalizations.of(context)!;
     final status = SessionStatuses.normalizeOrStopped(_session?['status']);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -955,7 +1039,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           Icon(Icons.info_outline, size: 16, color: Colors.grey[500]),
           const SizedBox(width: 8),
           Text(
-            '会话${SessionStatuses.label(status)}',
+            '${l10n.settingsSession}${_sessionStatusLabel(l10n, status)}',
             style: TextStyle(color: Colors.grey[600], fontSize: 13),
           ),
           const Spacer(),
@@ -965,7 +1049,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               context.pop();
             },
             icon: const Icon(Icons.add, size: 16),
-            label: const Text('新建会话'),
+            label: Text(l10n.chatNewSession),
           ),
         ],
       ),
@@ -973,6 +1057,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Widget _buildInputBar() {
+    final l10n = AppLocalizations.of(context)!;
     return Container(
       padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
       decoration: BoxDecoration(
@@ -992,14 +1077,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             _RunningTurnBar(
               queuedCount: _queuedInputCount,
               onInterrupt: _interrupt,
+              l10n: l10n,
             ),
             const SizedBox(height: 8),
           ] else if (_queuedInputCount > 0) ...[
-            _QueuedInputBar(count: _queuedInputCount),
+            _QueuedInputBar(count: _queuedInputCount, l10n: l10n),
             const SizedBox(height: 8),
           ],
           _InputToolbar(
             selectedSkills: _selectedSkills,
+            l10n: l10n,
             onTemplates: _openTemplates,
             onSkill: _openSkillPicker,
             onFile: _openFilePicker,
@@ -1019,7 +1106,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 child: TextField(
                   controller: _inputController,
                   decoration: InputDecoration(
-                    hintText: '输入消息...',
+                    hintText: l10n.chatInputHint,
                     border: const OutlineInputBorder(),
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 12,
@@ -1045,6 +1132,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Widget _buildEventWidget(Map<String, dynamic> event) {
+    final l10n = AppLocalizations.of(context)!;
     final type = event['type'] as String? ?? '';
     final data = event['data'];
 
@@ -1064,7 +1152,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       case SessionEventTypes.planUpdated:
         return _StructuredInfoCard(
           icon: Icons.checklist,
-          title: '计划',
+          title: l10n.chatPlan,
           content: _planText(data),
         );
       case SessionEventTypes.reasoning:
@@ -1073,49 +1161,52 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       case SessionEventTypes.reasoningSummaryPart:
         return _StructuredInfoCard(
           icon: Icons.psychology_outlined,
-          title: '推理摘要',
+          title: l10n.chatReasoningSummary,
           content: _reasoningText(data),
         );
       case SessionEventTypes.diffUpdated:
         return _StructuredInfoCard(
           icon: Icons.difference_outlined,
-          title: '变更摘要',
-          content: data?['diff']?.toString() ?? 'Diff updated',
+          title: l10n.chatDiffSummary,
+          content: data?['diff']?.toString() ?? l10n.chatDiffSummary,
           monospace: true,
         );
       case SessionEventTypes.commandOutputDelta:
         return _ToolCallCard(
           icon: Icons.terminal,
-          title: _commandTitle(data?['command'], fallback: '命令输出'),
+          title: _commandTitle(
+            data?['command'],
+            fallback: l10n.chatCommandOutput,
+          ),
           output: _toolText(data?['delta'] ?? data?['output']),
           success: true,
         );
       case SessionEventTypes.fileChangeOutputDelta:
         return _ToolCallCard(
           icon: Icons.edit_note,
-          title: _toolText(data?['path'], fallback: '文件变更输出'),
+          title: _toolText(data?['path'], fallback: l10n.chatFileChangeOutput),
           output: _toolText(data?['delta'] ?? data?['output']),
           success: true,
         );
       case SessionEventTypes.commandCompleted:
         return _ToolCallCard(
           icon: Icons.terminal,
-          title: _commandTitle(data?['command'], fallback: '命令'),
+          title: _commandTitle(data?['command'], fallback: l10n.chatCommand),
           output: _toolText(data?['output']),
           success: data?['exit_code'] == 0,
         );
       case SessionEventTypes.fileWrite:
         return _ToolCallCard(
           icon: Icons.edit_note,
-          title: _toolText(data?['path'], fallback: '文件变更'),
+          title: _toolText(data?['path'], fallback: l10n.chatFileChange),
           output: _fileChangeSummary(data),
           success: true,
         );
       case SessionEventTypes.fileRead:
         return _ToolCallCard(
           icon: Icons.visibility_outlined,
-          title: _toolText(data?['path'], fallback: '读取文件'),
-          output: '读取文件',
+          title: _toolText(data?['path'], fallback: l10n.chatReadFile),
+          output: l10n.chatReadFile,
           success: true,
         );
       case SessionEventTypes.mcpToolCompleted:
@@ -1129,12 +1220,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           success: data?['error'] == null,
         );
       case SessionEventTypes.turnStarted:
-        return _InfoChip(label: '开始处理...', icon: Icons.play_circle_outline);
+        return _InfoChip(
+          label: l10n.chatTurnStarted,
+          icon: Icons.play_circle_outline,
+        );
       case SessionEventTypes.turnCompleted:
-        return _InfoChip(label: '处理完成', icon: Icons.check_circle_outline);
+        return _InfoChip(
+          label: l10n.chatTurnCompleted,
+          icon: Icons.check_circle_outline,
+        );
       case SessionEventTypes.turnFailed:
         return _InfoChip(
-          label: '处理失败',
+          label: l10n.chatTurnFailed,
           icon: Icons.error_outline,
           isError: true,
         );
@@ -1149,12 +1246,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           onRespond: (action) => _respondApproval(approvalId, action),
         );
       case SessionEventTypes.approvalResolved:
-        return _InfoChip(label: '审批已处理', icon: Icons.check_circle_outline);
+        return _InfoChip(
+          label: l10n.chatApprovalResolved,
+          icon: Icons.check_circle_outline,
+        );
       case SessionEventTypes.error:
         return _ErrorCard(
           message: _toolText(
             data?['error'] ?? data?['message'],
-            fallback: 'Unknown error',
+            fallback: l10n.error,
           ),
         );
       case SessionEventTypes.exited:
@@ -1162,7 +1262,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           padding: const EdgeInsets.all(16),
           child: Center(
             child: Text(
-              '会话已退出 (code: ${data?['exit_code'] ?? 0})',
+              l10n.chatExited(data?['exit_code'] ?? 0),
               style: TextStyle(color: Colors.grey[600]),
             ),
           ),
@@ -1200,7 +1300,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       }
       return lines.join('\n');
     }
-    return explanation ?? '计划已更新';
+    return explanation ?? AppLocalizations.of(context)!.chatPlanUpdated;
   }
 
   String _reasoningText(dynamic data) {
@@ -1215,7 +1315,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (parts is List && parts.isNotEmpty) {
       return parts.map((e) => e.toString()).join('\n');
     }
-    return '推理摘要已更新';
+    return AppLocalizations.of(context)!.chatReasoningUpdated;
   }
 
   String _commandTitle(dynamic command, {required String fallback}) {
@@ -1271,7 +1371,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   String _fileChangeSummary(dynamic data) {
-    if (data is! Map) return '文件已更新';
+    final l10n = AppLocalizations.of(context)!;
+    if (data is! Map) return l10n.chatFileUpdated;
     final additions = _intValue(data['additions']);
     final deletions = _intValue(data['deletions']);
     final kind = _changeKindText(data['kind']);
@@ -1281,11 +1382,30 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       parts.add('+${additions ?? 0} -${deletions ?? 0}');
     }
     final count = _intValue(data['change_count']);
-    if (count != null && count > 1) parts.add('$count 个文件');
+    if (count != null && count > 1) parts.add(l10n.chatFileCount(count));
     if (parts.isNotEmpty) return parts.join(' · ');
     final diff = data['diff']?.toString().trim();
     if (diff != null && diff.isNotEmpty) return diff;
-    return '文件已更新';
+    return l10n.chatFileUpdated;
+  }
+
+  String _sessionStatusLabel(AppLocalizations l10n, dynamic status) {
+    switch (SessionStatuses.normalize(status)) {
+      case SessionStatuses.running:
+        return l10n.statusRunning;
+      case SessionStatuses.completed:
+        return l10n.statusCompleted;
+      case SessionStatuses.stopped:
+        return l10n.statusStopped;
+      case SessionStatuses.failed:
+        return l10n.statusFailed;
+      case SessionStatuses.lost:
+        return l10n.statusLost;
+      case null:
+        return l10n.statusUnknown;
+      default:
+        return SessionStatuses.normalize(status)!;
+    }
   }
 
   int? _intValue(dynamic value) {
@@ -1342,8 +1462,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 class _RunningTurnBar extends StatelessWidget {
   final int queuedCount;
   final VoidCallback onInterrupt;
+  final AppLocalizations l10n;
 
-  const _RunningTurnBar({required this.queuedCount, required this.onInterrupt});
+  const _RunningTurnBar({
+    required this.queuedCount,
+    required this.onInterrupt,
+    required this.l10n,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1370,8 +1495,8 @@ class _RunningTurnBar extends StatelessWidget {
           Expanded(
             child: Text(
               queuedCount > 0
-                  ? '正在生成回复，队列中还有 $queuedCount 条消息'
-                  : '正在生成回复，继续发送可选择排队或打断后发送',
+                  ? l10n.chatRunningQueued(queuedCount)
+                  : l10n.chatRunningHint,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
@@ -1380,7 +1505,7 @@ class _RunningTurnBar extends StatelessWidget {
           TextButton.icon(
             onPressed: onInterrupt,
             icon: const Icon(Icons.stop_circle_outlined, size: 16),
-            label: const Text('打断'),
+            label: Text(l10n.chatInterrupt),
             style: TextButton.styleFrom(
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -1394,8 +1519,9 @@ class _RunningTurnBar extends StatelessWidget {
 
 class _QueuedInputBar extends StatelessWidget {
   final int count;
+  final AppLocalizations l10n;
 
-  const _QueuedInputBar({required this.count});
+  const _QueuedInputBar({required this.count, required this.l10n});
 
   @override
   Widget build(BuildContext context) {
@@ -1414,7 +1540,7 @@ class _QueuedInputBar extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '已加入等待队列：$count 条',
+              l10n.chatQueuedInputs(count),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
@@ -1428,6 +1554,7 @@ class _QueuedInputBar extends StatelessWidget {
 
 class _InputToolbar extends StatelessWidget {
   final List<Map<String, dynamic>> selectedSkills;
+  final AppLocalizations l10n;
   final VoidCallback onTemplates;
   final VoidCallback onSkill;
   final VoidCallback onFile;
@@ -1435,6 +1562,7 @@ class _InputToolbar extends StatelessWidget {
 
   const _InputToolbar({
     required this.selectedSkills,
+    required this.l10n,
     required this.onTemplates,
     required this.onSkill,
     required this.onFile,
@@ -1447,17 +1575,17 @@ class _InputToolbar extends StatelessWidget {
       children: [
         _ToolbarIconButton(
           icon: Icons.history,
-          tooltip: '历史消息和模板',
+          tooltip: l10n.chatTemplatesTooltip,
           onPressed: onTemplates,
         ),
         _ToolbarIconButton(
           icon: Icons.auto_awesome,
-          tooltip: '调用技能',
+          tooltip: l10n.chatSkillsTooltip,
           onPressed: onSkill,
         ),
         _ToolbarIconButton(
           icon: Icons.attach_file,
-          tooltip: '引用工作区文件',
+          tooltip: l10n.chatFilesTooltip,
           onPressed: onFile,
         ),
         const SizedBox(width: 6),
@@ -1539,7 +1667,10 @@ class _SkillPickerSheet extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const _SheetHeader(title: '选择技能', icon: Icons.auto_awesome),
+            _SheetHeader(
+              title: AppLocalizations.of(context)!.chatChooseSkill,
+              icon: Icons.auto_awesome,
+            ),
             Flexible(
               child: ListView.separated(
                 shrinkWrap: true,
@@ -1655,7 +1786,7 @@ class _WorkspaceFilePickerSheetState extends State<_WorkspaceFilePickerSheet> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = userFriendlyErrorMessage(e);
+          _error = localizedErrorMessage(AppLocalizations.of(context)!, e);
         });
       }
     }
@@ -1679,7 +1810,9 @@ class _WorkspaceFilePickerSheetState extends State<_WorkspaceFilePickerSheet> {
           mainAxisSize: MainAxisSize.min,
           children: [
             _SheetHeader(
-              title: _path.isEmpty ? '选择工作区文件' : _path,
+              title: _path.isEmpty
+                  ? AppLocalizations.of(context)!.chatChooseWorkspaceFile
+                  : _path,
               icon: Icons.attach_file,
               leading: _stack.length > 1
                   ? IconButton(
@@ -1786,7 +1919,9 @@ class _LoadMoreEventsBanner extends StatelessWidget {
         child: OutlinedButton.icon(
           onPressed: onTap,
           icon: const Icon(Icons.history, size: 16),
-          label: Text('已折叠 $hiddenCount 条更早消息'),
+          label: Text(
+            AppLocalizations.of(context)!.chatCollapsedEvents(hiddenCount),
+          ),
           style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
         ),
       ),
@@ -2021,7 +2156,11 @@ class _ExpandableBubbleState extends State<_ExpandableBubble> {
                     _expanded ? Icons.unfold_less : Icons.unfold_more,
                     size: 16,
                   ),
-                  label: Text(_expanded ? '收起' : '展开'),
+                  label: Text(
+                    _expanded
+                        ? AppLocalizations.of(context)!.collapse
+                        : AppLocalizations.of(context)!.expand,
+                  ),
                   style: TextButton.styleFrom(
                     visualDensity: VisualDensity.compact,
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -2071,7 +2210,9 @@ class _ToolCallCardState extends State<_ToolCallCard> {
   @override
   Widget build(BuildContext context) {
     final color = widget.success ? Colors.green : Colors.red;
-    final title = widget.title.trim().isEmpty ? '操作' : widget.title.trim();
+    final title = widget.title.trim().isEmpty
+        ? AppLocalizations.of(context)!.approvalUnknownAction
+        : widget.title.trim();
     final output = widget.output.trim();
 
     return Padding(
@@ -2265,15 +2406,20 @@ class _ApprovalCard extends StatelessWidget {
                     size: 20,
                   ),
                   const SizedBox(width: 8),
-                  const Text(
-                    '需要审批',
-                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  Text(
+                    AppLocalizations.of(context)!.approvalRequired,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 14,
+                    ),
                   ),
                 ],
               ),
               const SizedBox(height: 8),
               Text(
-                request?['command'] ?? request?['file_path'] ?? '未知操作',
+                request?['command'] ??
+                    request?['file_path'] ??
+                    AppLocalizations.of(context)!.approvalUnknownAction,
                 style: const TextStyle(fontSize: 13),
               ),
               const SizedBox(height: 12),
@@ -2282,17 +2428,19 @@ class _ApprovalCard extends StatelessWidget {
                 children: [
                   TextButton(
                     onPressed: () => onRespond('decline'),
-                    child: const Text('拒绝'),
+                    child: Text(AppLocalizations.of(context)!.chatDeny),
                   ),
                   const SizedBox(width: 4),
                   TextButton(
                     onPressed: () => onRespond('acceptForSession'),
-                    child: const Text('本次允许'),
+                    child: Text(
+                      AppLocalizations.of(context)!.approvalAllowSession,
+                    ),
                   ),
                   const SizedBox(width: 4),
                   FilledButton(
                     onPressed: () => onRespond('accept'),
-                    child: const Text('允许'),
+                    child: Text(AppLocalizations.of(context)!.chatApprove),
                   ),
                 ],
               ),

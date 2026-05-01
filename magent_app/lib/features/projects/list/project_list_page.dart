@@ -76,16 +76,21 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Delete Project'),
-        content: Text('Delete "$name"? This cannot be undone.'),
+        title: Text(AppLocalizations.of(context)!.projectsDelete),
+        content: Text(
+          AppLocalizations.of(context)!.projectsDeleteConfirm(name),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(AppLocalizations.of(context)!.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Delete', style: TextStyle(color: Colors.red)),
+            child: Text(
+              AppLocalizations.of(context)!.delete,
+              style: const TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -100,7 +105,11 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
               content: Text(
-                userFriendlyErrorMessage(e, action: 'Delete failed'),
+                localizedErrorMessage(
+                  AppLocalizations.of(context)!,
+                  e,
+                  action: AppLocalizations.of(context)!.projectsDeleteFailed,
+                ),
               ),
             ),
           );
@@ -216,7 +225,7 @@ class _ProjectEmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '添加一个工作目录后即可创建会话、查看变更和浏览文件。',
+              l10n.projectsEmptySub,
               textAlign: TextAlign.center,
               style: Theme.of(
                 context,
@@ -251,7 +260,9 @@ class _ProjectListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final title = name.isEmpty ? 'Untitled Project' : name;
+    final title = name.isEmpty
+        ? AppLocalizations.of(context)!.untitledProject
+        : name;
 
     return Card(
       child: InkWell(
@@ -423,7 +434,13 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(userFriendlyErrorMessage(e, action: 'Create failed')),
+            content: Text(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
+                e,
+                action: AppLocalizations.of(context)!.projectsCreateFailed,
+              ),
+            ),
           ),
         );
       }
@@ -434,29 +451,30 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return AlertDialog(
-      title: const Text('Create Project'),
+      title: Text(l10n.projectsCreate),
       content: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           TextField(
             controller: _nameController,
-            decoration: const InputDecoration(
-              labelText: 'Project Name',
-              border: OutlineInputBorder(),
+            decoration: InputDecoration(
+              labelText: l10n.projectsName,
+              border: const OutlineInputBorder(),
             ),
           ),
           const SizedBox(height: 16),
           InkWell(
             onTap: _pickDir,
             child: InputDecorator(
-              decoration: const InputDecoration(
-                labelText: 'Directory',
-                border: OutlineInputBorder(),
-                suffixIcon: Icon(Icons.folder_open),
+              decoration: InputDecoration(
+                labelText: l10n.projectsDirectory,
+                border: const OutlineInputBorder(),
+                suffixIcon: const Icon(Icons.folder_open),
               ),
               child: Text(
-                _selectedPath.isEmpty ? 'Select directory...' : _selectedPath,
+                _selectedPath.isEmpty ? l10n.projectsSelectDir : _selectedPath,
                 style: TextStyle(
                   color: _selectedPath.isEmpty ? Colors.grey : null,
                   fontSize: 13,
@@ -470,7 +488,7 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
       actions: [
         TextButton(
           onPressed: () => Navigator.pop(context),
-          child: const Text('Cancel'),
+          child: Text(l10n.cancel),
         ),
         FilledButton(
           onPressed: _creating ? null : _create,
@@ -480,7 +498,7 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
                   height: 16,
                   child: CircularProgressIndicator(strokeWidth: 2),
                 )
-              : const Text('Create'),
+              : Text(l10n.create),
         ),
       ],
     );

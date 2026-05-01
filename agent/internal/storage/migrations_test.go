@@ -67,6 +67,9 @@ func TestMigrateDropsContentCachesAndRebuildsSessions(t *testing.T) {
 	if !columns["approval_policy"] {
 		t.Fatalf("expected approval_policy column")
 	}
+	if !columns["purpose"] {
+		t.Fatalf("expected purpose column")
+	}
 
 	var lastStatus string
 	var approvalPolicy string

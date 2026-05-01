@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/storage/app_database.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class CacheSettingsPage extends ConsumerStatefulWidget {
   const CacheSettingsPage({super.key});
@@ -71,30 +72,33 @@ class _CacheSettingsPageState extends ConsumerState<CacheSettingsPage> {
     await _refreshStats();
     if (!mounted) return;
     setState(() => _clearing = false);
+    final l10n = AppLocalizations.of(context)!;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('${_labelForType(type)} cache cleared')),
+      SnackBar(content: Text(l10n.cacheCleared(_labelForType(l10n, type)))),
     );
   }
 
   void _confirmClearAll() {
+    final l10n = AppLocalizations.of(context)!;
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Clear All Caches'),
-        content: const Text(
-          'This removes local display caches only. Provider history, Git state, and files remain the source of truth.',
-        ),
+        title: Text(l10n.cacheClearAllCaches),
+        content: Text(l10n.cacheClearConfirm),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('Cancel'),
+            child: Text(l10n.cancel),
           ),
           TextButton(
             onPressed: () {
               Navigator.pop(context);
               _clearCache('all');
             },
-            child: const Text('Clear All', style: TextStyle(color: Colors.red)),
+            child: Text(
+              l10n.cacheClearAll,
+              style: const TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -103,31 +107,32 @@ class _CacheSettingsPageState extends ConsumerState<CacheSettingsPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
-      appBar: AppBar(title: const Text('Cache Management')),
+      appBar: AppBar(title: Text(l10n.settingsCacheManage)),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _api == null
-          ? const Center(child: Text('No agent connected'))
+          ? Center(child: Text(l10n.noAgentConnected))
           : RefreshIndicator(
               onRefresh: _refreshStats,
               child: ListView(
                 children: [
                   _buildCacheTile(
                     icon: Icons.alt_route,
-                    title: 'Git Display Cache',
+                    title: l10n.cacheGitDisplay,
                     stats: _git,
                     onClear: () => _clearCache('git'),
                   ),
                   _buildCacheTile(
                     icon: Icons.description,
-                    title: 'File Display Cache',
+                    title: l10n.cacheFileDisplay,
                     stats: _file,
                     onClear: () => _clearCache('file'),
                   ),
                   _buildCacheTile(
                     icon: Icons.event_note,
-                    title: 'Session Display Cache',
+                    title: l10n.cacheSessionDisplay,
                     stats: _session,
                     onClear: () => _clearCache('session'),
                   ),
@@ -137,7 +142,7 @@ class _CacheSettingsPageState extends ConsumerState<CacheSettingsPage> {
                     child: OutlinedButton.icon(
                       onPressed: _clearing ? null : _confirmClearAll,
                       icon: const Icon(Icons.delete_sweep),
-                      label: const Text('Clear All Display Caches'),
+                      label: Text(l10n.cacheClearAllDisplayCaches),
                       style: OutlinedButton.styleFrom(
                         foregroundColor: Colors.red,
                       ),
@@ -155,27 +160,30 @@ class _CacheSettingsPageState extends ConsumerState<CacheSettingsPage> {
     required CacheBucketStats stats,
     required VoidCallback onClear,
   }) {
+    final l10n = AppLocalizations.of(context)!;
     return ListTile(
       leading: Icon(icon),
       title: Text(title),
-      subtitle: Text('${stats.entries} entries · ${_formatBytes(stats.bytes)}'),
+      subtitle: Text(
+        '${l10n.cacheEntries(stats.entries)} · ${_formatBytes(stats.bytes)}',
+      ),
       trailing: TextButton(
         onPressed: _clearing || stats.entries == 0 ? null : onClear,
-        child: const Text('Clear'),
+        child: Text(l10n.cacheClear),
       ),
     );
   }
 
-  String _labelForType(String type) {
+  String _labelForType(AppLocalizations l10n, String type) {
     switch (type) {
       case 'git':
         return 'Git';
       case 'file':
-        return 'File';
+        return l10n.filesTitle;
       case 'session':
-        return 'Session';
+        return l10n.sessionsTitle;
       default:
-        return 'All';
+        return l10n.cacheClearAll;
     }
   }
 

@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 /// Shared bottom sheet for displaying git diff content.
 /// Handles text diffs, images, and binary files.
@@ -85,7 +86,7 @@ class _DiffSheetState extends State<DiffSheet> {
     if (widget.isBinary) {
       setState(() {
         _loading = false;
-        _error = 'Binary file - cannot display diff';
+        _error = AppLocalizations.of(context)!.gitBinaryFileDiffUnavailable;
       });
       return;
     }
@@ -111,7 +112,7 @@ class _DiffSheetState extends State<DiffSheet> {
     if (widget.file == null) {
       setState(() {
         _loading = false;
-        _error = 'Cannot display image - no file API';
+        _error = AppLocalizations.of(context)!.gitCannotDisplayImage;
       });
       return;
     }
@@ -131,7 +132,7 @@ class _DiffSheetState extends State<DiffSheet> {
         } else {
           setState(() {
             _loading = false;
-            _error = 'Image data not available';
+            _error = AppLocalizations.of(context)!.gitImageDataUnavailable;
           });
         }
       }
@@ -139,7 +140,11 @@ class _DiffSheetState extends State<DiffSheet> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = userFriendlyErrorMessage(e, action: '加载图片失败');
+          _error = localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            e,
+            action: AppLocalizations.of(context)!.gitLoadImageFailed,
+          );
         });
       }
     }
@@ -172,7 +177,11 @@ class _DiffSheetState extends State<DiffSheet> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = userFriendlyErrorMessage(e, action: '加载 Diff 失败');
+          _error = localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            e,
+            action: AppLocalizations.of(context)!.gitLoadDiffFailed,
+          );
         });
       }
     }
@@ -207,7 +216,11 @@ class _DiffSheetState extends State<DiffSheet> {
       if (mounted) {
         setState(() {
           _loadingMore = false;
-          _error = userFriendlyErrorMessage(e, action: '加载 Diff 失败');
+          _error = localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            e,
+            action: AppLocalizations.of(context)!.gitLoadDiffFailed,
+          );
         });
       }
     }
@@ -304,7 +317,9 @@ class _DiffSheetState extends State<DiffSheet> {
             ),
           if (_lines.isNotEmpty)
             Tooltip(
-              message: _wrap ? 'Disable wrap' : 'Enable wrap',
+              message: _wrap
+                  ? AppLocalizations.of(context)!.disableWrap
+                  : AppLocalizations.of(context)!.enableWrap,
               child: IconButton(
                 icon: Icon(
                   _wrap ? Icons.wrap_text : Icons.horizontal_rule,
@@ -335,9 +350,9 @@ class _DiffSheetState extends State<DiffSheet> {
                   Clipboard.setData(ClipboardData(text: text));
                 }
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(
-                    content: Text('Copied'),
-                    duration: Duration(seconds: 1),
+                  SnackBar(
+                    content: Text(AppLocalizations.of(context)!.copied),
+                    duration: const Duration(seconds: 1),
                   ),
                 );
               },
@@ -391,7 +406,9 @@ class _DiffSheetState extends State<DiffSheet> {
             Icon(Icons.insert_drive_file, size: 48, color: Colors.grey[400]),
             const SizedBox(height: 12),
             Text(
-              widget.isBinary ? 'Binary file' : 'No text changes',
+              widget.isBinary
+                  ? AppLocalizations.of(context)!.gitBinaryFile
+                  : AppLocalizations.of(context)!.gitNoTextChanges,
               style: TextStyle(color: Colors.grey[600], fontSize: 14),
             ),
             const SizedBox(height: 4),
@@ -420,7 +437,7 @@ class _DiffSheetState extends State<DiffSheet> {
                     )
                   : TextButton(
                       onPressed: _loadMore,
-                      child: const Text('Load more'),
+                      child: Text(AppLocalizations.of(context)!.loadMore),
                     ),
             ),
           );

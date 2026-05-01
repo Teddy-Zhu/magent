@@ -10,6 +10,7 @@ import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
 import 'package:magent_app/features/git/widgets/diff_sheet.dart';
 import 'package:magent_app/features/git/widgets/commit_sheet.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class GitManagePage extends ConsumerStatefulWidget {
   final String projectId;
@@ -71,20 +72,27 @@ class _GitManagePageState extends ConsumerState<GitManagePage>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Git'),
+        title: Text(l10n.gitTitle),
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [
-            Tab(text: 'Status', icon: Icon(Icons.compare_arrows, size: 18)),
-            Tab(text: 'Log', icon: Icon(Icons.history, size: 18)),
-            Tab(text: 'Branches', icon: Icon(Icons.account_tree, size: 18)),
+          tabs: [
+            Tab(
+              text: l10n.gitStatus,
+              icon: const Icon(Icons.compare_arrows, size: 18),
+            ),
+            Tab(text: l10n.gitLog, icon: const Icon(Icons.history, size: 18)),
+            Tab(
+              text: l10n.gitBranches,
+              icon: const Icon(Icons.account_tree, size: 18),
+            ),
           ],
         ),
       ),
       body: _api == null
-          ? const Center(child: Text('No agent connected'))
+          ? Center(child: Text(l10n.noAgentConnected))
           : TabBarView(
               controller: _tabController,
               children: [
@@ -229,7 +237,9 @@ class _StatusTabState extends State<_StatusTab>
       setState(() => _selectedPaths.clear());
       await _load();
     } catch (e) {
-      if (mounted) _showError(e, action: 'Stage failed');
+      if (mounted) {
+        _showError(e, action: AppLocalizations.of(context)!.gitStageFailed);
+      }
     } finally {
       if (mounted) setState(() => _operating = false);
     }
@@ -243,7 +253,9 @@ class _StatusTabState extends State<_StatusTab>
       setState(() => _selectedPaths.clear());
       await _load();
     } catch (e) {
-      if (mounted) _showError(e, action: 'Unstage failed');
+      if (mounted) {
+        _showError(e, action: AppLocalizations.of(context)!.gitUnstageFailed);
+      }
     } finally {
       if (mounted) setState(() => _operating = false);
     }
@@ -254,16 +266,23 @@ class _StatusTabState extends State<_StatusTab>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('放弃更改'),
-        content: Text('确定放弃 ${_selectedPaths.length} 个文件的更改？此操作不可撤销。'),
+        title: Text(AppLocalizations.of(context)!.gitDiscardChanges),
+        content: Text(
+          AppLocalizations.of(
+            context,
+          )!.gitDiscardChangesConfirm(_selectedPaths.length),
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消'),
+            child: Text(AppLocalizations.of(context)!.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('放弃', style: TextStyle(color: Colors.red)),
+            child: Text(
+              AppLocalizations.of(context)!.gitDiscard,
+              style: const TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -275,7 +294,9 @@ class _StatusTabState extends State<_StatusTab>
         setState(() => _selectedPaths.clear());
         await _load();
       } catch (e) {
-        if (mounted) _showError(e, action: 'Discard failed');
+        if (mounted) {
+          _showError(e, action: AppLocalizations.of(context)!.gitDiscardFailed);
+        }
       } finally {
         if (mounted) setState(() => _operating = false);
       }
@@ -288,15 +309,17 @@ class _StatusTabState extends State<_StatusTab>
       await widget.git.push(widget.projectId, force: force);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Push successful'),
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.gitPushSuccessful),
             backgroundColor: Colors.green,
           ),
         );
         await _load();
       }
     } catch (e) {
-      if (mounted) _showError(e, action: 'Push failed');
+      if (mounted) {
+        _showError(e, action: AppLocalizations.of(context)!.gitPushFailed);
+      }
     } finally {
       if (mounted) setState(() => _pushing = false);
     }
@@ -305,7 +328,11 @@ class _StatusTabState extends State<_StatusTab>
   void _showError(Object error, {String? action}) {
     final msg = error is String
         ? error
-        : userFriendlyErrorMessage(error, action: action);
+        : localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            error,
+            action: action,
+          );
     ScaffoldMessenger.of(
       context,
     ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
@@ -337,23 +364,21 @@ class _StatusTabState extends State<_StatusTab>
     showDialog(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Force Push'),
-        content: const Text(
-          'Force push will overwrite remote history. Continue?',
-        ),
+        title: Text(AppLocalizations.of(context)!.gitForcePush),
+        content: Text(AppLocalizations.of(context)!.gitForcePushConfirm),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
+            child: Text(AppLocalizations.of(context)!.cancel),
           ),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
               _push(force: true);
             },
-            child: const Text(
-              'Force Push',
-              style: TextStyle(color: Colors.red),
+            child: Text(
+              AppLocalizations.of(context)!.gitForcePush,
+              style: const TextStyle(color: Colors.red),
             ),
           ),
         ],
@@ -363,6 +388,7 @@ class _StatusTabState extends State<_StatusTab>
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     if (_loading) {
       return const Center(child: CircularProgressIndicator());
     }
@@ -383,8 +409,8 @@ class _StatusTabState extends State<_StatusTab>
               child: TabBar(
                 controller: _tabController,
                 tabs: [
-                  Tab(text: 'Staged ($stagedCount)'),
-                  Tab(text: 'Unstaged (${_unstagedFiles.length})'),
+                  Tab(text: '${l10n.gitStaged} ($stagedCount)'),
+                  Tab(text: '${l10n.gitUnstaged} (${_unstagedFiles.length})'),
                 ],
               ),
             ),
@@ -403,7 +429,7 @@ class _StatusTabState extends State<_StatusTab>
                           ),
                           const SizedBox(height: 12),
                           Text(
-                            'Working tree clean',
+                            l10n.gitWorkingTreeClean,
                             style: TextStyle(
                               color: Colors.grey[500],
                               fontSize: 15,
@@ -418,20 +444,20 @@ class _StatusTabState extends State<_StatusTab>
         if (_operating)
           Container(
             color: Colors.black.withValues(alpha: 0.05),
-            child: const Center(
+            child: Center(
               child: Card(
                 child: Padding(
-                  padding: EdgeInsets.all(16),
+                  padding: const EdgeInsets.all(16),
                   child: Row(
                     mainAxisSize: MainAxisSize.min,
                     children: [
-                      SizedBox(
+                      const SizedBox(
                         width: 20,
                         height: 20,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       ),
-                      SizedBox(width: 12),
-                      Text('Processing...'),
+                      const SizedBox(width: 12),
+                      Text(AppLocalizations.of(context)!.processing),
                     ],
                   ),
                 ),
@@ -516,7 +542,9 @@ class _StatusTabState extends State<_StatusTab>
         children: hasSelection
             ? [
                 Text(
-                  '${_selectedPaths.length} selected',
+                  AppLocalizations.of(
+                    context,
+                  )!.selectedCount(_selectedPaths.length),
                   style: const TextStyle(
                     fontWeight: FontWeight.w600,
                     fontSize: 13,
@@ -529,9 +557,9 @@ class _StatusTabState extends State<_StatusTab>
                     child: FilledButton(
                       onPressed: _operating ? null : _unstageSelected,
                       style: _barFilledStyle(),
-                      child: const Text(
-                        'Unstage',
-                        style: TextStyle(fontSize: 12),
+                      child: Text(
+                        AppLocalizations.of(context)!.gitUnstage,
+                        style: const TextStyle(fontSize: 12),
                       ),
                     ),
                   )
@@ -541,9 +569,9 @@ class _StatusTabState extends State<_StatusTab>
                     child: FilledButton(
                       onPressed: _operating ? null : _stageSelected,
                       style: _barFilledStyle(),
-                      child: const Text(
-                        'Stage',
-                        style: TextStyle(fontSize: 12),
+                      child: Text(
+                        AppLocalizations.of(context)!.gitStage,
+                        style: const TextStyle(fontSize: 12),
                       ),
                     ),
                   ),
@@ -553,9 +581,9 @@ class _StatusTabState extends State<_StatusTab>
                     child: OutlinedButton(
                       onPressed: _operating ? null : _discardSelected,
                       style: _barOutlinedStyle(),
-                      child: const Text(
-                        'Discard',
-                        style: TextStyle(fontSize: 12, color: Colors.red),
+                      child: Text(
+                        AppLocalizations.of(context)!.gitDiscard,
+                        style: const TextStyle(fontSize: 12, color: Colors.red),
                       ),
                     ),
                   ),
@@ -578,7 +606,10 @@ class _StatusTabState extends State<_StatusTab>
                   child: OutlinedButton.icon(
                     onPressed: _currentFiles.isNotEmpty ? _selectAll : null,
                     icon: const Icon(Icons.checklist, size: 16),
-                    label: const Text('Select', style: TextStyle(fontSize: 12)),
+                    label: Text(
+                      AppLocalizations.of(context)!.select,
+                      style: const TextStyle(fontSize: 12),
+                    ),
                     style: _barOutlinedStyle(horizontal: 10),
                   ),
                 ),
@@ -591,9 +622,9 @@ class _StatusTabState extends State<_StatusTab>
                           ? _openCommitSheet
                           : null,
                       icon: const Icon(Icons.commit, size: 16),
-                      label: const Text(
-                        'Commit',
-                        style: TextStyle(fontSize: 12),
+                      label: Text(
+                        AppLocalizations.of(context)!.gitCommit,
+                        style: const TextStyle(fontSize: 12),
                       ),
                       style: _barFilledStyle(horizontal: 10),
                     ),
@@ -651,7 +682,9 @@ class _StatusTabState extends State<_StatusTab>
     if (files.isEmpty) {
       return Center(
         child: Text(
-          _isStagedTab ? 'No staged files' : 'No unstaged files',
+          _isStagedTab
+              ? AppLocalizations.of(context)!.gitNoStagedFiles
+              : AppLocalizations.of(context)!.gitNoUnstagedFiles,
           style: TextStyle(color: Colors.grey[500]),
         ),
       );
@@ -835,7 +868,9 @@ class _LogTabState extends State<_LogTab> {
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_commits.isEmpty) return const Center(child: Text('No commits'));
+    if (_commits.isEmpty) {
+      return Center(child: Text(AppLocalizations.of(context)!.gitNoCommits));
+    }
 
     return NotificationListener<ScrollNotification>(
       onNotification: (n) {
@@ -902,7 +937,7 @@ class _LogTabState extends State<_LogTab> {
       if (diff.inDays > 0) return '${diff.inDays}d';
       if (diff.inHours > 0) return '${diff.inHours}h';
       if (diff.inMinutes > 0) return '${diff.inMinutes}m';
-      return 'now';
+      return AppLocalizations.of(context)!.timeNow;
     } catch (_) {
       return timestamp;
     }
@@ -1014,9 +1049,11 @@ class _CommitDetailSheetState extends State<_CommitDetailSheet> {
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: widget.hash));
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('Copied'),
-                              duration: Duration(seconds: 1),
+                            SnackBar(
+                              content: Text(
+                                AppLocalizations.of(context)!.copied,
+                              ),
+                              duration: const Duration(seconds: 1),
                             ),
                           );
                         },
@@ -1039,7 +1076,11 @@ class _CommitDetailSheetState extends State<_CommitDetailSheet> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _files.isEmpty
-                  ? const Center(child: Text('No files changed'))
+                  ? Center(
+                      child: Text(
+                        AppLocalizations.of(context)!.gitNoFilesChanged,
+                      ),
+                    )
                   : ListView.builder(
                       controller: scrollController,
                       itemCount: _files.length,
@@ -1150,7 +1191,11 @@ class _CommitFileDiffSheetState extends State<_CommitFileDiffSheet> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _content = userFriendlyErrorMessage(e, action: '加载失败');
+          _content = localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            e,
+            action: AppLocalizations.of(context)!.filesLoadFailed,
+          );
         });
       }
     }
@@ -1183,7 +1228,9 @@ class _CommitFileDiffSheetState extends State<_CommitFileDiffSheet> {
                     ),
                   ),
                   Tooltip(
-                    message: _wrap ? 'No wrap' : 'Wrap',
+                    message: _wrap
+                        ? AppLocalizations.of(context)!.noWrap
+                        : AppLocalizations.of(context)!.wrap,
                     child: IconButton(
                       icon: Icon(
                         _wrap ? Icons.wrap_text : Icons.horizontal_rule,
@@ -1197,9 +1244,9 @@ class _CommitFileDiffSheetState extends State<_CommitFileDiffSheet> {
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: _content));
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Copied'),
-                          duration: Duration(seconds: 1),
+                        SnackBar(
+                          content: Text(AppLocalizations.of(context)!.copied),
+                          duration: const Duration(seconds: 1),
                         ),
                       );
                     },
@@ -1329,7 +1376,9 @@ class _BranchesTabState extends State<_BranchesTab> {
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
-    if (_branches.isEmpty) return const Center(child: Text('No branches'));
+    if (_branches.isEmpty) {
+      return Center(child: Text(AppLocalizations.of(context)!.gitNoBranches));
+    }
 
     return ListView.builder(
       itemCount: _branches.length,
@@ -1359,7 +1408,10 @@ class _BranchesTabState extends State<_BranchesTab> {
           ),
           trailing: isCurrent
               ? Chip(
-                  label: const Text('current', style: TextStyle(fontSize: 10)),
+                  label: Text(
+                    AppLocalizations.of(context)!.gitCurrentBranch,
+                    style: const TextStyle(fontSize: 10),
+                  ),
                   padding: EdgeInsets.zero,
                   materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                 )

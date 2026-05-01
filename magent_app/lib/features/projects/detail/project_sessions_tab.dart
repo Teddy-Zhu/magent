@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/session/session_language.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class ProjectSessionsTab extends StatefulWidget {
   final String projectId;
@@ -36,6 +37,7 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     final sessions = widget.sessions;
 
     if (sessions.isEmpty) {
@@ -56,12 +58,12 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
                   ),
                   const SizedBox(height: 16),
                   Text(
-                    'No sessions yet',
+                    l10n.sessionsEmptyYet,
                     style: TextStyle(color: Colors.grey[500], fontSize: 16),
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    'Start a new AI coding session',
+                    l10n.sessionsEmptySub,
                     style: TextStyle(color: Colors.grey[400], fontSize: 13),
                   ),
                   const SizedBox(height: 24),
@@ -74,7 +76,7 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
                       if (mounted) await widget.onRefresh();
                     },
                     icon: const Icon(Icons.add),
-                    label: const Text('New Session'),
+                    label: Text(l10n.sessionsCreate),
                   ),
                 ],
               ),
@@ -115,9 +117,11 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
               s['title'] as String? ??
               s['preview'] as String? ??
               s['summary'] as String? ??
-              'Session';
+              l10n.chatTitle;
           final status = SessionStatuses.normalizeOrStopped(s['status']);
           final provider = canonicalProviderId(Map<String, dynamic>.from(s));
+          final isAiCommit =
+              s['purpose']?.toString() == SessionPurposes.aiCommit;
           final rawCreated = s['created_at'] ?? s['createdAt'];
           final String createdAt;
           if (rawCreated is int) {
@@ -184,8 +188,14 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
                                         ),
                                       ),
                                       const SizedBox(width: 8),
+                                      if (isAiCommit) ...[
+                                        _PurposePill(
+                                          label: l10n.sessionPurposeAiCommit,
+                                        ),
+                                        const SizedBox(width: 6),
+                                      ],
                                       _StatusPill(
-                                        label: SessionStatuses.label(status),
+                                        label: _statusLabel(l10n, status),
                                         color: statusColor,
                                       ),
                                     ],
@@ -248,15 +258,35 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
     }
   }
 
+  String _statusLabel(AppLocalizations l10n, dynamic status) {
+    switch (SessionStatuses.normalize(status)) {
+      case SessionStatuses.running:
+        return l10n.statusRunning;
+      case SessionStatuses.completed:
+        return l10n.statusCompleted;
+      case SessionStatuses.stopped:
+        return l10n.statusStopped;
+      case SessionStatuses.failed:
+        return l10n.statusFailed;
+      case SessionStatuses.lost:
+        return l10n.statusLost;
+      case null:
+        return l10n.statusUnknown;
+      default:
+        return SessionStatuses.normalize(status)!;
+    }
+  }
+
   String _formatTime(String timestamp) {
     if (timestamp.isEmpty) return '';
+    final l10n = AppLocalizations.of(context)!;
     try {
       final dt = DateTime.parse(timestamp);
       final diff = DateTime.now().difference(dt);
-      if (diff.inDays > 0) return '${diff.inDays}d ago';
-      if (diff.inHours > 0) return '${diff.inHours}h ago';
-      if (diff.inMinutes > 0) return '${diff.inMinutes}m ago';
-      return 'now';
+      if (diff.inDays > 0) return l10n.timeDaysAgo(diff.inDays);
+      if (diff.inHours > 0) return l10n.timeHoursAgo(diff.inHours);
+      if (diff.inMinutes > 0) return l10n.timeMinutesAgo(diff.inMinutes);
+      return l10n.timeNow;
     } catch (_) {
       return timestamp;
     }
@@ -281,7 +311,9 @@ class _LoadMoreSessionsBanner extends StatelessWidget {
       child: OutlinedButton.icon(
         onPressed: onTap,
         icon: const Icon(Icons.unfold_more, size: 16),
-        label: Text('还有 $hiddenCount 个更早会话，点击加载'),
+        label: Text(
+          AppLocalizations.of(context)!.sessionsLoadMore(hiddenCount),
+        ),
         style: OutlinedButton.styleFrom(
           foregroundColor: scheme.primary,
           visualDensity: VisualDensity.compact,
@@ -322,6 +354,33 @@ class _SessionStatusIcon extends StatelessWidget {
         borderRadius: BorderRadius.circular(8),
       ),
       child: Icon(icon, color: color, size: 18),
+    );
+  }
+}
+
+class _PurposePill extends StatelessWidget {
+  final String label;
+
+  const _PurposePill({required this.label});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: scheme.secondaryContainer.withValues(alpha: 0.7),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+          color: scheme.onSecondaryContainer,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
     );
   }
 }

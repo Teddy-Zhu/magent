@@ -13,19 +13,22 @@ import (
 	"github.com/magent/agent/internal/log"
 	"github.com/magent/agent/internal/project"
 	"github.com/magent/agent/internal/provider"
+	"github.com/magent/agent/internal/session"
 )
 
 type GitHandler struct {
-	gitService *gitservice.Service
-	projectMgr *project.Manager
-	registry   *provider.Registry
+	gitService   *gitservice.Service
+	projectMgr   *project.Manager
+	registry     *provider.Registry
+	sessionStore *session.SessionStore
 }
 
-func NewGitHandler(gitService *gitservice.Service, projectMgr *project.Manager, registry *provider.Registry) *GitHandler {
+func NewGitHandler(gitService *gitservice.Service, projectMgr *project.Manager, registry *provider.Registry, sessionStore *session.SessionStore) *GitHandler {
 	return &GitHandler{
-		gitService: gitService,
-		projectMgr: projectMgr,
-		registry:   registry,
+		gitService:   gitService,
+		projectMgr:   projectMgr,
+		registry:     registry,
+		sessionStore: sessionStore,
 	}
 }
 
@@ -506,6 +509,7 @@ Requirements:
 	// Create a one-shot session
 	providerReq := provider.CreateSessionRequest{
 		ProjectID:      project.ID,
+		Purpose:        string(provider.SessionPurposeAICommit),
 		Workdir:        project.Path,
 		Effort:         "low",
 		ApprovalPolicy: string(provider.ApprovalPolicyNever),
@@ -523,11 +527,25 @@ Requirements:
 		Fail(c, 500, "AI_FAILED", err.Error())
 		return
 	}
+	if h.sessionStore != nil {
+		sess.Purpose = string(provider.SessionPurposeAICommit)
+		sess.ProjectID = project.ID
+		sess.Workdir = project.Path
+		if err := h.sessionStore.Save(sess); err != nil {
+			log.Warn("git", "suggest: save ai commit session metadata failed: %v", err)
+		}
+	}
 
 	defer func() {
 		log.Info("git", "suggest: stopping session %s", sess.ID)
 		if err := p.StopSession(context.Background(), sess.ID); err != nil {
 			log.Warn("git", "suggest: stop session error: %v", err)
+		}
+		if h.sessionStore != nil {
+			sess.Status = string(provider.SessionStatusStopped)
+			if err := h.sessionStore.Update(sess); err != nil {
+				log.Warn("git", "suggest: mark ai commit session stopped failed: %v", err)
+			}
 		}
 	}()
 

@@ -20,6 +20,7 @@ func TestSessionStoreSavesControlPlaneMetadata(t *testing.T) {
 		ProviderID:     "codex",
 		ThreadID:       "thr_1",
 		ProjectID:      "p1",
+		Purpose:        string(provider.SessionPurposeAICommit),
 		Title:          "Test",
 		Workdir:        "/tmp/project",
 		Status:         string(provider.SessionStatusRunning),
@@ -42,6 +43,9 @@ func TestSessionStoreSavesControlPlaneMetadata(t *testing.T) {
 	}
 	if got.ThreadID != input.ThreadID || got.ProjectID != input.ProjectID || got.Workdir != input.Workdir {
 		t.Fatalf("metadata mismatch: got %#v", got)
+	}
+	if got.Purpose != input.Purpose {
+		t.Fatalf("purpose mismatch: got %q", got.Purpose)
 	}
 	if got.Status != input.Status {
 		t.Fatalf("last observed status mismatch: got %q", got.Status)

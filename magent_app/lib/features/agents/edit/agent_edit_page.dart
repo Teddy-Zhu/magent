@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:magent_app/core/api/api_client.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class AgentEditPage extends StatefulWidget {
   final String agentId;
@@ -61,15 +62,20 @@ class _AgentEditPageState extends State<AgentEditPage> {
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(const SnackBar(content: Text('Agent updated')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(AppLocalizations.of(context)!.agentUpdated)),
+        );
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
+        final l10n = AppLocalizations.of(context)!;
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '连接失败'))),
+          SnackBar(
+            content: Text(
+              localizedErrorMessage(l10n, e, action: l10n.agentsConnectFailed),
+            ),
+          ),
         );
       }
     } finally {
@@ -79,8 +85,9 @@ class _AgentEditPageState extends State<AgentEditPage> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
     return Scaffold(
-      appBar: AppBar(title: const Text('Edit Agent')),
+      appBar: AppBar(title: Text(l10n.agentsEdit)),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Padding(
@@ -91,29 +98,31 @@ class _AgentEditPageState extends State<AgentEditPage> {
                   children: [
                     TextFormField(
                       controller: _nameController,
-                      decoration: const InputDecoration(
-                        labelText: 'Agent Name',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.label),
+                      decoration: InputDecoration(
+                        labelText: l10n.agentsName,
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.label),
                       ),
-                      validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+                      validator: (v) =>
+                          v?.isEmpty ?? true ? l10n.fieldRequired : null,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _urlController,
-                      decoration: const InputDecoration(
-                        labelText: 'Agent URL',
+                      decoration: InputDecoration(
+                        labelText: l10n.agentsUrl,
                         hintText: 'http://192.168.1.100:9000',
-                        border: OutlineInputBorder(),
-                        prefixIcon: Icon(Icons.link),
+                        border: const OutlineInputBorder(),
+                        prefixIcon: const Icon(Icons.link),
                       ),
-                      validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+                      validator: (v) =>
+                          v?.isEmpty ?? true ? l10n.fieldRequired : null,
                     ),
                     const SizedBox(height: 16),
                     TextFormField(
                       controller: _tokenController,
                       decoration: InputDecoration(
-                        labelText: 'Token',
+                        labelText: l10n.agentsToken,
                         border: const OutlineInputBorder(),
                         prefixIcon: const Icon(Icons.key),
                         suffixIcon: IconButton(
@@ -127,7 +136,8 @@ class _AgentEditPageState extends State<AgentEditPage> {
                         ),
                       ),
                       obscureText: _obscureToken,
-                      validator: (v) => v?.isEmpty ?? true ? 'Required' : null,
+                      validator: (v) =>
+                          v?.isEmpty ?? true ? l10n.fieldRequired : null,
                     ),
                     const SizedBox(height: 24),
                     SizedBox(
@@ -137,7 +147,7 @@ class _AgentEditPageState extends State<AgentEditPage> {
                         onPressed: _saving ? null : _save,
                         child: _saving
                             ? const CircularProgressIndicator()
-                            : const Text('Save & Verify'),
+                            : Text(l10n.agentsSaveVerify),
                       ),
                     ),
                   ],

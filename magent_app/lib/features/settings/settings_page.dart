@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
+import 'package:magent_app/core/providers/app_settings_provider.dart';
 import 'package:magent_app/core/services/app_settings_service.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
@@ -18,6 +19,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   String? _defaultProvider;
   List<dynamic> _providers = [];
   bool _sessionOpenAtBottom = true;
+  bool _showAiCommitSessions = false;
+  AppThemeModeSetting _themeMode = AppThemeModeSetting.system;
   bool _loading = true;
 
   @override
@@ -30,6 +33,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     final storage = AgentStorage();
     final provider = await storage.getDefaultProvider();
     final sessionOpenAtBottom = await _settings.getSessionOpenAtBottom();
+    final showAiCommitSessions = await _settings.getShowAiCommitSessions();
+    final themeMode = await _settings.getThemeMode();
 
     final api = await loadActiveApi(ref);
     List<dynamic> providers = [];
@@ -45,6 +50,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         _defaultProvider = provider;
         _providers = providers;
         _sessionOpenAtBottom = sessionOpenAtBottom;
+        _showAiCommitSessions = showAiCommitSessions;
+        _themeMode = themeMode;
         _loading = false;
       });
     }
@@ -91,7 +98,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   context,
                   title: l10n.settingsSession,
                   icon: Icons.chat_bubble_outline,
-                  children: [_buildSessionOpenAtBottomTile(l10n)],
+                  children: [
+                    _buildSessionOpenAtBottomTile(l10n),
+                    _buildShowAiCommitSessionsTile(l10n),
+                  ],
+                ),
+                _buildSection(
+                  context,
+                  title: l10n.settingsAppearance,
+                  icon: Icons.palette_outlined,
+                  children: [_buildThemeModeTile(l10n)],
                 ),
                 _buildSection(
                   context,
@@ -102,7 +118,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       icon: Icons.compare_arrows,
                       title: l10n.settingsGitManage,
                       subtitle: l10n.settingsGitManageSub,
-                      onTap: () => context.push('/projects'),
+                      onTap: () => context.go('/projects'),
                     ),
                   ],
                 ),
@@ -158,6 +174,87 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     await _settings.setSessionOpenAtBottom(value);
     if (mounted) {
       setState(() => _sessionOpenAtBottom = value);
+    }
+  }
+
+  Widget _buildShowAiCommitSessionsTile(AppLocalizations l10n) {
+    return _SettingsTile(
+      icon: Icons.auto_fix_high,
+      title: Text(l10n.settingsShowAiCommitSessions),
+      subtitle: Text(l10n.settingsShowAiCommitSessionsSub),
+      onTap: _toggleShowAiCommitSessions,
+      trailing: Switch(
+        value: _showAiCommitSessions,
+        onChanged: (value) => _setShowAiCommitSessions(value),
+      ),
+    );
+  }
+
+  Future<void> _toggleShowAiCommitSessions() {
+    return _setShowAiCommitSessions(!_showAiCommitSessions);
+  }
+
+  Future<void> _setShowAiCommitSessions(bool value) async {
+    await ref
+        .read(showAiCommitSessionsControllerProvider.notifier)
+        .setVisible(value);
+    if (mounted) {
+      setState(() => _showAiCommitSessions = value);
+    }
+  }
+
+  Widget _buildThemeModeTile(AppLocalizations l10n) {
+    return _SettingsTile(
+      icon: Icons.dark_mode_outlined,
+      title: Text(l10n.settingsThemeMode),
+      subtitle: Text(_themeModeLabel(l10n, _themeMode)),
+      onTap: () => _showThemeModePicker(l10n),
+    );
+  }
+
+  void _showThemeModePicker(AppLocalizations l10n) {
+    showModalBottomSheet(
+      context: context,
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: AppThemeModeSetting.values.map((mode) {
+              final selected = _themeMode == mode;
+              return ListTile(
+                title: Text(_themeModeLabel(l10n, mode)),
+                leading: Icon(
+                  selected ? Icons.check_circle : Icons.circle_outlined,
+                  color: selected
+                      ? Theme.of(context).colorScheme.primary
+                      : Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+                onTap: () async {
+                  final nav = Navigator.of(context);
+                  await ref
+                      .read(themeModeControllerProvider.notifier)
+                      .setMode(mode);
+                  if (mounted) {
+                    setState(() => _themeMode = mode);
+                    nav.pop();
+                  }
+                },
+              );
+            }).toList(),
+          ),
+        );
+      },
+    );
+  }
+
+  String _themeModeLabel(AppLocalizations l10n, AppThemeModeSetting mode) {
+    switch (mode) {
+      case AppThemeModeSetting.light:
+        return l10n.themeLight;
+      case AppThemeModeSetting.dark:
+        return l10n.themeDark;
+      case AppThemeModeSetting.system:
+        return l10n.themeSystem;
     }
   }
 

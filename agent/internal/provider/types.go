@@ -10,6 +10,12 @@ const (
 	SessionStatusLost      SessionStatus = "lost"
 )
 
+type SessionPurpose string
+
+const (
+	SessionPurposeAICommit SessionPurpose = "ai_commit"
+)
+
 type ApprovalPolicy string
 
 const (

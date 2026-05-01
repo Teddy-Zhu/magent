@@ -25,14 +25,15 @@ func (s *SessionStore) Save(session *provider.Session) error {
 	configJSON, _ := json.Marshal(normalized.Config)
 	_, err := s.db.DB().Exec(`
 		INSERT INTO sessions (
-			id, provider_id, thread_id, project_id, title, workdir, last_status,
+			id, provider_id, thread_id, project_id, purpose, title, workdir, last_status,
 			runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			provider_id = excluded.provider_id,
 			thread_id = excluded.thread_id,
 			project_id = excluded.project_id,
+			purpose = COALESCE(excluded.purpose, sessions.purpose),
 			title = excluded.title,
 			workdir = excluded.workdir,
 			last_status = excluded.last_status,
@@ -44,7 +45,7 @@ func (s *SessionStore) Save(session *provider.Session) error {
 			updated_at = excluded.updated_at,
 			exited_at = excluded.exited_at`,
 		normalized.ID, normalized.ProviderID, normalized.ThreadID, normalized.ProjectID,
-		normalized.Title, normalized.Workdir, nullableString(normalized.Status), defaultString(normalized.RunnerType, "app-server"),
+		nullableString(normalized.Purpose), normalized.Title, normalized.Workdir, nullableString(normalized.Status), defaultString(normalized.RunnerType, "app-server"),
 		normalized.Model, normalized.ApprovalPolicy, normalized.SandboxMode, string(configJSON), now, now, nullableTime(normalized.ExitedAt))
 	return err
 }
@@ -52,16 +53,16 @@ func (s *SessionStore) Save(session *provider.Session) error {
 func (s *SessionStore) Get(id string) (*provider.Session, error) {
 	var session provider.Session
 	var createdAt, updatedAt int64
-	var title, workdir, lastStatus, runnerType, model, approvalMode, sandboxMode sql.NullString
+	var purpose, title, workdir, lastStatus, runnerType, model, approvalMode, sandboxMode sql.NullString
 	var configRaw sql.NullString
 	var exitedAt sql.NullInt64
 
 	err := s.db.DB().QueryRow(`
-		SELECT id, provider_id, thread_id, project_id, title, workdir, last_status,
+		SELECT id, provider_id, thread_id, project_id, purpose, title, workdir, last_status,
 		       runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at
 		FROM sessions WHERE id = ?`, id).Scan(
 		&session.ID, &session.ProviderID, &session.ThreadID, &session.ProjectID,
-		&title, &workdir, &lastStatus, &runnerType, &model, &approvalMode, &sandboxMode,
+		&purpose, &title, &workdir, &lastStatus, &runnerType, &model, &approvalMode, &sandboxMode,
 		&configRaw, &createdAt, &updatedAt, &exitedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -70,6 +71,7 @@ func (s *SessionStore) Get(id string) (*provider.Session, error) {
 		return nil, err
 	}
 
+	session.Purpose = purpose.String
 	session.Title = title.String
 	session.Workdir = workdir.String
 	session.Status = lastStatus.String
@@ -92,7 +94,7 @@ func (s *SessionStore) Get(id string) (*provider.Session, error) {
 
 func (s *SessionStore) ListByProject(projectID string) ([]provider.Session, error) {
 	rows, err := s.db.DB().Query(`
-		SELECT id, provider_id, thread_id, project_id, title, workdir, last_status,
+		SELECT id, provider_id, thread_id, project_id, purpose, title, workdir, last_status,
 		       runner_type, model, approval_policy, sandbox_mode, created_at, updated_at
 		FROM sessions WHERE project_id = ? ORDER BY created_at DESC`, projectID)
 	if err != nil {
@@ -104,15 +106,16 @@ func (s *SessionStore) ListByProject(projectID string) ([]provider.Session, erro
 	for rows.Next() {
 		var session provider.Session
 		var createdAt, updatedAt int64
-		var title, workdir, lastStatus, runnerType, model, approvalMode, sandboxMode sql.NullString
+		var purpose, title, workdir, lastStatus, runnerType, model, approvalMode, sandboxMode sql.NullString
 
 		if err := rows.Scan(
 			&session.ID, &session.ProviderID, &session.ThreadID, &session.ProjectID,
-			&title, &workdir, &lastStatus, &runnerType, &model, &approvalMode, &sandboxMode,
+			&purpose, &title, &workdir, &lastStatus, &runnerType, &model, &approvalMode, &sandboxMode,
 			&createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 
+		session.Purpose = purpose.String
 		session.Title = title.String
 		session.Workdir = workdir.String
 		session.Status = lastStatus.String

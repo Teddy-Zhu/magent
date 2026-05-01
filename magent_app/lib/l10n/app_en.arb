@@ -19,6 +19,8 @@
   "loading": "Loading...",
   "error": "Error",
   "noData": "No data",
+  "operationFailed": "Operation failed",
+  "agentConnectionFailure": "Connection failed. Check the agent.",
 
   "navAgents": "Agents",
   "navProjects": "Projects",
@@ -38,6 +40,7 @@
   "agentsToken": "Token",
   "agentsSaveFailed": "Save failed",
   "agentsConnectFailed": "Connection failed",
+  "agentsDefaultName": "My Agent",
 
   "projectsTitle": "Projects",
   "projectsEmpty": "No projects yet",
@@ -64,6 +67,7 @@
   "sessionsPromptHint": "Describe what you want to do...",
   "sessionsCreateBtn": "Start Session",
   "sessionsCreateFailed": "Failed to create session",
+  "sessionsLoadConfigFailed": "Failed to load config",
   "sessionsQuickQuestion": "Quick Question",
   "sessionsAutoCode": "Auto Code",
   "sessionsFullTrust": "Full Trust",
@@ -89,6 +93,7 @@
   "chatDeny": "Deny",
 
   "gitTitle": "Git Status",
+  "gitChanges": "Changes",
   "gitCommit": "Commit",
   "gitPush": "Push",
   "gitStage": "Stage",
@@ -98,6 +103,7 @@
   "gitBranches": "Branches",
   "gitNoCommits": "No commits found",
   "gitNoBranches": "No branches found",
+  "gitCurrentBranch": "current",
   "gitCommitMsg": "Commit message",
   "gitCommitFailed": "Commit failed",
   "gitPushFailed": "Push failed",
@@ -117,6 +123,13 @@
   "settingsSession": "Sessions",
   "settingsSessionOpenAtBottom": "Open sessions at the latest message",
   "settingsSessionOpenAtBottomSub": "Show the last conversation when entering a session",
+  "settingsShowAiCommitSessions": "Show AI commit sessions",
+  "settingsShowAiCommitSessionsSub": "Include sessions created only for commit message generation",
+  "settingsAppearance": "Appearance",
+  "settingsThemeMode": "Theme mode",
+  "themeSystem": "Follow system",
+  "themeLight": "Light",
+  "themeDark": "Dark",
   "settingsGit": "Git Operations",
   "settingsGitManage": "Git Management",
   "settingsGitManageSub": "Status, commit log, and branches",
@@ -129,5 +142,290 @@
   "settingsCacheManage": "Cache Management",
   "settingsCacheManageSub": "View and clear cached data",
   "settingsAbout": "About",
-  "settingsVersion": "Version"
+  "settingsVersion": "Version",
+
+  "fieldRequired": "Required",
+  "select": "Select",
+  "selectedCount": "{count} selected",
+  "@selectedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "processing": "Processing...",
+  "noAgentConnected": "No agent connected",
+  "untitledProject": "Untitled Project",
+  "agentSelected": "Agent selected",
+  "agentUpdated": "Agent updated",
+  "agentConnected": "Connected successfully",
+  "agentRemoved": "\"{name}\" removed",
+  "@agentRemoved": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "agentsRemove": "Remove Agent",
+  "agentsRemoveConfirm": "Remove \"{name}\"? This will disconnect from this agent.",
+  "@agentsRemoveConfirm": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "agentsRemoveAction": "Remove",
+  "agentsEmptySub": "Connect a local or remote agent to manage projects and sessions.",
+  "agentsSaveVerify": "Save & Verify",
+
+  "projectsEmptySub": "Add a workspace directory to create sessions, review changes, and browse files.",
+
+  "statusRunning": "Running",
+  "statusCompleted": "Completed",
+  "statusStopped": "Stopped",
+  "statusFailed": "Failed",
+  "statusLost": "Lost",
+  "statusUnknown": "Unknown",
+
+  "sessionsEmptyYet": "No sessions yet",
+  "sessionsEmptySub": "Start a new AI coding session",
+  "sessionPurposeAiCommit": "AI commit",
+  "sessionsLoadMore": "{count} older sessions hidden. Tap to load.",
+  "@sessionsLoadMore": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "timeDaysAgo": "{count}d ago",
+  "@timeDaysAgo": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "timeHoursAgo": "{count}h ago",
+  "@timeHoursAgo": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "timeMinutesAgo": "{count}m ago",
+  "@timeMinutesAgo": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "timeNow": "now",
+
+  "chatSendFailed": "Send failed",
+  "chatStartFailed": "Start failed",
+  "chatInterruptFailed": "Interrupt failed",
+  "chatStopFailed": "Stop failed",
+  "chatApprovalFailed": "Approval failed",
+  "chatLoadSkillsFailed": "Failed to load skills",
+  "chatRunningTitle": "Currently processing",
+  "chatRunningSubtitle": "Choose how to handle this new message",
+  "chatQueueMessage": "Add to queue",
+  "chatQueueMessageSub": "Send automatically after the current reply finishes.",
+  "chatInterruptAndSend": "Interrupt and send",
+  "chatInterruptAndSendSub": "Stop the current reply, then process this message immediately.",
+  "chatSessionLostTitle": "Session unavailable",
+  "chatSessionLostContent": "This session no longer exists on the server. It may have been removed after the server restarted. Create a new session to continue.",
+  "chatInterruptSent": "Interrupt request sent",
+  "chatStopSession": "Stop session",
+  "chatStopConfirm": "Stop this session?",
+  "chatSessionStopped": "Session stopped",
+  "chatNoSkills": "No skills available",
+  "chatMissingProject": "Current session is missing project information",
+  "chatRefresh": "Refresh",
+  "chatCreateNewSession": "Create new session",
+  "chatSessionEnded": "Session ended",
+  "chatNoMessages": "No messages yet",
+  "chatSessionNotStarted": "Session not started",
+  "chatStarting": "Starting...",
+  "chatStartSession": "Start session",
+  "chatNewSession": "New session",
+  "chatPlan": "Plan",
+  "chatReasoningSummary": "Reasoning summary",
+  "chatDiffSummary": "Change summary",
+  "chatCommandOutput": "Command output",
+  "chatFileChangeOutput": "File change output",
+  "chatCommand": "Command",
+  "chatFileChange": "File change",
+  "chatReadFile": "Read file",
+  "chatTurnStarted": "Started processing...",
+  "chatTurnCompleted": "Processing completed",
+  "chatTurnFailed": "Processing failed",
+  "chatApprovalResolved": "Approval handled",
+  "chatExited": "Session exited (code: {code})",
+  "@chatExited": {
+    "placeholders": {
+      "code": {}
+    }
+  },
+  "chatPlanUpdated": "Plan updated",
+  "chatReasoningUpdated": "Reasoning summary updated",
+  "chatFileUpdated": "File updated",
+  "chatFileCount": "{count} files",
+  "@chatFileCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatRunningQueued": "Generating reply, {count} messages queued",
+  "@chatRunningQueued": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatRunningHint": "Generating reply. Send again to queue or interrupt.",
+  "chatQueuedInputs": "{count} messages queued",
+  "@chatQueuedInputs": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "chatTemplatesTooltip": "History and templates",
+  "chatSkillsTooltip": "Use skill",
+  "chatFilesTooltip": "Reference workspace file",
+  "chatChooseSkill": "Choose skill",
+  "chatChooseWorkspaceFile": "Choose workspace file",
+  "chatCollapsedEvents": "{count} older messages hidden",
+  "@chatCollapsedEvents": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "expand": "Expand",
+  "collapse": "Collapse",
+  "approvalRequired": "Approval required",
+  "approvalUnknownAction": "Unknown operation",
+  "approvalAllowSession": "Allow for session",
+
+  "templatesSaveAs": "Save as template",
+  "templatesNameHint": "Template name",
+  "templatesRecent": "Recent messages",
+  "templatesSaved": "Saved templates",
+  "templatesNoRecent": "No recent messages",
+  "templatesNoSaved": "No saved templates",
+  "templatesDelete": "Delete template",
+
+  "providersTitle": "Providers",
+  "providersEmpty": "No providers found",
+  "providersAvailable": "Available",
+  "providersUnavailable": "Unavailable",
+  "providersNotAvailable": "Not available",
+  "providersBinary": "Binary",
+  "providersMode": "Mode",
+  "providersCapabilities": "Capabilities",
+  "providersUnknown": "Unknown",
+  "capabilityResume": "Resume",
+  "capabilityFork": "Fork",
+  "capabilitySteer": "Steer",
+  "capabilityInterrupt": "Interrupt",
+  "capabilityCompact": "Compact",
+  "capabilityRollback": "Rollback",
+  "capabilityApproval": "Approval",
+  "capabilityFileSystem": "File System",
+  "capabilityMcp": "MCP",
+  "capabilityPty": "PTY",
+  "capabilityStreaming": "Streaming",
+  "capabilityStructuredOutput": "Structured Output",
+
+  "cacheClear": "Clear",
+  "cacheClearAll": "Clear All",
+  "cacheClearAllCaches": "Clear All Caches",
+  "cacheClearAllDisplayCaches": "Clear All Display Caches",
+  "cacheClearConfirm": "This removes local display caches only. Provider history, Git state, and files remain the source of truth.",
+  "cacheGitDisplay": "Git Display Cache",
+  "cacheFileDisplay": "File Display Cache",
+  "cacheSessionDisplay": "Session Display Cache",
+  "cacheCleared": "{name} cache cleared",
+  "@cacheCleared": {
+    "placeholders": {
+      "name": {}
+    }
+  },
+  "cacheEntries": "{count} entries",
+  "@cacheEntries": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+
+  "gitStatus": "Status",
+  "gitLog": "Log",
+  "gitPull": "Pull",
+  "gitRoot": "Root",
+  "gitPullFailed": "Pull failed",
+  "gitPullSuccessful": "Pull successful",
+  "gitPushSuccessful": "Push successful",
+  "gitStageFailed": "Stage failed",
+  "gitUnstageFailed": "Unstage failed",
+  "gitDiscardFailed": "Discard failed",
+  "gitDiscardChanges": "Discard changes",
+  "gitDiscardChangesConfirm": "Discard changes in {count} files? This cannot be undone.",
+  "@gitDiscardChangesConfirm": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "gitForcePush": "Force Push",
+  "gitForcePushConfirm": "Force push will overwrite remote history. Continue?",
+  "gitStaged": "Staged",
+  "gitUnstaged": "Unstaged",
+  "gitWorkingTreeClean": "Working tree clean",
+  "gitNoStagedFiles": "No staged files",
+  "gitNoUnstagedFiles": "No unstaged files",
+  "gitNoFilesChanged": "No files changed",
+  "gitBinaryFile": "Binary file",
+  "gitBinaryFileDiffUnavailable": "Binary file - cannot display diff",
+  "gitNoTextChanges": "No text changes",
+  "gitCannotDisplayImage": "Cannot display image - no file API",
+  "gitImageDataUnavailable": "Image data not available",
+  "gitLoadImageFailed": "Failed to load image",
+  "gitLoadDiffFailed": "Failed to load Diff",
+  "gitAiMessageGenerated": "AI message generated",
+  "gitAiReturnedEmpty": "AI returned empty response",
+  "gitAiSuggestionFailed": "AI suggestion failed",
+  "gitCommitMessageRequired": "Commit message is required",
+  "gitCommitSuccessful": "Commit successful",
+  "gitCommitMessageHint": "feat: describe your changes...",
+  "gitAiSuggest": "AI suggest",
+  "gitGenerating": "Generating...",
+  "gitAiGenerateMessage": "AI Generate Message",
+  "gitStageAllChanges": "Stage all changes (-a)",
+  "wrap": "Wrap",
+  "noWrap": "No wrap",
+  "enableWrap": "Enable wrap",
+  "disableWrap": "Disable wrap",
+  "loadMore": "Load more",
+
+  "filesReadFailed": "Read failed",
+  "filesLoadFailed": "Load failed",
+  "filesNoSubdirectories": "No subdirectories",
+  "filesSelectPath": "Select: {path}",
+  "@filesSelectPath": {
+    "placeholders": {
+      "path": {}
+    }
+  }
 }

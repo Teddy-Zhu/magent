@@ -1,7 +1,9 @@
 package log
 
 import (
+	"bytes"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"sync"
@@ -27,8 +29,9 @@ var levelNames = map[Level]string{
 }
 
 var (
-	currentLevel    = LevelInfo
-	componentLevels = map[string]Level{}
+	currentLevel              = LevelInfo
+	componentLevels           = map[string]Level{}
+	outputWriter    io.Writer = os.Stderr
 	mu              sync.RWMutex
 )
 
@@ -65,6 +68,16 @@ func GetComponentLevel(component string) (Level, bool) {
 	return level, ok
 }
 
+func SetOutput(w io.Writer) {
+	mu.Lock()
+	if w == nil {
+		outputWriter = os.Stderr
+	} else {
+		outputWriter = w
+	}
+	mu.Unlock()
+}
+
 func parseLevel(s string) Level {
 	switch strings.ToLower(strings.TrimSpace(s)) {
 	case "debug", "dbg":
@@ -86,6 +99,7 @@ func Init(levelStr string) {
 
 func InitWithLevels(levelStr string, overrides map[string]string) {
 	mu.Lock()
+	currentLevel = LevelInfo
 	componentLevels = map[string]Level{}
 	mu.Unlock()
 
@@ -131,6 +145,7 @@ func output(level Level, component, msg string, args ...any) {
 	if componentLevel, ok := componentLevels[normalizeComponent(component)]; ok {
 		l = componentLevel
 	}
+	w := outputWriter
 	mu.RUnlock()
 
 	if l == LevelOff || level < l {
@@ -142,7 +157,11 @@ func output(level Level, component, msg string, args ...any) {
 	if len(args) > 0 {
 		formatted = fmt.Sprintf(msg, args...)
 	}
-	fmt.Fprintf(os.Stderr, "%s [%s] %s: %s\n", ts, levelNames[level], component, formatted)
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "%s [%s] %s: %s\n", ts, levelNames[level], component, formatted)
+	mu.Lock()
+	_, _ = w.Write(buf.Bytes())
+	mu.Unlock()
 }
 
 func Debug(component, msg string, args ...any) {

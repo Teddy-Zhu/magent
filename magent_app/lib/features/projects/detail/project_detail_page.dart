@@ -4,14 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
+import 'package:magent_app/core/providers/app_settings_provider.dart';
 import 'package:magent_app/core/repositories/bootstrap_repository.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
 import 'package:magent_app/core/repositories/session_repository.dart';
+import 'package:magent_app/core/session/session_language.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 import 'package:magent_app/features/projects/detail/project_sessions_tab.dart';
 import 'package:magent_app/features/projects/detail/project_changes_tab.dart';
 import 'package:magent_app/features/projects/detail/project_files_tab.dart';
+import 'package:magent_app/l10n/app_localizations.dart';
 
 class ProjectDetailPage extends ConsumerStatefulWidget {
   final String projectId;
@@ -170,15 +173,16 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    final name = _project?['name'] as String? ?? 'Project';
+    final l10n = AppLocalizations.of(context)!;
+    final name = _project?['name'] as String? ?? l10n.untitledProject;
 
     return Scaffold(
       appBar: AppBar(
         title: _currentTab == 0
             ? Text(name)
             : _currentTab == 1
-            ? const Text('Changes')
-            : const Text('Files'),
+            ? Text(l10n.gitChanges)
+            : Text(l10n.filesTitle),
         actions: [
           if (_currentTab == 0 && _providers.length > 1)
             Padding(
@@ -188,7 +192,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
           if (_currentTab == 0)
             IconButton(
               icon: const Icon(Icons.add_circle_outline),
-              tooltip: 'New Session',
+              tooltip: l10n.sessionsCreate,
               onPressed: _selectedProvider.isEmpty
                   ? null
                   : () async {
@@ -201,33 +205,33 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
             ),
           IconButton(
             icon: const Icon(Icons.settings),
-            onPressed: () => context.push('/settings'),
+            onPressed: () => context.go('/settings'),
           ),
         ],
       ),
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _api == null
-          ? const Center(child: Text('No agent connected'))
+          ? Center(child: Text(l10n.noAgentConnected))
           : _buildTabContent(),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _currentTab,
         onDestinationSelected: (index) => setState(() => _currentTab = index),
-        destinations: const [
+        destinations: [
           NavigationDestination(
-            icon: Icon(Icons.chat_bubble_outline),
-            selectedIcon: Icon(Icons.chat_bubble),
-            label: 'Sessions',
+            icon: const Icon(Icons.chat_bubble_outline),
+            selectedIcon: const Icon(Icons.chat_bubble),
+            label: l10n.sessionsTitle,
           ),
           NavigationDestination(
-            icon: Icon(Icons.compare_arrows),
-            selectedIcon: Icon(Icons.compare_arrows),
-            label: 'Changes',
+            icon: const Icon(Icons.compare_arrows),
+            selectedIcon: const Icon(Icons.compare_arrows),
+            label: l10n.gitChanges,
           ),
           NavigationDestination(
-            icon: Icon(Icons.folder_open),
-            selectedIcon: Icon(Icons.folder),
-            label: 'Files',
+            icon: const Icon(Icons.folder_open),
+            selectedIcon: const Icon(Icons.folder),
+            label: l10n.filesTitle,
           ),
         ],
       ),
@@ -318,7 +322,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
       case 0:
         return ProjectSessionsTab(
           projectId: widget.projectId,
-          sessions: _sessions,
+          sessions: _visibleSessions,
           api: _api!,
           onRefresh: _refreshAll,
         );
@@ -346,5 +350,18 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
       default:
         return const SizedBox.shrink();
     }
+  }
+
+  List<dynamic> get _visibleSessions {
+    final showAiCommitSessions = ref
+        .watch(showAiCommitSessionsControllerProvider)
+        .maybeWhen(data: (value) => value, orElse: () => false);
+    if (showAiCommitSessions) return _sessions;
+    return _sessions
+        .where((session) {
+          if (session is! Map) return true;
+          return session['purpose']?.toString() != SessionPurposes.aiCommit;
+        })
+        .toList(growable: false);
   }
 }

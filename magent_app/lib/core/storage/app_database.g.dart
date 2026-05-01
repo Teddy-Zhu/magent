@@ -1346,6 +1346,17 @@ class $SessionEntriesTable extends SessionEntries
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _purposeMeta = const VerificationMeta(
+    'purpose',
+  );
+  @override
+  late final GeneratedColumn<String> purpose = GeneratedColumn<String>(
+    'purpose',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _workdirMeta = const VerificationMeta(
     'workdir',
   );
@@ -1489,6 +1500,7 @@ class $SessionEntriesTable extends SessionEntries
     providerId,
     threadId,
     projectId,
+    purpose,
     workdir,
     title,
     status,
@@ -1549,6 +1561,12 @@ class $SessionEntriesTable extends SessionEntries
       );
     } else if (isInserting) {
       context.missing(_projectIdMeta);
+    }
+    if (data.containsKey('purpose')) {
+      context.handle(
+        _purposeMeta,
+        purpose.isAcceptableOrUnknown(data['purpose']!, _purposeMeta),
+      );
     }
     if (data.containsKey('workdir')) {
       context.handle(
@@ -1673,6 +1691,10 @@ class $SessionEntriesTable extends SessionEntries
         DriftSqlType.string,
         data['${effectivePrefix}project_id'],
       )!,
+      purpose: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}purpose'],
+      ),
       workdir: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}workdir'],
@@ -1740,6 +1762,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
   final String providerId;
   final String? threadId;
   final String projectId;
+  final String? purpose;
   final String? workdir;
   final String? title;
   final String status;
@@ -1759,6 +1782,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
     required this.providerId,
     this.threadId,
     required this.projectId,
+    this.purpose,
     this.workdir,
     this.title,
     required this.status,
@@ -1783,6 +1807,9 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
       map['thread_id'] = Variable<String>(threadId);
     }
     map['project_id'] = Variable<String>(projectId);
+    if (!nullToAbsent || purpose != null) {
+      map['purpose'] = Variable<String>(purpose);
+    }
     if (!nullToAbsent || workdir != null) {
       map['workdir'] = Variable<String>(workdir);
     }
@@ -1828,6 +1855,9 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
           ? const Value.absent()
           : Value(threadId),
       projectId: Value(projectId),
+      purpose: purpose == null && nullToAbsent
+          ? const Value.absent()
+          : Value(purpose),
       workdir: workdir == null && nullToAbsent
           ? const Value.absent()
           : Value(workdir),
@@ -1875,6 +1905,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
       providerId: serializer.fromJson<String>(json['providerId']),
       threadId: serializer.fromJson<String?>(json['threadId']),
       projectId: serializer.fromJson<String>(json['projectId']),
+      purpose: serializer.fromJson<String?>(json['purpose']),
       workdir: serializer.fromJson<String?>(json['workdir']),
       title: serializer.fromJson<String?>(json['title']),
       status: serializer.fromJson<String>(json['status']),
@@ -1899,6 +1930,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
       'providerId': serializer.toJson<String>(providerId),
       'threadId': serializer.toJson<String?>(threadId),
       'projectId': serializer.toJson<String>(projectId),
+      'purpose': serializer.toJson<String?>(purpose),
       'workdir': serializer.toJson<String?>(workdir),
       'title': serializer.toJson<String?>(title),
       'status': serializer.toJson<String>(status),
@@ -1921,6 +1953,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
     String? providerId,
     Value<String?> threadId = const Value.absent(),
     String? projectId,
+    Value<String?> purpose = const Value.absent(),
     Value<String?> workdir = const Value.absent(),
     Value<String?> title = const Value.absent(),
     String? status,
@@ -1940,6 +1973,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
     providerId: providerId ?? this.providerId,
     threadId: threadId.present ? threadId.value : this.threadId,
     projectId: projectId ?? this.projectId,
+    purpose: purpose.present ? purpose.value : this.purpose,
     workdir: workdir.present ? workdir.value : this.workdir,
     title: title.present ? title.value : this.title,
     status: status ?? this.status,
@@ -1967,6 +2001,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
           : this.providerId,
       threadId: data.threadId.present ? data.threadId.value : this.threadId,
       projectId: data.projectId.present ? data.projectId.value : this.projectId,
+      purpose: data.purpose.present ? data.purpose.value : this.purpose,
       workdir: data.workdir.present ? data.workdir.value : this.workdir,
       title: data.title.present ? data.title.value : this.title,
       status: data.status.present ? data.status.value : this.status,
@@ -2001,6 +2036,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
           ..write('providerId: $providerId, ')
           ..write('threadId: $threadId, ')
           ..write('projectId: $projectId, ')
+          ..write('purpose: $purpose, ')
           ..write('workdir: $workdir, ')
           ..write('title: $title, ')
           ..write('status: $status, ')
@@ -2025,6 +2061,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
     providerId,
     threadId,
     projectId,
+    purpose,
     workdir,
     title,
     status,
@@ -2048,6 +2085,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
           other.providerId == this.providerId &&
           other.threadId == this.threadId &&
           other.projectId == this.projectId &&
+          other.purpose == this.purpose &&
           other.workdir == this.workdir &&
           other.title == this.title &&
           other.status == this.status &&
@@ -2069,6 +2107,7 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
   final Value<String> providerId;
   final Value<String?> threadId;
   final Value<String> projectId;
+  final Value<String?> purpose;
   final Value<String?> workdir;
   final Value<String?> title;
   final Value<String> status;
@@ -2089,6 +2128,7 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
     this.providerId = const Value.absent(),
     this.threadId = const Value.absent(),
     this.projectId = const Value.absent(),
+    this.purpose = const Value.absent(),
     this.workdir = const Value.absent(),
     this.title = const Value.absent(),
     this.status = const Value.absent(),
@@ -2110,6 +2150,7 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
     required String providerId,
     this.threadId = const Value.absent(),
     required String projectId,
+    this.purpose = const Value.absent(),
     this.workdir = const Value.absent(),
     this.title = const Value.absent(),
     this.status = const Value.absent(),
@@ -2136,6 +2177,7 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
     Expression<String>? providerId,
     Expression<String>? threadId,
     Expression<String>? projectId,
+    Expression<String>? purpose,
     Expression<String>? workdir,
     Expression<String>? title,
     Expression<String>? status,
@@ -2157,6 +2199,7 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
       if (providerId != null) 'provider_id': providerId,
       if (threadId != null) 'thread_id': threadId,
       if (projectId != null) 'project_id': projectId,
+      if (purpose != null) 'purpose': purpose,
       if (workdir != null) 'workdir': workdir,
       if (title != null) 'title': title,
       if (status != null) 'status': status,
@@ -2180,6 +2223,7 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
     Value<String>? providerId,
     Value<String?>? threadId,
     Value<String>? projectId,
+    Value<String?>? purpose,
     Value<String?>? workdir,
     Value<String?>? title,
     Value<String>? status,
@@ -2201,6 +2245,7 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
       providerId: providerId ?? this.providerId,
       threadId: threadId ?? this.threadId,
       projectId: projectId ?? this.projectId,
+      purpose: purpose ?? this.purpose,
       workdir: workdir ?? this.workdir,
       title: title ?? this.title,
       status: status ?? this.status,
@@ -2235,6 +2280,9 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
     }
     if (projectId.present) {
       map['project_id'] = Variable<String>(projectId.value);
+    }
+    if (purpose.present) {
+      map['purpose'] = Variable<String>(purpose.value);
     }
     if (workdir.present) {
       map['workdir'] = Variable<String>(workdir.value);
@@ -2289,6 +2337,7 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
           ..write('providerId: $providerId, ')
           ..write('threadId: $threadId, ')
           ..write('projectId: $projectId, ')
+          ..write('purpose: $purpose, ')
           ..write('workdir: $workdir, ')
           ..write('title: $title, ')
           ..write('status: $status, ')
@@ -7212,6 +7261,7 @@ typedef $$SessionEntriesTableCreateCompanionBuilder =
       required String providerId,
       Value<String?> threadId,
       required String projectId,
+      Value<String?> purpose,
       Value<String?> workdir,
       Value<String?> title,
       Value<String> status,
@@ -7234,6 +7284,7 @@ typedef $$SessionEntriesTableUpdateCompanionBuilder =
       Value<String> providerId,
       Value<String?> threadId,
       Value<String> projectId,
+      Value<String?> purpose,
       Value<String?> workdir,
       Value<String?> title,
       Value<String> status,
@@ -7281,6 +7332,11 @@ class $$SessionEntriesTableFilterComposer
 
   ColumnFilters<String> get projectId => $composableBuilder(
     column: $table.projectId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get purpose => $composableBuilder(
+    column: $table.purpose,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -7384,6 +7440,11 @@ class $$SessionEntriesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get purpose => $composableBuilder(
+    column: $table.purpose,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get workdir => $composableBuilder(
     column: $table.workdir,
     builder: (column) => ColumnOrderings(column),
@@ -7476,6 +7537,9 @@ class $$SessionEntriesTableAnnotationComposer
   GeneratedColumn<String> get projectId =>
       $composableBuilder(column: $table.projectId, builder: (column) => column);
 
+  GeneratedColumn<String> get purpose =>
+      $composableBuilder(column: $table.purpose, builder: (column) => column);
+
   GeneratedColumn<String> get workdir =>
       $composableBuilder(column: $table.workdir, builder: (column) => column);
 
@@ -7564,6 +7628,7 @@ class $$SessionEntriesTableTableManager
                 Value<String> providerId = const Value.absent(),
                 Value<String?> threadId = const Value.absent(),
                 Value<String> projectId = const Value.absent(),
+                Value<String?> purpose = const Value.absent(),
                 Value<String?> workdir = const Value.absent(),
                 Value<String?> title = const Value.absent(),
                 Value<String> status = const Value.absent(),
@@ -7584,6 +7649,7 @@ class $$SessionEntriesTableTableManager
                 providerId: providerId,
                 threadId: threadId,
                 projectId: projectId,
+                purpose: purpose,
                 workdir: workdir,
                 title: title,
                 status: status,
@@ -7606,6 +7672,7 @@ class $$SessionEntriesTableTableManager
                 required String providerId,
                 Value<String?> threadId = const Value.absent(),
                 required String projectId,
+                Value<String?> purpose = const Value.absent(),
                 Value<String?> workdir = const Value.absent(),
                 Value<String?> title = const Value.absent(),
                 Value<String> status = const Value.absent(),
@@ -7626,6 +7693,7 @@ class $$SessionEntriesTableTableManager
                 providerId: providerId,
                 threadId: threadId,
                 projectId: projectId,
+                purpose: purpose,
                 workdir: workdir,
                 title: title,
                 status: status,

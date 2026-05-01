@@ -49,7 +49,7 @@ class _SessionCreatePageState extends ConsumerState<SessionCreatePage> {
       if (mounted) {
         setState(() {
           _loadingConfig = false;
-          _configError = 'No agent connected';
+          _configError = AppLocalizations.of(context)!.noAgentConnected;
         });
       }
       return;
@@ -76,7 +76,7 @@ class _SessionCreatePageState extends ConsumerState<SessionCreatePage> {
       if (mounted) {
         setState(() {
           _loadingConfig = false;
-          _configError = 'No provider available';
+          _configError = AppLocalizations.of(context)!.sessionsNoProvider;
         });
       }
       return;
@@ -168,7 +168,11 @@ class _SessionCreatePageState extends ConsumerState<SessionCreatePage> {
       if (mounted) {
         setState(() {
           _loadingConfig = false;
-          _configError = userFriendlyErrorMessage(e, action: '加载配置失败');
+          _configError = localizedErrorMessage(
+            AppLocalizations.of(context)!,
+            e,
+            action: AppLocalizations.of(context)!.sessionsLoadConfigFailed,
+          );
         });
       }
     }
@@ -243,7 +247,8 @@ class _SessionCreatePageState extends ConsumerState<SessionCreatePage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
-              userFriendlyErrorMessage(
+              localizedErrorMessage(
+                AppLocalizations.of(context)!,
                 e,
                 action: AppLocalizations.of(context)!.sessionsCreateFailed,
               ),

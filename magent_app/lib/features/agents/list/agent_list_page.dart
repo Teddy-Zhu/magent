@@ -38,9 +38,9 @@ class _AgentListPageState extends State<AgentListPage> {
     await _storage.setActiveAgent(id);
     if (mounted) {
       setState(() => _activeAgentId = id);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('Agent selected')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(AppLocalizations.of(context)!.agentSelected)),
+      );
     }
   }
 
@@ -48,16 +48,19 @@ class _AgentListPageState extends State<AgentListPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Remove Agent'),
-        content: Text('Remove "$name"? This will disconnect from this agent.'),
+        title: Text(AppLocalizations.of(context)!.agentsRemove),
+        content: Text(AppLocalizations.of(context)!.agentsRemoveConfirm(name)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: const Text('Cancel'),
+            child: Text(AppLocalizations.of(context)!.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('Remove', style: TextStyle(color: Colors.red)),
+            child: Text(
+              AppLocalizations.of(context)!.agentsRemoveAction,
+              style: const TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -67,9 +70,11 @@ class _AgentListPageState extends State<AgentListPage> {
       await _storage.deleteAgent(id);
       await _loadAgents();
       if (mounted) {
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('"$name" removed')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(AppLocalizations.of(context)!.agentRemoved(name)),
+          ),
+        );
       }
     }
   }
@@ -192,7 +197,7 @@ class _AgentEmptyState extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             Text(
-              '连接一个本地或远程 agent 后即可管理项目和会话。',
+              l10n.agentsEmptySub,
               textAlign: TextAlign.center,
               style: Theme.of(
                 context,

@@ -76,6 +76,12 @@ class SessionStatuses {
   }
 }
 
+class SessionPurposes {
+  static const aiCommit = 'ai_commit';
+
+  const SessionPurposes._();
+}
+
 class SessionApprovalPolicies {
   static const onRequest = 'on-request';
   static const onFailure = 'on-failure';
