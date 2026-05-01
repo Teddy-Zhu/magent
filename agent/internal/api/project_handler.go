@@ -7,7 +7,7 @@ import (
 func (s *Server) handleListProjects(c *gin.Context) {
 	projects, err := s.projectMgr.List(c.Request.Context())
 	if err != nil {
-		Fail(c, 500, "INTERNAL_ERROR", err.Error())
+		Fail(c, 500, ErrInternalError, err.Error())
 		return
 	}
 	OK(c, projects)
@@ -19,41 +19,31 @@ func (s *Server) handleCreateProject(c *gin.Context) {
 		Path string `json:"path" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, 400, "INVALID_REQUEST", err.Error())
+		Fail(c, 400, ErrInvalidRequest, err.Error())
 		return
 	}
 
 	project, err := s.projectMgr.Create(c.Request.Context(), req.Name, req.Path)
 	if err != nil {
-		Fail(c, 400, "CREATE_FAILED", err.Error())
+		Fail(c, 400, ErrInvalidRequest, err.Error())
 		return
 	}
+	s.startGitWatcher(*project)
+	s.syncHandler.configService.MarkDirty()
 	OK(c, project)
 }
 
 func (s *Server) handleGetProject(c *gin.Context) {
-	id := c.Param("id")
-	project, err := s.projectMgr.Get(c.Request.Context(), id)
-	if err != nil {
-		Fail(c, 500, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	if project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+	project, ok := getProject(c, s.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
 	OK(c, project)
 }
 
 func (s *Server) handleUpdateProject(c *gin.Context) {
-	id := c.Param("id")
-	project, err := s.projectMgr.Get(c.Request.Context(), id)
-	if err != nil {
-		Fail(c, 500, "INTERNAL_ERROR", err.Error())
-		return
-	}
-	if project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+	project, ok := getProject(c, s.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
 
@@ -63,7 +53,7 @@ func (s *Server) handleUpdateProject(c *gin.Context) {
 		DefaultProvider string `json:"default_provider"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, 400, "INVALID_REQUEST", err.Error())
+		Fail(c, 400, ErrInvalidRequest, err.Error())
 		return
 	}
 
@@ -78,17 +68,24 @@ func (s *Server) handleUpdateProject(c *gin.Context) {
 	}
 
 	if err := s.projectMgr.Update(c.Request.Context(), project); err != nil {
-		Fail(c, 500, "UPDATE_FAILED", err.Error())
+		Fail(c, 500, ErrInternalError, err.Error())
 		return
 	}
+	s.restartGitWatcher(*project)
+	s.syncHandler.configService.MarkDirty()
 	OK(c, project)
 }
 
 func (s *Server) handleDeleteProject(c *gin.Context) {
-	id := c.Param("id")
-	if err := s.projectMgr.Delete(c.Request.Context(), id); err != nil {
-		Fail(c, 500, "DELETE_FAILED", err.Error())
+	project, ok := getProject(c, s.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
+	if err := s.projectMgr.Delete(c.Request.Context(), project.ID); err != nil {
+		Fail(c, 500, ErrInternalError, err.Error())
+		return
+	}
+	s.stopGitWatcher(project.ID)
+	s.syncHandler.configService.MarkDirty()
 	OK(c, nil)
 }

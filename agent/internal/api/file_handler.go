@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/base64"
 	"mime"
-	"os"
 	"path/filepath"
 	"strconv"
 
@@ -24,42 +23,42 @@ func NewFileHandler(fileService *fileservice.Service, projectMgr *project.Manage
 	}
 }
 
-func (h *FileHandler) ListDir(c *gin.Context) {
-	projectID := c.Query("project_id")
-	path := c.DefaultQuery("path", ".")
-	knownHash := c.Query("known_hash")
-
-	project, err := h.projectMgr.Get(c.Request.Context(), projectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+func (h *FileHandler) ListDirForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
+	path := c.DefaultQuery("path", ".")
+	knownHash := c.Query("known_hash")
+	if knownHash == "" {
+		knownHash = c.GetHeader("If-None-Match")
+	}
 
-	result, status, err := h.fileService.ListDir(c.Request.Context(), projectID, project.Path, path, knownHash)
+	result, status, err := h.fileService.ListDir(c.Request.Context(), project.ID, project.Path, path, knownHash)
 	if status == 304 {
 		NotModified(c)
 		return
 	}
 	if err != nil {
-		Fail(c, status, "FILE_ERROR", err.Error())
+		Fail(c, status, ErrFileError, err.Error())
 		return
 	}
-
+	c.Header("ETag", result.Hash)
 	OK(c, result)
 }
 
-func (h *FileHandler) ReadFile(c *gin.Context) {
-	projectID := c.Query("project_id")
-	path := c.Query("path")
-	knownHash := c.Query("known_hash")
-	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "1000"))
-
-	project, err := h.projectMgr.Get(c.Request.Context(), projectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+func (h *FileHandler) ReadFileForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
+	path := c.Query("path")
+	knownHash := c.Query("known_hash")
+	if knownHash == "" {
+		knownHash = c.GetHeader("If-None-Match")
+	}
+	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "1000"))
 
 	result, status, err := h.fileService.ReadFile(c.Request.Context(), project.Path, path, knownHash, offset, limit)
 	if status == 304 {
@@ -67,55 +66,72 @@ func (h *FileHandler) ReadFile(c *gin.Context) {
 		return
 	}
 	if err != nil {
-		Fail(c, status, "FILE_ERROR", err.Error())
+		Fail(c, status, ErrFileError, err.Error())
 		return
 	}
-
+	c.Header("ETag", result.Hash)
 	OK(c, result)
 }
 
-func (h *FileHandler) RawFile(c *gin.Context) {
-	projectID := c.Query("project_id")
-	path := c.Query("path")
-
-	project, err := h.projectMgr.Get(c.Request.Context(), projectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+func (h *FileHandler) RawFileForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
+	h.rawFile(c, project.Path)
+}
 
-	fullPath := filepath.Join(project.Path, path)
-	ext := filepath.Ext(fullPath)
+func (h *FileHandler) rawFile(c *gin.Context, projectPath string) {
+	path := c.Query("path")
+	knownHash := c.Query("known_hash")
+	if knownHash == "" {
+		knownHash = c.GetHeader("If-None-Match")
+	}
+	offset, _ := strconv.ParseInt(c.DefaultQuery("offset", "0"), 10, 64)
+	limit, _ := strconv.ParseInt(c.DefaultQuery("limit", "0"), 10, 64)
+
+	result, status, err := h.fileService.ReadRawFile(c.Request.Context(), projectPath, path, knownHash, offset, limit)
+	if status == 304 {
+		NotModified(c)
+		return
+	}
+	if err != nil {
+		Fail(c, status, ErrFileError, err.Error())
+		return
+	}
+	c.Header("ETag", result.Hash)
+
+	ext := filepath.Ext(path)
 	mimeType := mime.TypeByExtension(ext)
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
 	}
 
-	data, err := os.ReadFile(fullPath)
-	if err != nil {
-		Fail(c, 500, "FILE_ERROR", err.Error())
-		return
-	}
-
-	// For images and binary files, return base64
 	if isBinaryFile(ext) {
 		OK(c, gin.H{
-			"path":     path,
-			"mime":     mimeType,
-			"encoding": "base64",
-			"data":     base64.StdEncoding.EncodeToString(data),
-			"size":     len(data),
+			"path":      path,
+			"hash":      result.Hash,
+			"mime":      mimeType,
+			"encoding":  "base64",
+			"data":      base64.StdEncoding.EncodeToString(result.Data),
+			"size":      result.Size,
+			"offset":    result.Offset,
+			"limit":     result.Limit,
+			"truncated": result.Truncated,
 		})
 		return
 	}
 
-	// For text files, return as string
 	OK(c, gin.H{
-		"path":     path,
-		"mime":     mimeType,
-		"encoding": "text",
-		"data":     string(data),
-		"size":     len(data),
+		"path":      path,
+		"hash":      result.Hash,
+		"mime":      mimeType,
+		"encoding":  "text",
+		"data":      string(result.Data),
+		"size":      result.Size,
+		"offset":    result.Offset,
+		"limit":     result.Limit,
+		"truncated": result.Truncated,
 	})
 }
 

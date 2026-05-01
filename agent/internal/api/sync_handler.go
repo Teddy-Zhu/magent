@@ -15,19 +15,38 @@ func NewSyncHandler(configService *sync.ConfigService) *SyncHandler {
 
 func (h *SyncHandler) Check(c *gin.Context) {
 	result := h.configService.Check()
-	c.JSON(200, result)
+	OK(c, result)
 }
 
 func (h *SyncHandler) Bootstrap(c *gin.Context) {
-	localHash := c.Query("local_hash")
+	localHash := c.GetHeader("If-None-Match")
 	data, status, err := h.configService.Bootstrap(c.Request.Context(), localHash)
 	if status == 304 {
-		c.Status(304)
+		NotModified(c)
 		return
 	}
 	if err != nil {
-		c.JSON(500, gin.H{"error": err.Error()})
+		Fail(c, 500, ErrInternalError, err.Error())
 		return
 	}
-	c.JSON(200, data)
+	if check := h.configService.Check(); check.ConfigHash != "" {
+		c.Header("ETag", check.ConfigHash)
+	}
+	OK(c, data)
+}
+
+func (h *SyncHandler) RefreshBootstrap(c *gin.Context) {
+	if err := h.configService.Refresh(c.Request.Context()); err != nil {
+		Fail(c, 500, ErrInternalError, err.Error())
+		return
+	}
+	data, _, err := h.configService.Bootstrap(c.Request.Context(), "")
+	if err != nil {
+		Fail(c, 500, ErrInternalError, err.Error())
+		return
+	}
+	if check := h.configService.Check(); check.ConfigHash != "" {
+		c.Header("ETag", check.ConfigHash)
+	}
+	OK(c, data)
 }

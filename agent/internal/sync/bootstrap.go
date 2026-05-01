@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"sort"
 	"sync"
 	"time"
 
@@ -15,9 +16,9 @@ import (
 )
 
 type ConfigService struct {
-	registry  *provider.Registry
-	cfg       *config.Config
-	store     *storage.SQLite
+	registry   *provider.Registry
+	cfg        *config.Config
+	store      *storage.SQLite
 	projectMgr *project.Manager
 
 	cache     *BootstrapData
@@ -27,16 +28,16 @@ type ConfigService struct {
 }
 
 type BootstrapData struct {
-	Agent     AgentData            `json:"agent"`
-	Providers []ProviderConfigData `json:"providers"`
-	Projects  []ProjectSummary     `json:"projects"`
+	Agent     AgentData              `json:"agent"`
+	Providers []ProviderConfigData   `json:"providers"`
+	Projects  []ProjectSummary       `json:"projects"`
 	Workspace config.WorkspaceConfig `json:"workspace"`
-	UpdatedAt int64                `json:"updated_at"`
+	UpdatedAt int64                  `json:"updated_at"`
 }
 
 type AgentData struct {
-	Version      string              `json:"version"`
-	Capabilities AgentCapabilities   `json:"capabilities"`
+	Version      string            `json:"version"`
+	Capabilities AgentCapabilities `json:"capabilities"`
 }
 
 type AgentCapabilities struct {
@@ -44,13 +45,14 @@ type AgentCapabilities struct {
 }
 
 type ProviderConfigData struct {
-	Name         string                   `json:"name"`
-	Status       string                   `json:"status"`
-	Version      string                   `json:"version,omitempty"`
-	RunMode      string                   `json:"run_mode,omitempty"`
-	Error        string                   `json:"error,omitempty"`
+	Name         string                        `json:"name"`
+	Status       string                        `json:"status"`
+	Version      string                        `json:"version,omitempty"`
+	RunMode      string                        `json:"run_mode,omitempty"`
+	Error        string                        `json:"error,omitempty"`
 	Capabilities provider.ProviderCapabilities `json:"capabilities,omitempty"`
-	ConfigSchema map[string]FieldSchema   `json:"config_schema,omitempty"`
+	Config       provider.ProviderConfig       `json:"config,omitempty"`
+	ConfigSchema map[string]FieldSchema        `json:"config_schema,omitempty"`
 }
 
 type FieldSchema struct {
@@ -62,9 +64,10 @@ type FieldSchema struct {
 }
 
 type ProjectSummary struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Path string `json:"path"`
+	ID              string `json:"id"`
+	Name            string `json:"name"`
+	Path            string `json:"path"`
+	DefaultProvider string `json:"default_provider"`
 }
 
 type CheckResult struct {
@@ -122,10 +125,19 @@ func (s *ConfigService) Bootstrap(ctx context.Context, localHash string) (*Boots
 }
 
 func (s *ConfigService) MarkDirty() {
+	s.cacheMu.Lock()
+	s.cache = nil
+	s.cacheHash = ""
+	s.cacheMu.Unlock()
+
 	select {
 	case s.dirty <- struct{}{}:
 	default:
 	}
+}
+
+func (s *ConfigService) Refresh(ctx context.Context) error {
+	return s.refresh(ctx)
 }
 
 func (s *ConfigService) refreshLoop() {
@@ -141,6 +153,10 @@ func (s *ConfigService) refresh(ctx context.Context) error {
 
 	var providerConfigs []ProviderConfigData
 	for _, p := range providers {
+		var cfg provider.ProviderConfig
+		if registered, err := s.registry.Get(p.Name); err == nil {
+			cfg = registered.Config()
+		}
 		providerConfigs = append(providerConfigs, ProviderConfigData{
 			Name:         p.Name,
 			Status:       p.Status,
@@ -148,6 +164,7 @@ func (s *ConfigService) refresh(ctx context.Context) error {
 			RunMode:      p.RunMode,
 			Error:        p.Error,
 			Capabilities: p.Capabilities,
+			Config:       cfg,
 			ConfigSchema: s.getProviderConfigSchema(p.Name),
 		})
 	}
@@ -156,9 +173,10 @@ func (s *ConfigService) refresh(ctx context.Context) error {
 	var projectSummaries []ProjectSummary
 	for _, p := range projects {
 		projectSummaries = append(projectSummaries, ProjectSummary{
-			ID:   p.ID,
-			Name: p.Name,
-			Path: p.Path,
+			ID:              p.ID,
+			Name:            p.Name,
+			Path:            p.Path,
+			DefaultProvider: p.DefaultProvider,
 		})
 	}
 
@@ -188,16 +206,26 @@ func (s *ConfigService) refresh(ctx context.Context) error {
 }
 
 func (s *ConfigService) computeHash(data *BootstrapData) string {
-	h := sha256.New()
-	h.Write([]byte(data.Agent.Version))
-	for _, p := range data.Providers {
-		h.Write([]byte(p.Name))
-		h.Write([]byte(p.Status))
+	canonical := struct {
+		Agent     AgentData              `json:"agent"`
+		Providers []ProviderConfigData   `json:"providers"`
+		Projects  []ProjectSummary       `json:"projects"`
+		Workspace config.WorkspaceConfig `json:"workspace"`
+	}{
+		Agent:     data.Agent,
+		Providers: append([]ProviderConfigData(nil), data.Providers...),
+		Projects:  append([]ProjectSummary(nil), data.Projects...),
+		Workspace: data.Workspace,
 	}
-	for _, p := range data.Projects {
-		h.Write([]byte(p.ID))
-	}
-	return hex.EncodeToString(h.Sum(nil))[:16]
+	sort.Slice(canonical.Providers, func(i, j int) bool {
+		return canonical.Providers[i].Name < canonical.Providers[j].Name
+	})
+	sort.Slice(canonical.Projects, func(i, j int) bool {
+		return canonical.Projects[i].ID < canonical.Projects[j].ID
+	})
+	bytes, _ := json.Marshal(canonical)
+	sum := sha256.Sum256(bytes)
+	return hex.EncodeToString(sum[:])
 }
 
 func (s *ConfigService) loadCache() {
@@ -238,9 +266,9 @@ func (s *ConfigService) getProviderConfigSchema(providerName string) map[string]
 				Values:  []string{"untrusted", "on-request", "never"},
 				Default: "on-request",
 				Descriptions: map[string]string{
-					"untrusted": "最严格，所有操作都需要审批",
+					"untrusted":  "最严格，所有操作都需要审批",
 					"on-request": "仅在需要时请求审批",
-					"never":     "从不请求审批（危险）",
+					"never":      "从不请求审批（危险）",
 				},
 			},
 			"sandbox_mode": {

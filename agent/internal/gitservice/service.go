@@ -9,15 +9,17 @@ import (
 )
 
 type Service struct {
-	db       *storage.SQLite
-	watchers map[string]*GitWatcher
-	mu       sync.RWMutex
+	db        *storage.SQLite
+	watchers  map[string]*GitWatcher
+	diffCache *diffCache
+	mu        sync.RWMutex
 }
 
 func NewService(db *storage.SQLite) *Service {
 	return &Service{
-		db:       db,
-		watchers: make(map[string]*GitWatcher),
+		db:        db,
+		watchers:  make(map[string]*GitWatcher),
+		diffCache: newDiffCache(defaultDiffCacheCap),
 	}
 }
 

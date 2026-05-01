@@ -60,20 +60,13 @@ func (p *ClaudeProvider) Detect(ctx context.Context) (*provider.ProviderInfo, er
 }
 
 func (p *ClaudeProvider) CreateSession(ctx context.Context, req provider.CreateSessionRequest) (*provider.Session, error) {
+	req.ApplyDefaults(p.Config())
 	sessionID := uuid.New().String()
-
-	args := []string{}
-	if req.Model != "" {
-		args = append(args, "--model", req.Model)
-	}
-	if req.ApprovalPolicy == "never" {
-		args = append(args, "--dangerously-skip-permissions")
-	}
 
 	r := runner.NewPTYRunner()
 	if err := r.Start(ctx, runner.CommandSpec{
 		Bin:     "claude",
-		Args:    args,
+		Args:    claudeArgs(req),
 		Workdir: req.Workdir,
 		UsePTY:  true,
 	}); err != nil {
@@ -97,7 +90,7 @@ func (p *ClaudeProvider) CreateSession(ctx context.Context, req provider.CreateS
 		ProviderID: "claude",
 		ProjectID:  req.ProjectID,
 		Workdir:    req.Workdir,
-		Status:     "running",
+		Status:     string(provider.SessionStatusRunning),
 		RunnerType: "pty",
 		Model:      req.Model,
 		CreatedAt:  time.Now(),
@@ -111,32 +104,9 @@ func (p *ClaudeProvider) collectOutput(sessionID string, r *runner.PTYRunner) {
 	p.mu.RUnlock()
 
 	for event := range r.Events() {
-		var evt provider.ProviderEvent
-		switch event.Type {
-		case "output":
-			evt = provider.ProviderEvent{
-				SessionID: sessionID,
-				Type:      "session.output",
-				Payload:   map[string]any{"content": string(event.Data)},
-				Timestamp: time.Now(),
-			}
-		case "exit":
-			evt = provider.ProviderEvent{
-				SessionID: sessionID,
-				Type:      "session.exited",
-				Payload:   map[string]any{"exit_code": event.ExitCode},
-				Timestamp: time.Now(),
-			}
-		case "error":
-			evt = provider.ProviderEvent{
-				SessionID: sessionID,
-				Type:      "session.error",
-				Payload:   map[string]any{"error": event.Err.Error()},
-				Timestamp: time.Now(),
-			}
-		}
+		evt, ok := claudeRunnerEvent(sessionID, event)
 
-		if ch != nil {
+		if ok && ch != nil {
 			select {
 			case ch <- evt:
 			default:
@@ -160,14 +130,14 @@ func (p *ClaudeProvider) ForkSession(ctx context.Context, sessionID, threadID st
 	return "", fmt.Errorf("claude does not support fork")
 }
 
-func (p *ClaudeProvider) SendInput(ctx context.Context, sessionID, input string) error {
+func (p *ClaudeProvider) SendInput(ctx context.Context, sessionID string, input provider.SendInputRequest) error {
 	p.mu.RLock()
 	r, ok := p.runners[sessionID]
 	p.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
-	return r.Write([]byte(input + "\n"))
+	return r.Write([]byte(input.Input + "\n"))
 }
 
 func (p *ClaudeProvider) InterruptSession(ctx context.Context, sessionID string) error {
@@ -210,21 +180,23 @@ func (p *ClaudeProvider) RollbackSession(ctx context.Context, sessionID string, 
 	return fmt.Errorf("claude does not support rollback")
 }
 
+func (p *ClaudeProvider) ResolveApproval(ctx context.Context, sessionID, approvalID string, decision provider.ApprovalDecision) error {
+	return fmt.Errorf("claude does not support approval")
+}
+
 func (p *ClaudeProvider) Subscribe(sessionID string) <-chan provider.ProviderEvent {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	ch := make(chan provider.ProviderEvent, 256)
-	p.sessions[sessionID] = ch
+	ch, ok := p.sessions[sessionID]
+	if !ok {
+		ch = make(chan provider.ProviderEvent, 256)
+		p.sessions[sessionID] = ch
+	}
 	return ch
 }
 
 func (p *ClaudeProvider) Unsubscribe(sessionID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if ch, ok := p.sessions[sessionID]; ok {
-		close(ch)
-		delete(p.sessions, sessionID)
-	}
+	// No-op: channel is cleaned up when the session exits
 }
 
 func (p *ClaudeProvider) Capabilities() provider.ProviderCapabilities {
@@ -242,15 +214,23 @@ func (p *ClaudeProvider) Capabilities() provider.ProviderCapabilities {
 	}
 }
 
-func (p *ClaudeProvider) Config() provider.ProviderConfig {
-	return provider.ProviderConfig{
-		Models: []provider.ModelInfo{
-			{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet", Default: true},
-			{ID: "claude-opus-4-20250514", Name: "Claude Opus"},
-			{ID: "claude-haiku-4-20251001", Name: "Claude Haiku"},
-		},
-		ApprovalPolicies: []string{"on-request", "never"},
-	}
+func (p *ClaudeProvider) ListThreads(ctx context.Context, cwd string, limit int) ([]provider.Session, error) {
+	return nil, nil
+}
+
+func (p *ClaudeProvider) HasSession(sessionID string) bool {
+	p.mu.RLock()
+	_, ok := p.runners[sessionID]
+	p.mu.RUnlock()
+	return ok
+}
+
+func (p *ClaudeProvider) ReadThreadEvents(ctx context.Context, threadID, cursor string, limit int) (*provider.EventPage, error) {
+	return &provider.EventPage{SessionID: threadID, Events: []provider.ProviderEvent{}}, nil
+}
+
+func (p *ClaudeProvider) ReadThreadItems(ctx context.Context, threadID, cursor string, limit int) (*provider.ItemPage, error) {
+	return &provider.ItemPage{SessionID: threadID, Items: []provider.SessionItem{}}, nil
 }
 
 func (p *ClaudeProvider) Close() error {

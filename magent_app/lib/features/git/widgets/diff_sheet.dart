@@ -1,14 +1,15 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:magent_app/core/api/git_api.dart';
-import 'package:magent_app/core/api/file_api.dart';
+import 'package:magent_app/core/api/error_messages.dart';
+import 'package:magent_app/core/repositories/file_repository.dart';
+import 'package:magent_app/core/repositories/git_repository.dart';
 
 /// Shared bottom sheet for displaying git diff content.
 /// Handles text diffs, images, and binary files.
 class DiffSheet extends StatefulWidget {
-  final GitApi gitApi;
-  final FileApi? fileApi;
+  final GitRepository git;
+  final FileRepository? file;
   final String projectId;
   final String path;
   final String diffHash;
@@ -17,8 +18,8 @@ class DiffSheet extends StatefulWidget {
 
   const DiffSheet({
     super.key,
-    required this.gitApi,
-    this.fileApi,
+    required this.git,
+    this.file,
     required this.projectId,
     required this.path,
     required this.diffHash,
@@ -28,8 +29,8 @@ class DiffSheet extends StatefulWidget {
 
   static Future<void> show({
     required BuildContext context,
-    required GitApi gitApi,
-    FileApi? fileApi,
+    required GitRepository git,
+    FileRepository? file,
     required String projectId,
     required String path,
     required String diffHash,
@@ -40,8 +41,8 @@ class DiffSheet extends StatefulWidget {
       context: context,
       isScrollControlled: true,
       builder: (_) => DiffSheet(
-        gitApi: gitApi,
-        fileApi: fileApi,
+        git: git,
+        file: file,
         projectId: projectId,
         path: path,
         diffHash: diffHash,
@@ -56,11 +57,17 @@ class DiffSheet extends StatefulWidget {
 }
 
 class _DiffSheetState extends State<DiffSheet> {
+  static const _pageSize = 200;
+
   List<Map<String, dynamic>> _lines = [];
   bool _loading = true;
+  bool _loadingMore = false;
+  bool _hasMore = false;
   bool _wrap = false;
   String _error = '';
   Uint8List? _imageBytes;
+  int _nextOffset = 0;
+  int _totalLines = 0;
 
   @override
   void initState() {
@@ -88,11 +95,20 @@ class _DiffSheetState extends State<DiffSheet> {
 
   bool _isImageFile(String path) {
     final ext = path.contains('.') ? path.split('.').last.toLowerCase() : '';
-    return {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'ico', 'svg'}.contains(ext);
+    return {
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'bmp',
+      'webp',
+      'ico',
+      'svg',
+    }.contains(ext);
   }
 
   Future<void> _loadImage() async {
-    if (widget.fileApi == null) {
+    if (widget.file == null) {
       setState(() {
         _loading = false;
         _error = 'Cannot display image - no file API';
@@ -100,7 +116,10 @@ class _DiffSheetState extends State<DiffSheet> {
       return;
     }
     try {
-      final resp = await widget.fileApi!.readRawFile(widget.projectId, widget.path);
+      final resp = await widget.file!.readRawFile(
+        widget.projectId,
+        widget.path,
+      );
       final encoding = resp['encoding'] as String? ?? 'text';
       final data = resp['data'] as String? ?? '';
       if (mounted) {
@@ -120,7 +139,7 @@ class _DiffSheetState extends State<DiffSheet> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = 'Failed to load image: $e';
+          _error = userFriendlyErrorMessage(e, action: '加载图片失败');
         });
       }
     }
@@ -128,16 +147,24 @@ class _DiffSheetState extends State<DiffSheet> {
 
   Future<void> _loadDiff() async {
     try {
-      final resp = await widget.gitApi.getFileDiff(
+      final resp = await widget.git.getFileDiff(
         widget.projectId,
         widget.path,
         widget.diffHash,
+        offset: 0,
+        limit: _pageSize,
         staged: widget.staged,
       );
+      final lines = (resp['lines'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final offset = resp['offset'] as int? ?? 0;
+      final total = resp['total_lines'] as int? ?? lines.length;
       if (mounted) {
         setState(() {
-          _lines = (resp['lines'] as List<dynamic>? ?? [])
-              .cast<Map<String, dynamic>>();
+          _lines = lines;
+          _nextOffset = offset + lines.length;
+          _totalLines = total;
+          _hasMore = _nextOffset < total;
           _loading = false;
         });
       }
@@ -145,7 +172,42 @@ class _DiffSheetState extends State<DiffSheet> {
       if (mounted) {
         setState(() {
           _loading = false;
-          _error = 'Failed to load diff: $e';
+          _error = userFriendlyErrorMessage(e, action: '加载 Diff 失败');
+        });
+      }
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_loadingMore || !_hasMore) return;
+    setState(() => _loadingMore = true);
+    try {
+      final resp = await widget.git.getFileDiff(
+        widget.projectId,
+        widget.path,
+        widget.diffHash,
+        offset: _nextOffset,
+        limit: _pageSize,
+        staged: widget.staged,
+      );
+      final lines = (resp['lines'] as List<dynamic>? ?? [])
+          .cast<Map<String, dynamic>>();
+      final offset = resp['offset'] as int? ?? _nextOffset;
+      final total = resp['total_lines'] as int? ?? _totalLines;
+      if (mounted) {
+        setState(() {
+          _lines.addAll(lines);
+          _nextOffset = offset + lines.length;
+          _totalLines = total;
+          _hasMore = _nextOffset < total;
+          _loadingMore = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loadingMore = false;
+          _error = userFriendlyErrorMessage(e, action: '加载 Diff 失败');
         });
       }
     }
@@ -166,10 +228,10 @@ class _DiffSheetState extends State<DiffSheet> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _error.isNotEmpty
-                      ? _buildErrorOrInfo()
-                      : _imageBytes != null
-                          ? _buildImageViewer()
-                          : _buildDiffList(scrollController),
+                  ? _buildErrorOrInfo()
+                  : _imageBytes != null
+                  ? _buildImageViewer()
+                  : _buildDiffList(scrollController),
             ),
           ],
         );
@@ -198,9 +260,7 @@ class _DiffSheetState extends State<DiffSheet> {
     return InteractiveViewer(
       minScale: 0.5,
       maxScale: 5.0,
-      child: Center(
-        child: Image.memory(_imageBytes!, fit: BoxFit.contain),
-      ),
+      child: Center(child: Image.memory(_imageBytes!, fit: BoxFit.contain)),
     );
   }
 
@@ -212,10 +272,7 @@ class _DiffSheetState extends State<DiffSheet> {
       ),
       child: Row(
         children: [
-          Icon(
-            _imageBytes != null ? Icons.image : Icons.code,
-            size: 18,
-          ),
+          Icon(_imageBytes != null ? Icons.image : Icons.code, size: 18),
           const SizedBox(width: 8),
           Expanded(
             child: Text(
@@ -234,14 +291,25 @@ class _DiffSheetState extends State<DiffSheet> {
             ),
           if (_lines.isNotEmpty)
             Padding(
-              padding: const EdgeInsets.only(right: 4),
+              padding: const EdgeInsets.only(right: 8),
               child: _buildStatBadge(),
+            ),
+          if (_lines.isNotEmpty && _totalLines > 0)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: Text(
+                '${_lines.length}/$_totalLines',
+                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              ),
             ),
           if (_lines.isNotEmpty)
             Tooltip(
               message: _wrap ? 'Disable wrap' : 'Enable wrap',
               child: IconButton(
-                icon: Icon(_wrap ? Icons.wrap_text : Icons.horizontal_rule, size: 18),
+                icon: Icon(
+                  _wrap ? Icons.wrap_text : Icons.horizontal_rule,
+                  size: 18,
+                ),
                 onPressed: () => setState(() => _wrap = !_wrap),
               ),
             ),
@@ -252,16 +320,25 @@ class _DiffSheetState extends State<DiffSheet> {
                 if (_imageBytes != null) {
                   Clipboard.setData(ClipboardData(text: widget.path));
                 } else {
-                  final text = _lines.map((l) {
-                    final type = l['type'] as String? ?? 'context';
-                    final content = l['content'] as String? ?? '';
-                    final prefix = type == 'add' ? '+' : type == 'del' ? '-' : ' ';
-                    return '$prefix$content';
-                  }).join('\n');
+                  final text = _lines
+                      .map((l) {
+                        final type = l['type'] as String? ?? 'context';
+                        final content = l['content'] as String? ?? '';
+                        final prefix = type == 'add'
+                            ? '+'
+                            : type == 'del'
+                            ? '-'
+                            : ' ';
+                        return '$prefix$content';
+                      })
+                      .join('\n');
                   Clipboard.setData(ClipboardData(text: text));
                 }
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)),
+                  const SnackBar(
+                    content: Text('Copied'),
+                    duration: Duration(seconds: 1),
+                  ),
                 );
               },
             ),
@@ -284,9 +361,23 @@ class _DiffSheetState extends State<DiffSheet> {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text('+$adds', style: TextStyle(fontSize: 11, color: Colors.green[700], fontWeight: FontWeight.w500)),
+        Text(
+          '+$adds',
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.green[700],
+            fontWeight: FontWeight.w500,
+          ),
+        ),
         const SizedBox(width: 4),
-        Text('-$dels', style: TextStyle(fontSize: 11, color: Colors.red[700], fontWeight: FontWeight.w500)),
+        Text(
+          '-$dels',
+          style: TextStyle(
+            fontSize: 11,
+            color: Colors.red[700],
+            fontWeight: FontWeight.w500,
+          ),
+        ),
       ],
     );
   }
@@ -315,18 +406,45 @@ class _DiffSheetState extends State<DiffSheet> {
 
     final listView = ListView.builder(
       controller: scrollController,
-      itemCount: _lines.length,
-      itemBuilder: (context, index) => _buildDiffLine(_lines[index]),
+      itemCount: _lines.length + (_hasMore || _loadingMore ? 1 : 0),
+      itemBuilder: (context, index) {
+        if (index >= _lines.length) {
+          return Padding(
+            padding: const EdgeInsets.all(12),
+            child: Center(
+              child: _loadingMore
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : TextButton(
+                      onPressed: _loadMore,
+                      child: const Text('Load more'),
+                    ),
+            ),
+          );
+        }
+        return _buildDiffLine(_lines[index]);
+      },
     );
 
-    if (_wrap) return listView;
+    final listener = NotificationListener<ScrollNotification>(
+      onNotification: (notification) {
+        if (notification.metrics.pixels >=
+            notification.metrics.maxScrollExtent - 240) {
+          _loadMore();
+        }
+        return false;
+      },
+      child: listView,
+    );
+
+    if (_wrap) return listener;
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
-      child: SizedBox(
-        width: 1200,
-        child: listView,
-      ),
+      child: SizedBox(width: 1200, child: listener),
     );
   }
 
@@ -367,7 +485,11 @@ class _DiffSheetState extends State<DiffSheet> {
             width: 44,
             child: Text(
               oldLine?.toString() ?? '',
-              style: TextStyle(color: Colors.grey[500], fontSize: 11, fontFamily: 'monospace'),
+              style: TextStyle(
+                color: Colors.grey[500],
+                fontSize: 11,
+                fontFamily: 'monospace',
+              ),
               textAlign: TextAlign.right,
             ),
           ),
@@ -376,7 +498,11 @@ class _DiffSheetState extends State<DiffSheet> {
             width: 44,
             child: Text(
               newLine?.toString() ?? '',
-              style: TextStyle(color: Colors.grey[500], fontSize: 11, fontFamily: 'monospace'),
+              style: TextStyle(
+                color: Colors.grey[500],
+                fontSize: 11,
+                fontFamily: 'monospace',
+              ),
               textAlign: TextAlign.right,
             ),
           ),

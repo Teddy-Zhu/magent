@@ -9,15 +9,15 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
 	"github.com/magent/agent/internal/api/middleware"
-	"github.com/magent/agent/internal/providers/codex"
-	"github.com/magent/agent/internal/log"
 	"github.com/magent/agent/internal/config"
 	"github.com/magent/agent/internal/fileservice"
 	"github.com/magent/agent/internal/gitservice"
+	"github.com/magent/agent/internal/log"
 	"github.com/magent/agent/internal/project"
 	"github.com/magent/agent/internal/provider"
 	"github.com/magent/agent/internal/providers/aider"
 	"github.com/magent/agent/internal/providers/claude"
+	"github.com/magent/agent/internal/providers/codex"
 	"github.com/magent/agent/internal/session"
 	"github.com/magent/agent/internal/storage"
 	syncpkg "github.com/magent/agent/internal/sync"
@@ -30,19 +30,20 @@ var (
 )
 
 type Server struct {
-	cfg            *config.Config
-	router         *gin.Engine
-	wsHub          *ws.Hub
-	store          *storage.SQLite
-	projectMgr     *project.Manager
-	registry       *provider.Registry
-	sessionHandler *SessionHandler
-	gitHandler     *GitHandler
-	fileHandler    *FileHandler
-	syncHandler    *SyncHandler
+	cfg             *config.Config
+	router          *gin.Engine
+	wsHub           *ws.Hub
+	store           *storage.SQLite
+	projectMgr      *project.Manager
+	registry        *provider.Registry
+	gitService      *gitservice.Service
+	sessionHandler  *SessionHandler
+	gitHandler      *GitHandler
+	fileHandler     *FileHandler
+	syncHandler     *SyncHandler
 	providerHandler *ProviderHandler
-	auditLogger    *middleware.AuditLogger
-	upgrader       websocket.Upgrader
+	auditLogger     *middleware.AuditLogger
+	upgrader        websocket.Upgrader
 }
 
 func NewServer(cfg *config.Config, store *storage.SQLite) *Server {
@@ -51,7 +52,7 @@ func NewServer(cfg *config.Config, store *storage.SQLite) *Server {
 	projectMgr := project.NewManager(store, cfg.Workspace.AllowedDirs, cfg.Workspace.ExcludedPattern)
 
 	registry := provider.NewRegistry()
-	codexProvider := codex.New(codex.CodexConfig{}, hub)
+	codexProvider := codex.New(codex.CodexConfig{}, hub, store)
 	registry.Register("codex", codexProvider)
 	log.Debug("server", "registered provider: codex")
 	registry.Register("claude", claude.New())
@@ -70,17 +71,18 @@ func NewServer(cfg *config.Config, store *storage.SQLite) *Server {
 	auditLogger := middleware.NewAuditLogger(store)
 
 	return &Server{
-		cfg:            cfg,
-		wsHub:          hub,
-		store:          store,
-		projectMgr:     projectMgr,
-		registry:       registry,
-		sessionHandler: NewSessionHandler(sessionMgr),
-		gitHandler:     NewGitHandler(gitService, projectMgr, registry),
-		fileHandler:    NewFileHandler(fileService, projectMgr),
-		syncHandler:    NewSyncHandler(configService),
-		providerHandler: NewProviderHandler(registry),
-		auditLogger:    auditLogger,
+		cfg:             cfg,
+		wsHub:           hub,
+		store:           store,
+		projectMgr:      projectMgr,
+		registry:        registry,
+		gitService:      gitService,
+		sessionHandler:  NewSessionHandler(sessionMgr, projectMgr),
+		gitHandler:      NewGitHandler(gitService, projectMgr, registry),
+		fileHandler:     NewFileHandler(fileService, projectMgr),
+		syncHandler:     NewSyncHandler(configService),
+		providerHandler: NewProviderHandler(registry, projectMgr),
+		auditLogger:     auditLogger,
 		upgrader: websocket.Upgrader{
 			CheckOrigin: func(r *http.Request) bool {
 				return true
@@ -100,12 +102,12 @@ func (s *Server) Start(ctx context.Context) error {
 
 	s.router.GET("/healthz", s.handleHealthz)
 
-	api := s.router.Group("/api")
-	api.Use(middleware.Auth(s.cfg.Auth))
-
-	s.registerRoutes(api)
+	v1 := s.router.Group("/api/v1")
+	v1.Use(middleware.Auth(s.cfg.Auth))
+	s.registerV1Routes(v1)
 
 	go s.wsHub.Run(ctx)
+	s.startGitWatchers(ctx)
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)
 	srv := &http.Server{

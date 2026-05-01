@@ -18,91 +18,15 @@ func (s *SQLite) migrate() error {
 			project_id TEXT NOT NULL,
 			title TEXT,
 			workdir TEXT,
-			status TEXT NOT NULL,
+			last_status TEXT,
 			runner_type TEXT NOT NULL,
 			model TEXT,
-			approval_mode TEXT,
+			approval_policy TEXT,
 			sandbox_mode TEXT,
 			config TEXT,
-			last_seq INTEGER DEFAULT 0,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
 			exited_at INTEGER
-		);
-
-		CREATE TABLE IF NOT EXISTS session_events (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			session_id TEXT NOT NULL,
-			seq INTEGER NOT NULL,
-			type TEXT NOT NULL,
-			payload BLOB,
-			created_at INTEGER NOT NULL,
-			UNIQUE(session_id, seq)
-		);
-		CREATE INDEX IF NOT EXISTS idx_events_session_seq
-			ON session_events(session_id, seq);
-
-		CREATE TABLE IF NOT EXISTS git_state (
-			project_id TEXT PRIMARY KEY,
-			version INTEGER NOT NULL,
-			head TEXT,
-			branch TEXT,
-			upstream TEXT,
-			ahead INTEGER DEFAULT 0,
-			behind INTEGER DEFAULT 0,
-			worktree_hash TEXT,
-			index_hash TEXT,
-			changed_count INTEGER DEFAULT 0,
-			staged_count INTEGER DEFAULT 0,
-			unstaged_count INTEGER DEFAULT 0,
-			untracked_count INTEGER DEFAULT 0,
-			updated_at INTEGER NOT NULL
-		);
-
-		CREATE TABLE IF NOT EXISTS git_file_changes (
-			project_id TEXT NOT NULL,
-			path TEXT NOT NULL,
-			version INTEGER NOT NULL,
-			status TEXT NOT NULL,
-			staged INTEGER DEFAULT 0,
-			additions INTEGER DEFAULT 0,
-			deletions INTEGER DEFAULT 0,
-			binary INTEGER DEFAULT 0,
-			old_hash TEXT,
-			new_hash TEXT,
-			diff_hash TEXT,
-			size INTEGER,
-			PRIMARY KEY(project_id, path, version)
-		);
-
-		CREATE TABLE IF NOT EXISTS git_diff_cache (
-			project_id TEXT NOT NULL,
-			path TEXT NOT NULL,
-			diff_hash TEXT NOT NULL,
-			content TEXT,
-			total_lines INTEGER,
-			created_at INTEGER NOT NULL,
-			PRIMARY KEY(project_id, path, diff_hash)
-		);
-
-		CREATE TABLE IF NOT EXISTS file_cache (
-			project_id TEXT NOT NULL,
-			path TEXT NOT NULL,
-			hash TEXT NOT NULL,
-			size INTEGER,
-			mtime INTEGER,
-			content BLOB,
-			created_at INTEGER NOT NULL,
-			PRIMARY KEY(project_id, path, hash)
-		);
-
-		CREATE TABLE IF NOT EXISTS dir_cache (
-			project_id TEXT NOT NULL,
-			path TEXT NOT NULL,
-			hash TEXT NOT NULL,
-			items TEXT,
-			created_at INTEGER NOT NULL,
-			PRIMARY KEY(project_id, path)
 		);
 
 		CREATE TABLE IF NOT EXISTS audit_log (
@@ -121,6 +45,140 @@ func (s *SQLite) migrate() error {
 			data BLOB NOT NULL,
 			updated_at INTEGER NOT NULL
 		);
+
+		CREATE TABLE IF NOT EXISTS pending_approvals (
+			approval_id TEXT PRIMARY KEY,
+			session_id TEXT NOT NULL,
+			thread_id TEXT NOT NULL,
+			turn_id TEXT,
+			item_id TEXT,
+			codex_request_id INTEGER NOT NULL,
+			type TEXT NOT NULL,
+			request_json TEXT NOT NULL,
+			status TEXT NOT NULL,
+			created_at INTEGER NOT NULL,
+			resolved_at INTEGER
+		);
+	`)
+	if err != nil {
+		return err
+	}
+	if err := s.migrateSessionControlPlaneSchema(); err != nil {
+		return err
+	}
+	return s.dropContentCacheTables()
+}
+
+func (s *SQLite) migrateSessionControlPlaneSchema() error {
+	rows, err := s.db.Query(`PRAGMA table_info(sessions)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasStatus := false
+	hasLastStatus := false
+	hasLastSeq := false
+	hasApprovalMode := false
+	hasApprovalPolicy := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		switch name {
+		case "status":
+			hasStatus = true
+		case "last_status":
+			hasLastStatus = true
+		case "last_seq":
+			hasLastSeq = true
+		case "approval_mode":
+			hasApprovalMode = true
+		case "approval_policy":
+			hasApprovalPolicy = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if !hasStatus && !hasLastSeq && hasLastStatus && hasApprovalPolicy && !hasApprovalMode {
+		return nil
+	}
+	lastStatusExpr := "status"
+	if hasLastStatus && hasStatus {
+		lastStatusExpr = "COALESCE(last_status, status)"
+	} else if hasLastStatus {
+		lastStatusExpr = "last_status"
+	}
+	approvalPolicyExpr := "NULL"
+	if hasApprovalMode && hasApprovalPolicy {
+		approvalPolicyExpr = "COALESCE(approval_policy, approval_mode)"
+	} else if hasApprovalMode {
+		approvalPolicyExpr = "approval_mode"
+	} else if hasApprovalPolicy {
+		approvalPolicyExpr = "approval_policy"
+	}
+
+	_, err = s.db.Exec(`
+		CREATE TABLE IF NOT EXISTS sessions_new (
+			id TEXT PRIMARY KEY,
+			provider_id TEXT NOT NULL,
+			thread_id TEXT,
+			project_id TEXT NOT NULL,
+			title TEXT,
+			workdir TEXT,
+			last_status TEXT,
+			runner_type TEXT NOT NULL,
+			model TEXT,
+			approval_policy TEXT,
+			sandbox_mode TEXT,
+			config TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			exited_at INTEGER
+		);
+
+		INSERT OR REPLACE INTO sessions_new (
+			id, provider_id, thread_id, project_id, title, workdir, last_status,
+			runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at
+		)
+		SELECT
+			id,
+			provider_id,
+			thread_id,
+			project_id,
+			title,
+			workdir,
+			` + lastStatusExpr + `,
+			COALESCE(runner_type, 'app-server'),
+			model,
+			` + approvalPolicyExpr + `,
+			sandbox_mode,
+			config,
+			created_at,
+			updated_at,
+			exited_at
+		FROM sessions;
+
+		DROP TABLE sessions;
+		ALTER TABLE sessions_new RENAME TO sessions;
+	`)
+	return err
+}
+
+func (s *SQLite) dropContentCacheTables() error {
+	_, err := s.db.Exec(`
+		DROP TABLE IF EXISTS session_events;
+		DROP TABLE IF EXISTS git_state;
+		DROP TABLE IF EXISTS git_file_changes;
+		DROP TABLE IF EXISTS git_diff_cache;
+		DROP TABLE IF EXISTS file_cache;
+		DROP TABLE IF EXISTS dir_cache;
 	`)
 	return err
 }

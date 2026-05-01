@@ -33,6 +33,17 @@ func (r *Registry) Get(name string) (Provider, error) {
 	return p, nil
 }
 
+// ListProviders returns all registered providers.
+func (r *Registry) ListProviders() []Provider {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	var result []Provider
+	for _, p := range r.providers {
+		result = append(result, p)
+	}
+	return result
+}
+
 func (r *Registry) List() []ProviderInfo {
 	r.mu.RLock()
 	defer r.mu.RUnlock()

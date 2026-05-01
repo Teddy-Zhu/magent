@@ -2,6 +2,7 @@ package gitservice
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -16,9 +17,10 @@ type GitWatcher struct {
 	service     *Service
 	fsWatcher   *fsnotify.Watcher
 	debounce    time.Duration
-	timers      map[string]*time.Timer
+	timer       *time.Timer
 	mu          sync.Mutex
 	onChange    func(*GitSummary)
+	lastVersion int64
 }
 
 func NewGitWatcher(projectID, projectPath string, service *Service, onChange func(*GitSummary)) (*GitWatcher, error) {
@@ -27,10 +29,6 @@ func NewGitWatcher(projectID, projectPath string, service *Service, onChange fun
 		return nil, err
 	}
 
-	fsWatcher.Add(filepath.Join(projectPath, ".git", "index"))
-	fsWatcher.Add(filepath.Join(projectPath, ".git", "HEAD"))
-	fsWatcher.Add(filepath.Join(projectPath, ".git", "refs"))
-
 	log.Debug("gitwatcher", "starting project=%s path=%s", projectID, projectPath)
 	w := &GitWatcher{
 		projectID:   projectID,
@@ -38,9 +36,13 @@ func NewGitWatcher(projectID, projectPath string, service *Service, onChange fun
 		service:     service,
 		fsWatcher:   fsWatcher,
 		debounce:    500 * time.Millisecond,
-		timers:      make(map[string]*time.Timer),
 		onChange:    onChange,
 	}
+
+	if summary, err := service.GetSummary(context.Background(), projectID, projectPath); err == nil {
+		w.lastVersion = summary.Version
+	}
+	w.addInitialWatches()
 
 	go w.loop()
 	return w, nil
@@ -49,20 +51,82 @@ func NewGitWatcher(projectID, projectPath string, service *Service, onChange fun
 func (w *GitWatcher) loop() {
 	for {
 		select {
-		case event := <-w.fsWatcher.Events:
-			log.Debug("gitwatcher", "event project=%s op=%s file=%s", w.projectID, event.Op, event.Name)
-			w.mu.Lock()
-			if timer, ok := w.timers[event.Name]; ok {
-				timer.Stop()
+		case event, ok := <-w.fsWatcher.Events:
+			if !ok {
+				return
 			}
-			w.timers[event.Name] = time.AfterFunc(w.debounce, func() {
-				w.refresh()
-			})
-			w.mu.Unlock()
-		case err := <-w.fsWatcher.Errors:
+			log.Debug("gitwatcher", "event project=%s op=%s file=%s", w.projectID, event.Op, event.Name)
+			if event.Op&fsnotify.Create != 0 {
+				w.addDirectoryIfNeeded(event.Name)
+			}
+			w.scheduleRefresh()
+		case err, ok := <-w.fsWatcher.Errors:
+			if !ok {
+				return
+			}
 			log.Error("gitwatcher", "error project=%s: %v", w.projectID, err)
 		}
 	}
+}
+
+func (w *GitWatcher) addInitialWatches() {
+	w.addIfExists(filepath.Join(w.projectPath, ".git", "index"))
+	w.addIfExists(filepath.Join(w.projectPath, ".git", "HEAD"))
+	w.addRecursive(filepath.Join(w.projectPath, ".git", "refs"), true)
+	w.addRecursive(w.projectPath, false)
+}
+
+func (w *GitWatcher) addIfExists(path string) {
+	if _, err := os.Stat(path); err != nil {
+		return
+	}
+	if err := w.fsWatcher.Add(path); err != nil {
+		log.Warn("gitwatcher", "watch add failed project=%s path=%s err=%v", w.projectID, path, err)
+	}
+}
+
+func (w *GitWatcher) addRecursive(root string, includeGit bool) {
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil || !d.IsDir() {
+			return nil
+		}
+		if !includeGit && path != root && w.shouldSkipDir(d.Name()) {
+			return filepath.SkipDir
+		}
+		if err := w.fsWatcher.Add(path); err != nil {
+			log.Warn("gitwatcher", "watch add failed project=%s path=%s err=%v", w.projectID, path, err)
+		}
+		return nil
+	})
+}
+
+func (w *GitWatcher) addDirectoryIfNeeded(path string) {
+	info, err := os.Stat(path)
+	if err != nil || !info.IsDir() {
+		return
+	}
+	if w.shouldSkipDir(filepath.Base(path)) {
+		return
+	}
+	w.addRecursive(path, false)
+}
+
+func (w *GitWatcher) shouldSkipDir(name string) bool {
+	switch name {
+	case ".git", "node_modules", ".dart_tool", "build", "dist", ".next", "target", "vendor":
+		return true
+	default:
+		return false
+	}
+}
+
+func (w *GitWatcher) scheduleRefresh() {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.timer != nil {
+		w.timer.Stop()
+	}
+	w.timer = time.AfterFunc(w.debounce, w.refresh)
 }
 
 func (w *GitWatcher) refresh() {
@@ -76,11 +140,24 @@ func (w *GitWatcher) refresh() {
 		return
 	}
 
+	w.mu.Lock()
+	if summary.Version == w.lastVersion {
+		w.mu.Unlock()
+		return
+	}
+	w.lastVersion = summary.Version
+	w.mu.Unlock()
+
 	if w.onChange != nil {
 		w.onChange(summary)
 	}
 }
 
 func (w *GitWatcher) Close() {
+	w.mu.Lock()
+	if w.timer != nil {
+		w.timer.Stop()
+	}
+	w.mu.Unlock()
 	w.fsWatcher.Close()
 }

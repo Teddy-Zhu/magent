@@ -26,10 +26,13 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       return;
     }
     try {
-      final resp = await api.client.dio.get('/api/providers');
+      final providers = await createBootstrapRepository(
+        ref,
+        api,
+      ).getProviders();
       if (mounted) {
         setState(() {
-          _providers = resp.data['data'] ?? [];
+          _providers = providers;
           _loading = false;
         });
       }
@@ -45,14 +48,14 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _providers.isEmpty
-              ? const Center(child: Text('No providers found'))
-              : ListView.builder(
-                  itemCount: _providers.length,
-                  itemBuilder: (context, index) => _ProviderTile(
-                    provider: _providers[index],
-                    onTap: () => _showProviderDetail(_providers[index]),
-                  ),
-                ),
+          ? const Center(child: Text('No providers found'))
+          : ListView.builder(
+              itemCount: _providers.length,
+              itemBuilder: (context, index) => _ProviderTile(
+                provider: _providers[index],
+                onTap: () => _showProviderDetail(_providers[index]),
+              ),
+            ),
     );
   }
 
@@ -164,13 +167,20 @@ class _ProviderDetailSheet extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             if (provider['binary'] != null)
-              Text('Binary: ${provider['binary']}',
-                  style: TextStyle(color: Colors.grey[600])),
+              Text(
+                'Binary: ${provider['binary']}',
+                style: TextStyle(color: Colors.grey[600]),
+              ),
             if (provider['run_mode'] != null)
-              Text('Mode: ${provider['run_mode']}',
-                  style: TextStyle(color: Colors.grey[600])),
+              Text(
+                'Mode: ${provider['run_mode']}',
+                style: TextStyle(color: Colors.grey[600]),
+              ),
             const Divider(height: 24),
-            Text('Capabilities', style: Theme.of(context).textTheme.titleMedium),
+            Text(
+              'Capabilities',
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
             const SizedBox(height: 8),
             _buildCapTile('Resume', caps['supports_resume'] ?? false),
             _buildCapTile('Fork', caps['supports_fork'] ?? false),
@@ -183,7 +193,10 @@ class _ProviderDetailSheet extends StatelessWidget {
             _buildCapTile('MCP', caps['supports_mcp'] ?? false),
             _buildCapTile('PTY', caps['supports_pty'] ?? false),
             _buildCapTile('Streaming', caps['streaming_output'] ?? false),
-            _buildCapTile('Structured Output', caps['structured_output'] ?? false),
+            _buildCapTile(
+              'Structured Output',
+              caps['structured_output'] ?? false,
+            ),
           ],
         );
       },

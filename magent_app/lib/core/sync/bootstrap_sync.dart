@@ -16,8 +16,16 @@ class BootstrapData {
   factory BootstrapData.fromJson(Map<String, dynamic> json) {
     return BootstrapData(
       agent: AgentData.fromJson(json['agent'] ?? {}),
-      providers: (json['providers'] as List?)?.map((p) => ProviderConfigData.fromJson(p)).toList() ?? [],
-      projects: (json['projects'] as List?)?.map((p) => ProjectSummary.fromJson(p)).toList() ?? [],
+      providers:
+          (json['providers'] as List?)
+              ?.map((p) => ProviderConfigData.fromJson(p))
+              .toList() ??
+          [],
+      projects:
+          (json['projects'] as List?)
+              ?.map((p) => ProjectSummary.fromJson(p))
+              .toList() ??
+          [],
       updatedAt: json['updated_at'] ?? 0,
     );
   }
@@ -63,14 +71,21 @@ class ProjectSummary {
   final String id;
   final String name;
   final String path;
+  final String defaultProvider;
 
-  ProjectSummary({required this.id, required this.name, required this.path});
+  ProjectSummary({
+    required this.id,
+    required this.name,
+    required this.path,
+    required this.defaultProvider,
+  });
 
   factory ProjectSummary.fromJson(Map<String, dynamic> json) {
     return ProjectSummary(
       id: json['id'] ?? '',
       name: json['name'] ?? '',
       path: json['path'] ?? '',
+      defaultProvider: json['default_provider'] ?? 'codex',
     );
   }
 }
@@ -86,24 +101,23 @@ class BootstrapSync {
   BootstrapSync(this._dio);
 
   Future<BootstrapData> sync() async {
-    final checkResp = await _dio.get('/api/sync/check');
-    final remoteHash = checkResp.data['config_hash'] as String?;
-
-    if (remoteHash == _configHash && _data != null) {
-      return _data!;
-    }
-
     final resp = await _dio.get(
-      '/api/sync/bootstrap',
-      queryParameters: {'local_hash': _configHash ?? ''},
+      '/api/v1/bootstrap',
+      options: Options(
+        headers: {
+          if (_configHash != null && _configHash!.isNotEmpty)
+            'If-None-Match': _configHash,
+        },
+        validateStatus: (status) => status == 200 || status == 304,
+      ),
     );
 
     if (resp.statusCode == 304) {
       return _data!;
     }
 
-    _data = BootstrapData.fromJson(resp.data);
-    _configHash = remoteHash;
+    _data = BootstrapData.fromJson(resp.data['data'] ?? resp.data);
+    _configHash = resp.headers.value('etag');
     return _data!;
   }
 

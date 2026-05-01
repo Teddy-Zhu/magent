@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 import 'package:magent_app/core/api/api_client.dart';
+import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 
 class AgentConnectPage extends StatefulWidget {
@@ -43,15 +44,15 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Connected successfully')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Connected successfully')));
         context.go('/projects');
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Connection failed: $e')),
+          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '连接失败'))),
         );
       }
     } finally {

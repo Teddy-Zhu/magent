@@ -6,27 +6,47 @@ import (
 	"github.com/magent/agent/internal/ws"
 )
 
-func (s *Server) registerRoutes(api *gin.RouterGroup) {
-	// Agent
+func (s *Server) registerV1Routes(api *gin.RouterGroup) {
 	api.GET("/agent/info", s.handleAgentInfo)
+	api.GET("/bootstrap", s.syncHandler.Bootstrap)
+	api.POST("/bootstrap/refresh", s.syncHandler.RefreshBootstrap)
 
-	// Providers
 	api.GET("/providers", s.providerHandler.List)
 	api.GET("/providers/:name", s.providerHandler.Get)
 	api.GET("/providers/:name/capabilities", s.providerHandler.Capabilities)
 	api.GET("/providers/:name/config", s.providerHandler.Config)
+	api.GET("/providers/:name/threads", s.providerHandler.Threads)
 
-	// Projects
 	api.GET("/projects", s.handleListProjects)
 	api.POST("/projects", s.handleCreateProject)
 	api.GET("/projects/:id", s.handleGetProject)
 	api.PUT("/projects/:id", s.handleUpdateProject)
 	api.DELETE("/projects/:id", s.handleDeleteProject)
+	api.GET("/projects/:id/sessions/changes", s.sessionHandler.ListChanges)
+	api.GET("/projects/:id/git/summary", s.gitHandler.SummaryForProject)
+	api.GET("/projects/:id/git/changes", s.gitHandler.ChangesForProject)
+	api.GET("/projects/:id/git/diff/file", s.gitHandler.FileDiffForProject)
+	api.POST("/projects/:id/git/stage", s.gitHandler.StageForProject)
+	api.POST("/projects/:id/git/unstage", s.gitHandler.UnstageForProject)
+	api.POST("/projects/:id/git/discard", s.gitHandler.DiscardForProject)
+	api.POST("/projects/:id/git/commit", s.gitHandler.CommitForProject)
+	api.POST("/projects/:id/git/commit/suggest", s.gitHandler.SuggestCommitMessageForProject)
+	api.POST("/projects/:id/git/pull", s.gitHandler.PullForProject)
+	api.POST("/projects/:id/git/push", s.gitHandler.PushForProject)
+	api.GET("/projects/:id/git/log", s.gitHandler.LogForProject)
+	api.GET("/projects/:id/git/branches", s.gitHandler.BranchesForProject)
+	api.GET("/projects/:id/git/commit/files", s.gitHandler.CommitFilesForProject)
+	api.GET("/projects/:id/git/commit/file-diff", s.gitHandler.CommitFileDiffForProject)
+	api.GET("/projects/:id/files/dir", s.fileHandler.ListDirForProject)
+	api.GET("/projects/:id/files/content", s.fileHandler.ReadFileForProject)
+	api.GET("/projects/:id/files/blob", s.fileHandler.RawFileForProject)
+	api.GET("/dirs/list", s.handleListDirs)
+	api.GET("/dirs/home", s.handleGetHomeDir)
 
-	// Sessions
 	api.POST("/sessions", s.sessionHandler.Create)
 	api.GET("/sessions", s.sessionHandler.List)
 	api.GET("/sessions/:id", s.sessionHandler.Get)
+	api.POST("/sessions/:id/resume", s.sessionHandler.Resume)
 	api.POST("/sessions/:id/input", s.sessionHandler.SendInput)
 	api.POST("/sessions/:id/interrupt", s.sessionHandler.Interrupt)
 	api.POST("/sessions/:id/stop", s.sessionHandler.Stop)
@@ -34,36 +54,9 @@ func (s *Server) registerRoutes(api *gin.RouterGroup) {
 	api.POST("/sessions/:id/compact", s.sessionHandler.Compact)
 	api.POST("/sessions/:id/rollback", s.sessionHandler.Rollback)
 	api.GET("/sessions/:id/events", s.sessionHandler.GetEvents)
+	api.GET("/sessions/:id/items", s.sessionHandler.GetItems)
+	api.POST("/sessions/:id/approvals/:approval_id", s.sessionHandler.ResolveApproval)
 
-	// Git
-	api.GET("/git/summary", s.gitHandler.Summary)
-	api.GET("/git/changes", s.gitHandler.Changes)
-	api.GET("/git/diff/file", s.gitHandler.FileDiff)
-	api.POST("/git/stage", s.gitHandler.Stage)
-	api.POST("/git/unstage", s.gitHandler.Unstage)
-	api.POST("/git/discard", s.gitHandler.Discard)
-	api.POST("/git/commit", s.gitHandler.Commit)
-	api.POST("/git/commit/suggest", s.gitHandler.SuggestCommitMessage)
-	api.POST("/git/push", s.gitHandler.Push)
-	api.GET("/git/log", s.gitHandler.Log)
-	api.GET("/git/branches", s.gitHandler.Branches)
-	api.GET("/git/commit/files", s.gitHandler.CommitFiles)
-	api.GET("/git/commit/file-diff", s.gitHandler.CommitFileDiff)
-
-	// Files
-	api.GET("/files/list", s.fileHandler.ListDir)
-	api.GET("/files/read", s.fileHandler.ReadFile)
-	api.GET("/files/raw", s.fileHandler.RawFile)
-
-	// Directory Browser (for project creation)
-	api.GET("/dirs/list", s.handleListDirs)
-	api.GET("/dirs/home", s.handleGetHomeDir)
-
-	// Sync
-	api.GET("/sync/check", s.syncHandler.Check)
-	api.GET("/sync/bootstrap", s.syncHandler.Bootstrap)
-
-	// WebSocket
 	api.GET("/ws", s.handleWebSocket)
 }
 

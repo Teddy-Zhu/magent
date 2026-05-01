@@ -17,35 +17,52 @@ func NewSessionStore(db *storage.SQLite) *SessionStore {
 	return &SessionStore{db: db}
 }
 
+// Save stores minimal session metadata. Provider is source of truth for everything else.
 func (s *SessionStore) Save(session *provider.Session) error {
-	configJSON, _ := json.Marshal(session.Config)
+	normalized := *session
+	normalizeSessionControlPlane(&normalized)
+	now := time.Now().Unix()
+	configJSON, _ := json.Marshal(normalized.Config)
 	_, err := s.db.DB().Exec(`
-		INSERT INTO sessions (id, provider_id, thread_id, project_id, title,
-			workdir, status, runner_type, model, approval_mode, sandbox_mode,
-			config, last_seq, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
-		session.ID, session.ProviderID, session.ThreadID, session.ProjectID,
-		session.Title, session.Workdir, session.Status, session.RunnerType,
-		session.Model, session.ApprovalMode, session.SandboxMode,
-		string(configJSON), time.Now().Unix(), time.Now().Unix())
+		INSERT INTO sessions (
+			id, provider_id, thread_id, project_id, title, workdir, last_status,
+			runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at
+		)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(id) DO UPDATE SET
+			provider_id = excluded.provider_id,
+			thread_id = excluded.thread_id,
+			project_id = excluded.project_id,
+			title = excluded.title,
+			workdir = excluded.workdir,
+			last_status = excluded.last_status,
+			runner_type = excluded.runner_type,
+			model = excluded.model,
+			approval_policy = excluded.approval_policy,
+			sandbox_mode = excluded.sandbox_mode,
+			config = excluded.config,
+			updated_at = excluded.updated_at,
+			exited_at = excluded.exited_at`,
+		normalized.ID, normalized.ProviderID, normalized.ThreadID, normalized.ProjectID,
+		normalized.Title, normalized.Workdir, nullableString(normalized.Status), defaultString(normalized.RunnerType, "app-server"),
+		normalized.Model, normalized.ApprovalPolicy, normalized.SandboxMode, string(configJSON), now, now, nullableTime(normalized.ExitedAt))
 	return err
 }
 
 func (s *SessionStore) Get(id string) (*provider.Session, error) {
 	var session provider.Session
-	var configStr string
 	var createdAt, updatedAt int64
+	var title, workdir, lastStatus, runnerType, model, approvalMode, sandboxMode sql.NullString
+	var configRaw sql.NullString
 	var exitedAt sql.NullInt64
 
 	err := s.db.DB().QueryRow(`
-		SELECT id, provider_id, thread_id, project_id, title, workdir,
-			status, runner_type, model, approval_mode, sandbox_mode,
-			config, last_seq, created_at, updated_at, exited_at
+		SELECT id, provider_id, thread_id, project_id, title, workdir, last_status,
+		       runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at
 		FROM sessions WHERE id = ?`, id).Scan(
 		&session.ID, &session.ProviderID, &session.ThreadID, &session.ProjectID,
-		&session.Title, &session.Workdir, &session.Status, &session.RunnerType,
-		&session.Model, &session.ApprovalMode, &session.SandboxMode,
-		&configStr, &session.LastSeq, &createdAt, &updatedAt, &exitedAt)
+		&title, &workdir, &lastStatus, &runnerType, &model, &approvalMode, &sandboxMode,
+		&configRaw, &createdAt, &updatedAt, &exitedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -53,23 +70,31 @@ func (s *SessionStore) Get(id string) (*provider.Session, error) {
 		return nil, err
 	}
 
-	json.Unmarshal([]byte(configStr), &session.Config)
+	session.Title = title.String
+	session.Workdir = workdir.String
+	session.Status = lastStatus.String
+	session.RunnerType = runnerType.String
+	session.Model = model.String
+	session.ApprovalPolicy = approvalMode.String
+	session.SandboxMode = sandboxMode.String
+	normalizeSessionControlPlane(&session)
 	session.CreatedAt = time.Unix(createdAt, 0)
 	session.UpdatedAt = time.Unix(updatedAt, 0)
+	if configRaw.Valid && configRaw.String != "" && configRaw.String != "null" {
+		_ = json.Unmarshal([]byte(configRaw.String), &session.Config)
+	}
 	if exitedAt.Valid {
 		t := time.Unix(exitedAt.Int64, 0)
 		session.ExitedAt = &t
 	}
-
 	return &session, nil
 }
 
 func (s *SessionStore) ListByProject(projectID string) ([]provider.Session, error) {
 	rows, err := s.db.DB().Query(`
-		SELECT id, provider_id, thread_id, project_id, title, workdir,
-			status, runner_type, model, approval_mode, sandbox_mode,
-			config, last_seq, created_at, updated_at, exited_at
-		FROM sessions WHERE project_id = ? ORDER BY updated_at DESC`, projectID)
+		SELECT id, provider_id, thread_id, project_id, title, workdir, last_status,
+		       runner_type, model, approval_policy, sandbox_mode, created_at, updated_at
+		FROM sessions WHERE project_id = ? ORDER BY created_at DESC`, projectID)
 	if err != nil {
 		return nil, err
 	}
@@ -78,64 +103,26 @@ func (s *SessionStore) ListByProject(projectID string) ([]provider.Session, erro
 	var sessions []provider.Session
 	for rows.Next() {
 		var session provider.Session
-		var configStr string
 		var createdAt, updatedAt int64
-		var exitedAt sql.NullInt64
+		var title, workdir, lastStatus, runnerType, model, approvalMode, sandboxMode sql.NullString
 
 		if err := rows.Scan(
 			&session.ID, &session.ProviderID, &session.ThreadID, &session.ProjectID,
-			&session.Title, &session.Workdir, &session.Status, &session.RunnerType,
-			&session.Model, &session.ApprovalMode, &session.SandboxMode,
-			&configStr, &session.LastSeq, &createdAt, &updatedAt, &exitedAt); err != nil {
+			&title, &workdir, &lastStatus, &runnerType, &model, &approvalMode, &sandboxMode,
+			&createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 
-		json.Unmarshal([]byte(configStr), &session.Config)
+		session.Title = title.String
+		session.Workdir = workdir.String
+		session.Status = lastStatus.String
+		session.RunnerType = runnerType.String
+		session.Model = model.String
+		session.ApprovalPolicy = approvalMode.String
+		session.SandboxMode = sandboxMode.String
+		normalizeSessionControlPlane(&session)
 		session.CreatedAt = time.Unix(createdAt, 0)
 		session.UpdatedAt = time.Unix(updatedAt, 0)
-		if exitedAt.Valid {
-			t := time.Unix(exitedAt.Int64, 0)
-			session.ExitedAt = &t
-		}
-		sessions = append(sessions, session)
-	}
-
-	return sessions, nil
-}
-
-func (s *SessionStore) GetActiveSessions() ([]provider.Session, error) {
-	rows, err := s.db.DB().Query(`
-		SELECT id, provider_id, thread_id, project_id, title, workdir,
-			status, runner_type, model, approval_mode, sandbox_mode,
-			config, last_seq, created_at, updated_at, exited_at
-		FROM sessions WHERE status IN ('running', 'waiting_input')`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var sessions []provider.Session
-	for rows.Next() {
-		var session provider.Session
-		var configStr string
-		var createdAt, updatedAt int64
-		var exitedAt sql.NullInt64
-
-		if err := rows.Scan(
-			&session.ID, &session.ProviderID, &session.ThreadID, &session.ProjectID,
-			&session.Title, &session.Workdir, &session.Status, &session.RunnerType,
-			&session.Model, &session.ApprovalMode, &session.SandboxMode,
-			&configStr, &session.LastSeq, &createdAt, &updatedAt, &exitedAt); err != nil {
-			return nil, err
-		}
-
-		json.Unmarshal([]byte(configStr), &session.Config)
-		session.CreatedAt = time.Unix(createdAt, 0)
-		session.UpdatedAt = time.Unix(updatedAt, 0)
-		if exitedAt.Valid {
-			t := time.Unix(exitedAt.Int64, 0)
-			session.ExitedAt = &t
-		}
 		sessions = append(sessions, session)
 	}
 
@@ -143,70 +130,41 @@ func (s *SessionStore) GetActiveSessions() ([]provider.Session, error) {
 }
 
 func (s *SessionStore) Update(session *provider.Session) error {
-	configJSON, _ := json.Marshal(session.Config)
-	var exitedAt int64
-	if session.ExitedAt != nil {
-		exitedAt = session.ExitedAt.Unix()
-	}
+	status := provider.NormalizeSessionStatus(session.Status)
 	_, err := s.db.DB().Exec(`
-		UPDATE sessions SET title = ?, status = ?, model = ?,
-			approval_mode = ?, sandbox_mode = ?, config = ?,
-			last_seq = ?, updated_at = ?, exited_at = ?
-		WHERE id = ?`,
-		session.Title, session.Status, session.Model,
-		session.ApprovalMode, session.SandboxMode, string(configJSON),
-		session.LastSeq, time.Now().Unix(), exitedAt, session.ID)
+		UPDATE sessions SET model = ?, last_status = ?, updated_at = ? WHERE id = ?`,
+		session.Model, nullableString(status), time.Now().Unix(), session.ID)
 	return err
 }
 
-func (s *SessionStore) UpdateStatus(id, status string) error {
-	_, err := s.db.DB().Exec(`UPDATE sessions SET status = ?, updated_at = ? WHERE id = ?`,
-		status, time.Now().Unix(), id)
+func (s *SessionStore) Delete(id string) error {
+	_, err := s.db.DB().Exec(`DELETE FROM sessions WHERE id = ?`, id)
 	return err
 }
 
-type SessionEvent struct {
-	ID        int64
-	SessionID string
-	Seq       int64
-	Type      string
-	Payload   any
-	CreatedAt time.Time
-}
-
-func (s *SessionStore) SaveEvent(event SessionEvent) error {
-	payloadJSON, _ := json.Marshal(event.Payload)
-	_, err := s.db.DB().Exec(`
-		INSERT INTO session_events (session_id, seq, type, payload, created_at)
-		VALUES (?, ?, ?, ?, ?)`,
-		event.SessionID, event.Seq, event.Type, string(payloadJSON), event.CreatedAt.Unix())
-	return err
-}
-
-func (s *SessionStore) GetEventsAfterSeq(sessionID string, afterSeq int64, limit int) ([]SessionEvent, error) {
-	rows, err := s.db.DB().Query(`
-		SELECT id, session_id, seq, type, payload, created_at
-		FROM session_events
-		WHERE session_id = ? AND seq > ?
-		ORDER BY seq ASC
-		LIMIT ?`, sessionID, afterSeq, limit)
-	if err != nil {
-		return nil, err
+func nullableString(value string) any {
+	if value == "" {
+		return nil
 	}
-	defer rows.Close()
+	return value
+}
 
-	var events []SessionEvent
-	for rows.Next() {
-		var event SessionEvent
-		var payloadStr string
-		var createdAt int64
-		if err := rows.Scan(&event.ID, &event.SessionID, &event.Seq, &event.Type, &payloadStr, &createdAt); err != nil {
-			return nil, err
-		}
-		json.Unmarshal([]byte(payloadStr), &event.Payload)
-		event.CreatedAt = time.Unix(createdAt, 0)
-		events = append(events, event)
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
 	}
+	return value
+}
 
-	return events, nil
+func normalizeSessionControlPlane(session *provider.Session) {
+	session.Status = provider.NormalizeSessionStatus(session.Status)
+	session.ApprovalPolicy = provider.NormalizeApprovalPolicy(session.ApprovalPolicy)
+	session.SandboxMode = provider.NormalizeSandboxMode(session.SandboxMode)
+}
+
+func nullableTime(value *time.Time) any {
+	if value == nil {
+		return nil
+	}
+	return value.Unix()
 }

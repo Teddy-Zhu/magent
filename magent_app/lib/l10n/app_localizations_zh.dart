@@ -214,13 +214,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sandboxFull => '完全访问';
 
   @override
-  String get effortLow => '低';
+  String get effortLow => 'low';
 
   @override
-  String get effortMedium => '中';
+  String get effortMedium => 'medium';
 
   @override
-  String get effortHigh => '高';
+  String get effortHigh => 'high';
 
   @override
   String get chatTitle => '对话';

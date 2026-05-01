@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -28,82 +29,80 @@ func NewGitHandler(gitService *gitservice.Service, projectMgr *project.Manager, 
 	}
 }
 
-func (h *GitHandler) Summary(c *gin.Context) {
-	projectID := c.Query("project_id")
-	project, err := h.projectMgr.Get(c.Request.Context(), projectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+func (h *GitHandler) SummaryForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
 
-	summary, err := h.gitService.GetSummary(c.Request.Context(), projectID, project.Path)
+	summary, err := h.gitService.GetSummary(c.Request.Context(), project.ID, project.Path)
 	if err != nil {
-		Fail(c, 500, "GIT_ERROR", err.Error())
+		Fail(c, 500, ErrGitError, err.Error())
 		return
 	}
-
+	if c.GetHeader("If-None-Match") == strconv.FormatInt(summary.Version, 10) {
+		NotModified(c)
+		return
+	}
+	c.Header("ETag", strconv.FormatInt(summary.Version, 10))
 	OK(c, summary)
 }
 
-func (h *GitHandler) Changes(c *gin.Context) {
-	projectID := c.Query("project_id")
+func (h *GitHandler) ChangesForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
+		return
+	}
 	baseVersion, _ := strconv.ParseInt(c.DefaultQuery("base_version", "0"), 10, 64)
 
-	project, err := h.projectMgr.Get(c.Request.Context(), projectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
-		return
-	}
-
-	changes, err := h.gitService.GetChanges(c.Request.Context(), projectID, project.Path, baseVersion)
+	changes, err := h.gitService.GetChanges(c.Request.Context(), project.ID, project.Path, baseVersion)
 	if err != nil {
-		Fail(c, 500, "GIT_ERROR", err.Error())
+		Fail(c, 500, ErrGitError, err.Error())
 		return
 	}
-
+	if changes.Version == baseVersion && len(changes.Files) == 0 {
+		NotModified(c)
+		return
+	}
+	c.Header("ETag", strconv.FormatInt(changes.Version, 10))
 	OK(c, changes)
 }
 
-func (h *GitHandler) FileDiff(c *gin.Context) {
-	projectID := c.Query("project_id")
+func (h *GitHandler) FileDiffForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
+		return
+	}
 	path := c.Query("path")
 	diffHash := c.Query("diff_hash")
 	offset, _ := strconv.Atoi(c.DefaultQuery("offset", "0"))
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
 	staged := c.Query("staged") == "true"
 
-	project, err := h.projectMgr.Get(c.Request.Context(), projectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
-		return
-	}
-
-	diff, err := h.gitService.GetFileDiff(c.Request.Context(), project.Path, path, diffHash, offset, limit, staged)
+	diff, err := h.gitService.GetFileDiff(c.Request.Context(), project.ID, project.Path, path, diffHash, offset, limit, staged)
 	if err != nil {
-		Fail(c, 500, "GIT_ERROR", err.Error())
+		Fail(c, 409, ErrGitError, err.Error())
 		return
 	}
 
 	OK(c, diff)
 }
 
-func (h *GitHandler) Stage(c *gin.Context) {
+func (h *GitHandler) StageForProject(c *gin.Context) {
 	var req struct {
-		ProjectID string   `json:"project_id" binding:"required"`
-		Paths     []string `json:"paths" binding:"required"`
+		Paths []string `json:"paths" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, 400, "INVALID_REQUEST", err.Error())
+		Fail(c, 400, ErrInvalidRequest, err.Error())
 		return
 	}
 
-	project, err := h.projectMgr.Get(c.Request.Context(), req.ProjectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
 
-	log.Debug("git", "stage project=%s paths=%v", req.ProjectID, req.Paths)
+	log.Debug("git", "stage project=%s paths=%v", project.ID, req.Paths)
 	var failed []string
 	for _, path := range req.Paths {
 		if _, err := h.gitService.Git(c.Request.Context(), project.Path, "add", path); err != nil {
@@ -113,7 +112,7 @@ func (h *GitHandler) Stage(c *gin.Context) {
 	}
 
 	if len(failed) == len(req.Paths) {
-		Fail(c, 500, "GIT_ERROR", "all stage operations failed")
+		Fail(c, 500, ErrGitError, "all stage operations failed")
 		return
 	}
 	if len(failed) > 0 {
@@ -123,19 +122,17 @@ func (h *GitHandler) Stage(c *gin.Context) {
 	OK(c, nil)
 }
 
-func (h *GitHandler) Unstage(c *gin.Context) {
+func (h *GitHandler) UnstageForProject(c *gin.Context) {
 	var req struct {
-		ProjectID string   `json:"project_id" binding:"required"`
-		Paths     []string `json:"paths" binding:"required"`
+		Paths []string `json:"paths" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, 400, "INVALID_REQUEST", err.Error())
+		Fail(c, 400, ErrInvalidRequest, err.Error())
 		return
 	}
 
-	project, err := h.projectMgr.Get(c.Request.Context(), req.ProjectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
 
@@ -148,29 +145,39 @@ func (h *GitHandler) Unstage(c *gin.Context) {
 	OK(c, nil)
 }
 
-func (h *GitHandler) Discard(c *gin.Context) {
+func (h *GitHandler) DiscardForProject(c *gin.Context) {
 	var req struct {
-		ProjectID string   `json:"project_id" binding:"required"`
-		Paths     []string `json:"paths" binding:"required"`
-		Staged    bool     `json:"staged"`
+		Paths   []string `json:"paths" binding:"required"`
+		Staged  bool     `json:"staged"`
+		Confirm bool     `json:"confirm"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, 400, "INVALID_REQUEST", err.Error())
+		Fail(c, 400, ErrInvalidRequest, err.Error())
+		return
+	}
+	if !req.Confirm {
+		Fail(c, 400, ErrConfirmRequired, "discard requires confirmation")
 		return
 	}
 
-	project, err := h.projectMgr.Get(c.Request.Context(), req.ProjectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
 
 	for _, path := range req.Paths {
-		if req.Staged {
-			h.gitService.Git(c.Request.Context(), project.Path, "reset", "HEAD", "--", path)
+		if strings.TrimSpace(path) == "" {
+			continue
 		}
-		if _, err := h.gitService.Git(c.Request.Context(), project.Path, "checkout", "--", path); err != nil {
-			Fail(c, 500, "GIT_ERROR", err.Error())
+		if isUntrackedPath(c.Request.Context(), h.gitService, project.Path, path) {
+			if _, err := h.gitService.Git(c.Request.Context(), project.Path, "clean", "-fd", "--", path); err != nil {
+				Fail(c, 500, ErrGitError, err.Error())
+				return
+			}
+			continue
+		}
+		if _, err := h.gitService.Git(c.Request.Context(), project.Path, "restore", "--staged", "--worktree", "--", path); err != nil {
+			Fail(c, 500, ErrGitError, err.Error())
 			return
 		}
 	}
@@ -178,25 +185,33 @@ func (h *GitHandler) Discard(c *gin.Context) {
 	OK(c, nil)
 }
 
-func (h *GitHandler) Commit(c *gin.Context) {
+func isUntrackedPath(ctx context.Context, gitService *gitservice.Service, projectPath, path string) bool {
+	out, _ := gitService.Git(ctx, projectPath, "ls-files", "--others", "--exclude-standard", "-z", "--", path)
+	for _, item := range strings.Split(strings.TrimRight(string(out), "\x00"), "\x00") {
+		if item == path {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *GitHandler) CommitForProject(c *gin.Context) {
 	var req struct {
-		ProjectID string `json:"project_id" binding:"required"`
-		Message   string `json:"message" binding:"required"`
-		All       bool   `json:"all"`
+		Message string `json:"message" binding:"required"`
+		All     bool   `json:"all"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, 400, "INVALID_REQUEST", err.Error())
+		Fail(c, 400, ErrInvalidRequest, err.Error())
 		return
 	}
 
 	if strings.TrimSpace(req.Message) == "" {
-		Fail(c, 400, "INVALID_REQUEST", "commit message required")
+		Fail(c, 400, ErrInvalidRequest, "commit message required")
 		return
 	}
 
-	project, err := h.projectMgr.Get(c.Request.Context(), req.ProjectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
 
@@ -205,38 +220,37 @@ func (h *GitHandler) Commit(c *gin.Context) {
 		args = append(args, "-a")
 	}
 
-	log.Debug("git", "commit project=%s msg=%q all=%v", req.ProjectID, req.Message, req.All)
+	log.Debug("git", "commit project=%s msg=%q all=%v", project.ID, req.Message, req.All)
 	out, err := h.gitService.Git(c.Request.Context(), project.Path, args...)
 	if err != nil {
 		log.Error("git", "commit failed: %s", string(out))
-		Fail(c, 500, "GIT_ERROR", string(out))
+		Fail(c, 500, ErrGitError, string(out))
 		return
 	}
 
-	log.Info("git", "committed project=%s", req.ProjectID)
+	log.Info("git", "committed project=%s", project.ID)
 	OK(c, gin.H{"output": string(out)})
 }
 
-func (h *GitHandler) Push(c *gin.Context) {
+func (h *GitHandler) PushForProject(c *gin.Context) {
 	var req struct {
-		ProjectID string `json:"project_id" binding:"required"`
-		Remote    string `json:"remote"`
-		Branch    string `json:"branch"`
-		Force     bool   `json:"force"`
+		Remote       string `json:"remote"`
+		Branch       string `json:"branch"`
+		Force        bool   `json:"force"`
+		ConfirmForce bool   `json:"confirm_force"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, 400, "INVALID_REQUEST", err.Error())
+		Fail(c, 400, ErrInvalidRequest, err.Error())
 		return
 	}
 
-	if req.Force && c.GetHeader("X-Confirm-Force") != "true" {
+	if req.Force && !req.ConfirmForce {
 		Fail(c, 400, ErrConfirmRequired, "force push requires confirmation")
 		return
 	}
 
-	project, err := h.projectMgr.Get(c.Request.Context(), req.ProjectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
 
@@ -254,15 +268,53 @@ func (h *GitHandler) Push(c *gin.Context) {
 		args = append(args, "--force-with-lease")
 	}
 
-	log.Info("git", "push project=%s remote=%s branch=%s force=%v", req.ProjectID, remote, branch, req.Force)
+	log.Info("git", "push project=%s remote=%s branch=%s force=%v", project.ID, remote, branch, req.Force)
 	out, err := h.gitService.Git(c.Request.Context(), project.Path, args...)
 	if err != nil {
 		log.Error("git", "push failed: %s", string(out))
-		Fail(c, 500, "GIT_ERROR", string(out))
+		Fail(c, 500, ErrGitError, string(out))
 		return
 	}
 
-	log.Info("git", "pushed project=%s", req.ProjectID)
+	log.Info("git", "pushed project=%s", project.ID)
+	OK(c, gin.H{"output": string(out)})
+}
+
+func (h *GitHandler) PullForProject(c *gin.Context) {
+	var req struct {
+		Remote string `json:"remote"`
+		Branch string `json:"branch"`
+		Rebase bool   `json:"rebase"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil && err != io.EOF {
+		Fail(c, 400, ErrInvalidRequest, err.Error())
+		return
+	}
+
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
+		return
+	}
+
+	args := []string{"pull"}
+	if req.Rebase {
+		args = append(args, "--rebase")
+	}
+	if req.Remote != "" {
+		args = append(args, req.Remote)
+		if req.Branch != "" {
+			args = append(args, req.Branch)
+		}
+	}
+
+	log.Info("git", "pull project=%s remote=%s branch=%s rebase=%v", project.ID, req.Remote, req.Branch, req.Rebase)
+	out, err := h.gitService.Git(c.Request.Context(), project.Path, args...)
+	if err != nil {
+		log.Error("git", "pull failed: %s", string(out))
+		Fail(c, 500, ErrGitError, string(out))
+		return
+	}
+
 	OK(c, gin.H{"output": string(out)})
 }
 
@@ -274,16 +326,13 @@ type GitCommit struct {
 	Message   string    `json:"message"`
 }
 
-func (h *GitHandler) Log(c *gin.Context) {
-	projectID := c.Query("project_id")
-	limit := c.DefaultQuery("limit", "50")
-	offset := c.DefaultQuery("offset", "0")
-
-	project, err := h.projectMgr.Get(c.Request.Context(), projectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+func (h *GitHandler) LogForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
+	limit := c.DefaultQuery("limit", "50")
+	offset := c.DefaultQuery("offset", "0")
 
 	format := "%H|%an|%ae|%at|%s"
 	out, _ := h.gitService.Git(c.Request.Context(), project.Path,
@@ -313,12 +362,9 @@ type Branch struct {
 	Current bool   `json:"current"`
 }
 
-func (h *GitHandler) Branches(c *gin.Context) {
-	projectID := c.Query("project_id")
-
-	project, err := h.projectMgr.Get(c.Request.Context(), projectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+func (h *GitHandler) BranchesForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
 
@@ -338,18 +384,13 @@ func (h *GitHandler) Branches(c *gin.Context) {
 	OK(c, branches)
 }
 
-func (h *GitHandler) CommitFiles(c *gin.Context) {
-	projectID := c.Query("project_id")
-	hash := c.Query("hash")
-
-	project, err := h.projectMgr.Get(c.Request.Context(), projectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+func (h *GitHandler) CommitFilesForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
-
-	if hash == "" {
-		Fail(c, 400, "INVALID_REQUEST", "hash required")
+	hash, ok := requireQuery(c, "hash")
+	if !ok {
 		return
 	}
 
@@ -370,19 +411,17 @@ func (h *GitHandler) CommitFiles(c *gin.Context) {
 	OK(c, gin.H{"hash": hash, "files": files})
 }
 
-func (h *GitHandler) CommitFileDiff(c *gin.Context) {
-	projectID := c.Query("project_id")
-	hash := c.Query("hash")
-	filePath := c.Query("path")
-
-	project, err := h.projectMgr.Get(c.Request.Context(), projectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+func (h *GitHandler) CommitFileDiffForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
-
-	if hash == "" || filePath == "" {
-		Fail(c, 400, "INVALID_REQUEST", "hash and path required")
+	hash, ok := requireQuery(c, "hash")
+	if !ok {
+		return
+	}
+	filePath, ok := requireQuery(c, "path")
+	if !ok {
 		return
 	}
 
@@ -408,18 +447,9 @@ type CommitFile struct {
 	Path   string `json:"path"`
 }
 
-func (h *GitHandler) SuggestCommitMessage(c *gin.Context) {
-	var req struct {
-		ProjectID string `json:"project_id" binding:"required"`
-	}
-	if err := c.ShouldBindJSON(&req); err != nil {
-		Fail(c, 400, "INVALID_REQUEST", err.Error())
-		return
-	}
-
-	project, err := h.projectMgr.Get(c.Request.Context(), req.ProjectID)
-	if err != nil || project == nil {
-		Fail(c, 404, ErrNotFound, "project not found")
+func (h *GitHandler) SuggestCommitMessageForProject(c *gin.Context) {
+	project, ok := getProject(c, h.projectMgr, c.Param("id"))
+	if !ok {
 		return
 	}
 
@@ -463,24 +493,31 @@ Requirements:
 	log.Debug("git", "suggest commit message: prompt len=%d", len(prompt))
 
 	// Get codex provider
-	p, err := h.registry.Get("codex")
-	if err != nil {
-		Fail(c, 503, "NO_PROVIDER", "No AI provider available")
+	p, ok := getProvider(c, h.registry, "codex")
+	if !ok {
 		return
 	}
+
+	cfg := p.Config()
 
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 30*time.Second)
 	defer cancel()
 
 	// Create a one-shot session
-	sess, err := p.CreateSession(ctx, provider.CreateSessionRequest{
-		ProjectID:      req.ProjectID,
+	providerReq := provider.CreateSessionRequest{
+		ProjectID:      project.ID,
 		Workdir:        project.Path,
 		Effort:         "low",
-		ApprovalPolicy: "never",
-		SandboxMode:    "read-only",
+		ApprovalPolicy: string(provider.ApprovalPolicyNever),
+		SandboxMode:    string(provider.SandboxModeWorkspaceWrite),
 		Prompt:         prompt,
-	})
+	}
+	providerReq.ApplyDefaults(cfg)
+	if err := providerReq.Validate(); err != nil {
+		Fail(c, 400, ErrInvalidRequest, err.Error())
+		return
+	}
+	sess, err := p.CreateSession(ctx, providerReq)
 	if err != nil {
 		log.Error("git", "suggest: create session failed: %v", err)
 		Fail(c, 500, "AI_FAILED", err.Error())
@@ -488,7 +525,10 @@ Requirements:
 	}
 
 	defer func() {
-		p.StopSession(context.Background(), sess.ID)
+		log.Info("git", "suggest: stopping session %s", sess.ID)
+		if err := p.StopSession(context.Background(), sess.ID); err != nil {
+			log.Warn("git", "suggest: stop session error: %v", err)
+		}
 	}()
 
 	// Wait for the AI response
@@ -496,7 +536,7 @@ Requirements:
 	defer p.Unsubscribe(sess.ID)
 
 	var message string
-	timeout := time.After(25 * time.Second)
+	timeout := time.After(20 * time.Second)
 
 	for {
 		select {
@@ -506,11 +546,12 @@ Requirements:
 					OK(c, gin.H{"message": cleanCommitMessage(message)})
 					return
 				}
-				Fail(c, 500, "AI_FAILED", "No response from AI")
+				log.Warn("git", "suggest: events channel closed without response")
+				OK(c, gin.H{"message": "", "error": "AI session ended without response"})
 				return
 			}
 			switch event.Type {
-			case "session.message":
+			case string(provider.EventMessage):
 				if payload, ok := event.Payload.(map[string]any); ok {
 					if text, ok := payload["text"].(string); ok {
 						message += text
@@ -519,27 +560,45 @@ Requirements:
 						message += content
 					}
 				}
-			case "session.turn_completed":
+			case string(provider.EventMessageDelta):
+				if payload, ok := event.Payload.(map[string]any); ok {
+					if delta, ok := payload["delta"].(string); ok {
+						message += delta
+					}
+				}
+			case string(provider.EventTurnCompleted):
+				log.Info("git", "suggest: turn completed, message len=%d", len(message))
 				if message != "" {
 					OK(c, gin.H{"message": cleanCommitMessage(message)})
 					return
 				}
-			case "session.error":
+			case string(provider.EventError):
 				if payload, ok := event.Payload.(map[string]any); ok {
 					errMsg, _ := payload["error"].(string)
+					log.Warn("git", "suggest: session error: %s payload=%v", errMsg, payload)
 					if message != "" {
 						OK(c, gin.H{"message": cleanCommitMessage(message)})
 						return
 					}
-					Fail(c, 500, "AI_FAILED", errMsg)
+					OK(c, gin.H{"message": "", "error": errMsg})
 					return
 				}
-			case "session.exited":
+			case string(provider.EventTurnFailed):
+				if payload, ok := event.Payload.(map[string]any); ok {
+					log.Warn("git", "suggest: turn failed payload=%v", payload)
+				}
 				if message != "" {
 					OK(c, gin.H{"message": cleanCommitMessage(message)})
 					return
 				}
-				Fail(c, 500, "AI_FAILED", "Session exited without response")
+				OK(c, gin.H{"message": "", "error": "AI turn failed"})
+				return
+			case string(provider.EventExited):
+				if message != "" {
+					OK(c, gin.H{"message": cleanCommitMessage(message)})
+					return
+				}
+				OK(c, gin.H{"message": "", "error": "AI session exited unexpectedly"})
 				return
 			}
 		case <-timeout:
@@ -547,7 +606,8 @@ Requirements:
 				OK(c, gin.H{"message": cleanCommitMessage(message)})
 				return
 			}
-			Fail(c, 504, "AI_TIMEOUT", "AI response timeout")
+			log.Warn("git", "suggest: timeout waiting for AI response")
+			OK(c, gin.H{"message": "", "error": "AI response timeout"})
 			return
 		}
 	}

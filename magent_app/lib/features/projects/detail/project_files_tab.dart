@@ -1,22 +1,24 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/github.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:magent_app/core/api/git_api.dart';
-import 'package:magent_app/core/api/file_api.dart';
+import 'package:magent_app/core/api/error_messages.dart';
+import 'package:magent_app/core/repositories/file_repository.dart';
+import 'package:magent_app/core/repositories/git_repository.dart';
 
 class ProjectFilesTab extends StatefulWidget {
   final String projectId;
-  final FileApi fileApi;
-  final GitApi gitApi;
+  final FileRepository file;
+  final GitRepository git;
 
   const ProjectFilesTab({
     super.key,
     required this.projectId,
-    required this.fileApi,
-    required this.gitApi,
+    required this.file,
+    required this.git,
   });
 
   @override
@@ -39,9 +41,24 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
   }
 
   Future<void> _loadDir() async {
-    setState(() { _loading = true; _error = ''; });
+    setState(() {
+      _loading = true;
+      _error = '';
+    });
     try {
-      final resp = await widget.fileApi.listDir(widget.projectId, _currentPath);
+      final cached = await widget.file.getCachedDir(
+        widget.projectId,
+        _currentPath,
+      );
+      if (mounted && cached != null) {
+        final cachedItems = (cached['items'] ?? []) as List<dynamic>;
+        setState(() {
+          _items.clear();
+          _items.addAll(cachedItems.cast<Map<String, dynamic>>());
+          _loading = false;
+        });
+      }
+      final resp = await widget.file.listDir(widget.projectId, _currentPath);
       final items = (resp['items'] ?? []) as List<dynamic>;
       if (mounted) {
         setState(() {
@@ -51,7 +68,12 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() { _loading = false; _error = '$e'; });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = userFriendlyErrorMessage(e);
+        });
+      }
     }
   }
 
@@ -82,11 +104,23 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
   Future<void> _pull() async {
     setState(() => _pulling = true);
     try {
-      // Use git pull via the git API - we need to call pull through a generic git endpoint
-      // For now, show a message that pull is coming
+      await widget.git.pull(widget.projectId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Pull not yet implemented on agent')),
+          const SnackBar(
+            content: Text('Pull successful'),
+            backgroundColor: Colors.green,
+          ),
+        );
+        await _loadDir();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(userFriendlyErrorMessage(e, action: 'Pull 失败')),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     } finally {
@@ -96,16 +130,22 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
 
   Future<void> _push() async {
     try {
-      await widget.gitApi.push(widget.projectId);
+      await widget.git.push(widget.projectId);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Push successful'), backgroundColor: Colors.green),
+          const SnackBar(
+            content: Text('Push successful'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Push failed: $e'), backgroundColor: Colors.red),
+          SnackBar(
+            content: Text(userFriendlyErrorMessage(e, action: 'Push 失败')),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -116,8 +156,8 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       context: context,
       isScrollControlled: true,
       builder: (_) => _GitLogSheet(
-        gitApi: widget.gitApi,
-        fileApi: widget.fileApi,
+        git: widget.git,
+        file: widget.file,
         projectId: widget.projectId,
       ),
     );
@@ -138,7 +178,9 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
             decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+              color: Theme.of(
+                context,
+              ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
               border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
             ),
             child: Row(
@@ -147,7 +189,10 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                   IconButton(
                     icon: const Icon(Icons.arrow_upward, size: 18),
                     padding: EdgeInsets.zero,
-                    constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                    constraints: const BoxConstraints(
+                      minWidth: 32,
+                      minHeight: 32,
+                    ),
                     onPressed: _navigateToRoot,
                     tooltip: 'Root',
                   ),
@@ -187,7 +232,11 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                   child: OutlinedButton.icon(
                     onPressed: _pulling ? null : _pull,
                     icon: _pulling
-                        ? const SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 1.5))
+                        ? const SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(strokeWidth: 1.5),
+                          )
                         : const Icon(Icons.download, size: 14),
                     label: const Text('Pull', style: TextStyle(fontSize: 11)),
                     style: OutlinedButton.styleFrom(
@@ -220,56 +269,76 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error.isNotEmpty
-                    ? Center(child: Text(_error))
-                    : RefreshIndicator(
-                        onRefresh: _loadDir,
-                        child: ListView.builder(
-                          itemCount: (canGoUp ? 1 : 0) + _items.length,
-                          itemBuilder: (context, index) {
-                            if (canGoUp && index == 0) {
-                              return ListTile(
-                                leading: const Icon(Icons.folder, color: Colors.amber, size: 22),
-                                title: const Text('..', style: TextStyle(fontWeight: FontWeight.w500)),
-                                subtitle: Text(
-                                  _pathStack.length > 2 ? _pathStack[_pathStack.length - 2] : '/',
+                ? Center(child: Text(_error))
+                : RefreshIndicator(
+                    onRefresh: _loadDir,
+                    child: ListView.builder(
+                      itemCount: (canGoUp ? 1 : 0) + _items.length,
+                      itemBuilder: (context, index) {
+                        if (canGoUp && index == 0) {
+                          return ListTile(
+                            leading: const Icon(
+                              Icons.folder,
+                              color: Colors.amber,
+                              size: 22,
+                            ),
+                            title: const Text(
+                              '..',
+                              style: TextStyle(fontWeight: FontWeight.w500),
+                            ),
+                            subtitle: Text(
+                              _pathStack.length > 2
+                                  ? _pathStack[_pathStack.length - 2]
+                                  : '/',
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                            dense: true,
+                            onTap: _navigateBack,
+                          );
+                        }
+
+                        final itemIndex = canGoUp ? index - 1 : index;
+                        final item = _items[itemIndex];
+                        final isDir = item['type'] == 'dir';
+                        final name = item['name'] as String? ?? '';
+                        final ext = name.contains('.')
+                            ? name.split('.').last.toLowerCase()
+                            : '';
+                        final fileType = isDir ? null : _getFileType(ext);
+
+                        return ListTile(
+                          leading: Icon(
+                            isDir ? Icons.folder : _getFileIcon(ext, fileType),
+                            color: isDir
+                                ? Colors.amber
+                                : _getFileColor(fileType),
+                            size: 22,
+                          ),
+                          title: Text(
+                            name,
+                            style: const TextStyle(fontSize: 13),
+                          ),
+                          subtitle: isDir
+                              ? null
+                              : Text(
+                                  _formatSize(item['size'] as int? ?? 0),
                                   style: const TextStyle(fontSize: 11),
                                 ),
-                                dense: true,
-                                onTap: _navigateBack,
-                              );
+                          trailing: isDir
+                              ? const Icon(Icons.chevron_right, size: 18)
+                              : null,
+                          dense: true,
+                          onTap: () {
+                            if (isDir) {
+                              _navigateToDir(name);
+                            } else {
+                              _openFile(name);
                             }
-
-                            final itemIndex = canGoUp ? index - 1 : index;
-                            final item = _items[itemIndex];
-                            final isDir = item['type'] == 'dir';
-                            final name = item['name'] as String? ?? '';
-                            final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
-                            final fileType = isDir ? null : _getFileType(ext);
-
-                            return ListTile(
-                              leading: Icon(
-                                isDir ? Icons.folder : _getFileIcon(ext, fileType),
-                                color: isDir ? Colors.amber : _getFileColor(fileType),
-                                size: 22,
-                              ),
-                              title: Text(name, style: const TextStyle(fontSize: 13)),
-                              subtitle: isDir
-                                  ? null
-                                  : Text(_formatSize(item['size'] as int? ?? 0),
-                                      style: const TextStyle(fontSize: 11)),
-                              trailing: isDir ? const Icon(Icons.chevron_right, size: 18) : null,
-                              dense: true,
-                              onTap: () {
-                                if (isDir) {
-                                  _navigateToDir(name);
-                                } else {
-                                  _openFile(name);
-                                }
-                              },
-                            );
                           },
-                        ),
-                      ),
+                        );
+                      },
+                    ),
+                  ),
           ),
         ],
       ),
@@ -294,69 +363,120 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
 
   Future<void> _showImageFile(String path) async {
     try {
-      final resp = await widget.fileApi.readRawFile(widget.projectId, path);
-      final encoding = resp['encoding'] as String? ?? 'text';
-      final data = resp['data'] as String? ?? '';
-      final mime = resp['mime'] as String? ?? '';
-
-      if (mounted && encoding == 'base64') {
-        final bytes = base64Decode(data);
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          builder: (_) => _ImageSheet(path: path, bytes: bytes, mime: mime),
-        );
+      final cached = await widget.file.getCachedRawFile(widget.projectId, path);
+      var sheetShown = false;
+      if (mounted && cached != null) {
+        sheetShown = _showImageSheetFromRaw(path, cached);
+      }
+      final resp = await widget.file.readRawFile(widget.projectId, path);
+      if (mounted && !sheetShown) {
+        _showImageSheetFromRaw(path, resp);
       }
     } catch (e) {
-      if (mounted) _showSnackBar('Read failed: $e');
+      if (mounted) _showSnackBar(userFriendlyErrorMessage(e, action: '读取失败'));
     }
   }
 
   Future<void> _showMarkdownFile(String path) async {
-    try {
-      final resp = await widget.fileApi.readRawFile(widget.projectId, path);
-      final data = resp['data'] as String? ?? '';
-      if (mounted) {
-        showModalBottomSheet(
-          context: context,
-          isScrollControlled: true,
-          builder: (_) => _MarkdownSheet(path: path, content: data),
-        );
-      }
-    } catch (e) {
-      if (mounted) _showSnackBar('Read failed: $e');
-    }
+    await _showRawTextFile(
+      path,
+      (notifier) => _MarkdownSheet(path: path, content: notifier),
+    );
   }
 
   Future<void> _showCodeFile(String path, String lang) async {
+    await _showRawTextFile(
+      path,
+      (notifier) => _CodeSheet(path: path, content: notifier, language: lang),
+    );
+  }
+
+  bool _showImageSheetFromRaw(String path, Map<String, dynamic> raw) {
+    final encoding = raw['encoding'] as String? ?? 'text';
+    final data = raw['data'] as String? ?? '';
+    final mime = raw['mime'] as String? ?? '';
+    if (encoding != 'base64' || data.isEmpty) return false;
+    final bytes = base64Decode(data);
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _ImageSheet(path: path, bytes: bytes, mime: mime),
+    );
+    return true;
+  }
+
+  Future<void> _showRawTextFile(
+    String path,
+    Widget Function(ValueListenable<String> content) builder,
+  ) async {
     try {
-      final resp = await widget.fileApi.readRawFile(widget.projectId, path);
-      final data = resp['data'] as String? ?? '';
-      if (mounted) {
+      final cached = await widget.file.getCachedRawFile(widget.projectId, path);
+      ValueNotifier<String>? contentNotifier;
+      var sheetClosed = false;
+      if (mounted && cached != null) {
+        contentNotifier = ValueNotifier<String>(
+          cached['data'] as String? ?? '',
+        );
         showModalBottomSheet(
           context: context,
           isScrollControlled: true,
-          builder: (_) => _CodeSheet(path: path, content: data, language: lang),
-        );
+          builder: (_) => builder(contentNotifier!),
+        ).whenComplete(() {
+          sheetClosed = true;
+          contentNotifier?.dispose();
+        });
+      }
+      final resp = await widget.file.readRawFile(widget.projectId, path);
+      final data = resp['data'] as String? ?? '';
+      if (!mounted) return;
+      if (contentNotifier != null) {
+        if (!sheetClosed) contentNotifier.value = data;
+      } else {
+        final notifier = ValueNotifier<String>(data);
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          builder: (_) => builder(notifier),
+        ).whenComplete(notifier.dispose);
       }
     } catch (e) {
-      if (mounted) _showSnackBar('Read failed: $e');
+      if (mounted) _showSnackBar(userFriendlyErrorMessage(e, action: '读取失败'));
     }
   }
 
   Future<void> _showTextFile(String path) async {
     try {
-      final resp = await widget.fileApi.readFile(widget.projectId, path);
-      final content = resp['content'] as String? ?? '';
-      if (mounted) {
+      final cached = await widget.file.getCachedFile(widget.projectId, path);
+      ValueNotifier<String>? contentNotifier;
+      var sheetClosed = false;
+      if (mounted && cached != null) {
+        contentNotifier = ValueNotifier<String>(
+          cached['content'] as String? ?? '',
+        );
         showModalBottomSheet(
           context: context,
           isScrollControlled: true,
-          builder: (_) => _TextFileSheet(path: path, content: content),
-        );
+          builder: (_) => _TextFileSheet(path: path, content: contentNotifier!),
+        ).whenComplete(() {
+          sheetClosed = true;
+          contentNotifier?.dispose();
+        });
+      }
+      final resp = await widget.file.readFile(widget.projectId, path);
+      final content = resp['content'] as String? ?? '';
+      if (!mounted) return;
+      if (contentNotifier != null) {
+        if (!sheetClosed) contentNotifier.value = content;
+      } else {
+        final notifier = ValueNotifier<String>(content);
+        showModalBottomSheet(
+          context: context,
+          isScrollControlled: true,
+          builder: (_) => _TextFileSheet(path: path, content: notifier),
+        ).whenComplete(notifier.dispose);
       }
     } catch (e) {
-      if (mounted) _showSnackBar('Read failed: $e');
+      if (mounted) _showSnackBar(userFriendlyErrorMessage(e, action: '读取失败'));
     }
   }
 
@@ -365,13 +485,52 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
   }
 
   _FileType _getFileType(String ext) {
-    const imageExts = {'png', 'jpg', 'jpeg', 'gif', 'bmp', 'webp', 'ico', 'svg'};
+    const imageExts = {
+      'png',
+      'jpg',
+      'jpeg',
+      'gif',
+      'bmp',
+      'webp',
+      'ico',
+      'svg',
+    };
     const markdownExts = {'md', 'markdown'};
     const codeExts = {
-      'dart', 'go', 'js', 'ts', 'jsx', 'tsx', 'py', 'java', 'kt', 'swift',
-      'c', 'cpp', 'h', 'hpp', 'cs', 'rs', 'rb', 'php', 'sh', 'bash', 'zsh',
-      'sql', 'html', 'css', 'scss', 'less', 'xml', 'yaml', 'yml', 'toml',
-      'json', 'ini', 'cfg', 'conf',
+      'dart',
+      'go',
+      'js',
+      'ts',
+      'jsx',
+      'tsx',
+      'py',
+      'java',
+      'kt',
+      'swift',
+      'c',
+      'cpp',
+      'h',
+      'hpp',
+      'cs',
+      'rs',
+      'rb',
+      'php',
+      'sh',
+      'bash',
+      'zsh',
+      'sql',
+      'html',
+      'css',
+      'scss',
+      'less',
+      'xml',
+      'yaml',
+      'yml',
+      'toml',
+      'json',
+      'ini',
+      'cfg',
+      'conf',
     };
     if (imageExts.contains(ext)) return _FileType.image;
     if (markdownExts.contains(ext)) return _FileType.markdown;
@@ -381,13 +540,36 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
 
   String _highlightLanguage(String ext) {
     const map = {
-      'dart': 'dart', 'go': 'go', 'js': 'javascript', 'ts': 'typescript',
-      'jsx': 'javascript', 'tsx': 'typescript', 'py': 'python', 'java': 'java',
-      'kt': 'kotlin', 'swift': 'swift', 'c': 'c', 'cpp': 'cpp', 'h': 'c',
-      'hpp': 'cpp', 'cs': 'csharp', 'rs': 'rust', 'rb': 'ruby', 'php': 'php',
-      'sh': 'bash', 'bash': 'bash', 'zsh': 'bash', 'sql': 'sql',
-      'html': 'html', 'css': 'css', 'scss': 'scss', 'xml': 'xml',
-      'yaml': 'yaml', 'yml': 'yaml', 'toml': 'ini', 'json': 'json',
+      'dart': 'dart',
+      'go': 'go',
+      'js': 'javascript',
+      'ts': 'typescript',
+      'jsx': 'javascript',
+      'tsx': 'typescript',
+      'py': 'python',
+      'java': 'java',
+      'kt': 'kotlin',
+      'swift': 'swift',
+      'c': 'c',
+      'cpp': 'cpp',
+      'h': 'c',
+      'hpp': 'cpp',
+      'cs': 'csharp',
+      'rs': 'rust',
+      'rb': 'ruby',
+      'php': 'php',
+      'sh': 'bash',
+      'bash': 'bash',
+      'zsh': 'bash',
+      'sql': 'sql',
+      'html': 'html',
+      'css': 'css',
+      'scss': 'scss',
+      'xml': 'xml',
+      'yaml': 'yaml',
+      'yml': 'yaml',
+      'toml': 'ini',
+      'json': 'json',
     };
     return map[ext] ?? 'plaintext';
   }
@@ -397,12 +579,22 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
     if (type == _FileType.markdown) return Icons.description;
     if (type == _FileType.code) {
       switch (ext) {
-        case 'dart': return Icons.code;
-        case 'go': return Icons.code;
-        case 'js': case 'ts': case 'jsx': case 'tsx': return Icons.javascript;
-        case 'json': return Icons.data_object;
-        case 'yaml': case 'yml': return Icons.settings;
-        default: return Icons.code;
+        case 'dart':
+          return Icons.code;
+        case 'go':
+          return Icons.code;
+        case 'js':
+        case 'ts':
+        case 'jsx':
+        case 'tsx':
+          return Icons.javascript;
+        case 'json':
+          return Icons.data_object;
+        case 'yaml':
+        case 'yml':
+          return Icons.settings;
+        default:
+          return Icons.code;
       }
     }
     return Icons.insert_drive_file;
@@ -425,13 +617,13 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
 // --- Git Log Sheet ---
 
 class _GitLogSheet extends StatefulWidget {
-  final GitApi gitApi;
-  final FileApi fileApi;
+  final GitRepository git;
+  final FileRepository file;
   final String projectId;
 
   const _GitLogSheet({
-    required this.gitApi,
-    required this.fileApi,
+    required this.git,
+    required this.file,
     required this.projectId,
   });
 
@@ -453,7 +645,11 @@ class _GitLogSheetState extends State<_GitLogSheet> {
 
   Future<void> _loadCommits() async {
     try {
-      final commits = await widget.gitApi.getLog(widget.projectId, limit: 30, offset: _offset);
+      final commits = await widget.git.getLog(
+        widget.projectId,
+        limit: 30,
+        offset: _offset,
+      );
       if (mounted) {
         setState(() {
           _commits.addAll(commits);
@@ -478,14 +674,22 @@ class _GitLogSheetState extends State<_GitLogSheet> {
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[300]!))),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+              ),
               child: Row(
                 children: [
                   const Icon(Icons.history, size: 18),
                   const SizedBox(width: 8),
-                  const Text('Commit Log', style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16)),
+                  const Text(
+                    'Commit Log',
+                    style: TextStyle(fontWeight: FontWeight.w600, fontSize: 16),
+                  ),
                   const Spacer(),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
                 ],
               ),
             ),
@@ -493,51 +697,70 @@ class _GitLogSheetState extends State<_GitLogSheet> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _commits.isEmpty
-                      ? const Center(child: Text('No commits'))
-                      : NotificationListener<ScrollNotification>(
-                          onNotification: (n) {
-                            if (n is ScrollEndNotification &&
-                                n.metrics.pixels >= n.metrics.maxScrollExtent - 200 &&
-                                _hasMore) {
-                              _offset += 30;
-                              _loadCommits();
-                            }
-                            return false;
-                          },
-                          child: ListView.builder(
-                            controller: scrollController,
-                            itemCount: _commits.length + (_hasMore ? 1 : 0),
-                            itemBuilder: (context, index) {
-                              if (index >= _commits.length) {
-                                return const Padding(
-                                  padding: EdgeInsets.all(16),
-                                  child: Center(child: CircularProgressIndicator()),
-                                );
-                              }
-                              final commit = _commits[index];
-                              final hash = commit['hash'] as String? ?? '';
-                              final message = commit['message'] as String? ?? '';
-                              final author = commit['author'] as String? ?? '';
-                              final timestamp = commit['timestamp'] as String? ?? '';
-                              final shortHash = hash.length > 7 ? hash.substring(0, 7) : hash;
+                  ? const Center(child: Text('No commits'))
+                  : NotificationListener<ScrollNotification>(
+                      onNotification: (n) {
+                        if (n is ScrollEndNotification &&
+                            n.metrics.pixels >=
+                                n.metrics.maxScrollExtent - 200 &&
+                            _hasMore) {
+                          _offset += 30;
+                          _loadCommits();
+                        }
+                        return false;
+                      },
+                      child: ListView.builder(
+                        controller: scrollController,
+                        itemCount: _commits.length + (_hasMore ? 1 : 0),
+                        itemBuilder: (context, index) {
+                          if (index >= _commits.length) {
+                            return const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Center(child: CircularProgressIndicator()),
+                            );
+                          }
+                          final commit = _commits[index];
+                          final hash = commit['hash'] as String? ?? '';
+                          final message = commit['message'] as String? ?? '';
+                          final author = commit['author'] as String? ?? '';
+                          final timestamp =
+                              commit['timestamp'] as String? ?? '';
+                          final shortHash = hash.length > 7
+                              ? hash.substring(0, 7)
+                              : hash;
 
-                              return ListTile(
-                                leading: Container(
-                                  width: 10, height: 10,
-                                  margin: const EdgeInsets.only(top: 6),
-                                  decoration: BoxDecoration(
-                                    color: Theme.of(context).colorScheme.primary,
-                                    shape: BoxShape.circle,
-                                  ),
-                                ),
-                                title: Text(message, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
-                                subtitle: Text('$author · $shortHash', style: const TextStyle(fontSize: 11)),
-                                trailing: Text(_formatTime(timestamp), style: TextStyle(fontSize: 11, color: Colors.grey[600])),
-                                onTap: () => _openCommitDetail(hash, message),
-                              );
-                            },
-                          ),
-                        ),
+                          return ListTile(
+                            leading: Container(
+                              width: 10,
+                              height: 10,
+                              margin: const EdgeInsets.only(top: 6),
+                              decoration: BoxDecoration(
+                                color: Theme.of(context).colorScheme.primary,
+                                shape: BoxShape.circle,
+                              ),
+                            ),
+                            title: Text(
+                              message,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(fontSize: 13),
+                            ),
+                            subtitle: Text(
+                              '$author · $shortHash',
+                              style: const TextStyle(fontSize: 11),
+                            ),
+                            trailing: Text(
+                              _formatTime(timestamp),
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey[600],
+                              ),
+                            ),
+                            onTap: () => _openCommitDetail(hash, message),
+                          );
+                        },
+                      ),
+                    ),
             ),
           ],
         );
@@ -563,8 +786,8 @@ class _GitLogSheetState extends State<_GitLogSheet> {
       context: context,
       isScrollControlled: true,
       builder: (_) => _CommitDetailSheet2(
-        gitApi: widget.gitApi,
-        fileApi: widget.fileApi,
+        git: widget.git,
+        file: widget.file,
         projectId: widget.projectId,
         hash: hash,
         message: message,
@@ -574,15 +797,15 @@ class _GitLogSheetState extends State<_GitLogSheet> {
 }
 
 class _CommitDetailSheet2 extends StatefulWidget {
-  final GitApi gitApi;
-  final FileApi fileApi;
+  final GitRepository git;
+  final FileRepository file;
   final String projectId;
   final String hash;
   final String message;
 
   const _CommitDetailSheet2({
-    required this.gitApi,
-    required this.fileApi,
+    required this.git,
+    required this.file,
     required this.projectId,
     required this.hash,
     required this.message,
@@ -604,8 +827,16 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
 
   Future<void> _loadFiles() async {
     try {
-      final resp = await widget.gitApi.getCommitFiles(widget.projectId, widget.hash);
-      if (mounted) setState(() { _files = (resp['files'] ?? []) as List<dynamic>; _loading = false; });
+      final resp = await widget.git.getCommitFiles(
+        widget.projectId,
+        widget.hash,
+      );
+      if (mounted) {
+        setState(() {
+          _files = (resp['files'] ?? []) as List<dynamic>;
+          _loading = false;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
@@ -613,7 +844,9 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
 
   @override
   Widget build(BuildContext context) {
-    final shortHash = widget.hash.length > 7 ? widget.hash.substring(0, 7) : widget.hash;
+    final shortHash = widget.hash.length > 7
+        ? widget.hash.substring(0, 7)
+        : widget.hash;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
@@ -625,33 +858,55 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[300]!))),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Theme.of(context).colorScheme.primaryContainer,
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: Text(shortHash, style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+                        child: Text(
+                          shortHash,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
                       ),
                       const Spacer(),
                       IconButton(
                         icon: const Icon(Icons.copy, size: 18),
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: widget.hash));
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Copied'),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
                         },
                       ),
-                      IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(context),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text(widget.message, style: const TextStyle(fontWeight: FontWeight.w500)),
+                  Text(
+                    widget.message,
+                    style: const TextStyle(fontWeight: FontWeight.w500),
+                  ),
                 ],
               ),
             ),
@@ -659,27 +914,40 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _files.isEmpty
-                      ? const Center(child: Text('No files changed'))
-                      : ListView.builder(
-                          controller: scrollController,
-                          itemCount: _files.length,
-                          itemBuilder: (context, index) {
-                            final file = _files[index];
-                            final status = file['status'] as String? ?? '';
-                            final path = file['path'] as String? ?? '';
+                  ? const Center(child: Text('No files changed'))
+                  : ListView.builder(
+                      controller: scrollController,
+                      itemCount: _files.length,
+                      itemBuilder: (context, index) {
+                        final file = _files[index];
+                        final status = file['status'] as String? ?? '';
+                        final path = file['path'] as String? ?? '';
 
-                            return ListTile(
-                              dense: true,
-                              leading: Container(
-                                width: 24,
-                                alignment: Alignment.center,
-                                child: Text(status, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _statusColor(status))),
+                        return ListTile(
+                          dense: true,
+                          leading: Container(
+                            width: 24,
+                            alignment: Alignment.center,
+                            child: Text(
+                              status,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: _statusColor(status),
                               ),
-                              title: Text(path, style: const TextStyle(fontSize: 13, fontFamily: 'monospace')),
-                              onTap: () => _openFileDiff(path),
-                            );
-                          },
-                        ),
+                            ),
+                          ),
+                          title: Text(
+                            path,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                          onTap: () => _openFileDiff(path),
+                        );
+                      },
+                    ),
             ),
           ],
         );
@@ -689,11 +957,16 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'A': return Colors.green;
-      case 'M': return Colors.orange;
-      case 'D': return Colors.red;
-      case 'R': return Colors.blue;
-      default: return Colors.grey;
+      case 'A':
+        return Colors.green;
+      case 'M':
+        return Colors.orange;
+      case 'D':
+        return Colors.red;
+      case 'R':
+        return Colors.blue;
+      default:
+        return Colors.grey;
     }
   }
 
@@ -702,7 +975,7 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
       context: context,
       isScrollControlled: true,
       builder: (_) => _CommitFileDiffSheet2(
-        gitApi: widget.gitApi,
+        git: widget.git,
         projectId: widget.projectId,
         hash: widget.hash,
         path: path,
@@ -712,13 +985,13 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
 }
 
 class _CommitFileDiffSheet2 extends StatefulWidget {
-  final GitApi gitApi;
+  final GitRepository git;
   final String projectId;
   final String hash;
   final String path;
 
   const _CommitFileDiffSheet2({
-    required this.gitApi,
+    required this.git,
     required this.projectId,
     required this.hash,
     required this.path,
@@ -741,10 +1014,24 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
 
   Future<void> _loadDiff() async {
     try {
-      final resp = await widget.gitApi.getCommitFileDiff(widget.projectId, widget.hash, widget.path);
-      if (mounted) setState(() { _content = resp['content'] as String? ?? ''; _loading = false; });
+      final resp = await widget.git.getCommitFileDiff(
+        widget.projectId,
+        widget.hash,
+        widget.path,
+      );
+      if (mounted) {
+        setState(() {
+          _content = resp['content'] as String? ?? '';
+          _loading = false;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() { _loading = false; _content = 'Failed to load: $e'; });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _content = userFriendlyErrorMessage(e, action: '加载失败');
+        });
+      }
     }
   }
 
@@ -760,16 +1047,27 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[300]!))),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+              ),
               child: Row(
                 children: [
                   const Icon(Icons.code, size: 18),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(widget.path, style: const TextStyle(fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis)),
+                  Expanded(
+                    child: Text(
+                      widget.path,
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                   Tooltip(
                     message: _wrap ? 'No wrap' : 'Wrap',
                     child: IconButton(
-                      icon: Icon(_wrap ? Icons.wrap_text : Icons.horizontal_rule, size: 18),
+                      icon: Icon(
+                        _wrap ? Icons.wrap_text : Icons.horizontal_rule,
+                        size: 18,
+                      ),
                       onPressed: () => setState(() => _wrap = !_wrap),
                     ),
                   ),
@@ -777,10 +1075,18 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
                     icon: const Icon(Icons.copy, size: 18),
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: _content));
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Copied'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
                     },
                   ),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
                 ],
               ),
             ),
@@ -803,25 +1109,59 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
       Color textColor = Colors.black87;
       FontWeight fontWeight = FontWeight.normal;
       if (line.startsWith('@@')) {
-        bgColor = Colors.blue[50]!; textColor = Colors.blue[700]!; fontWeight = FontWeight.w500;
+        bgColor = Colors.blue[50]!;
+        textColor = Colors.blue[700]!;
+        fontWeight = FontWeight.w500;
       } else if (line.startsWith('+')) {
-        bgColor = Colors.green[50]!; textColor = Colors.green[900]!;
+        bgColor = Colors.green[50]!;
+        textColor = Colors.green[900]!;
       } else if (line.startsWith('-')) {
-        bgColor = Colors.red[50]!; textColor = Colors.red[900]!;
-      } else if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) {
-        bgColor = Colors.grey[100]!; textColor = Colors.grey[700]!; fontWeight = FontWeight.w500;
+        bgColor = Colors.red[50]!;
+        textColor = Colors.red[900]!;
+      } else if (line.startsWith('diff --git') ||
+          line.startsWith('index ') ||
+          line.startsWith('---') ||
+          line.startsWith('+++')) {
+        bgColor = Colors.grey[100]!;
+        textColor = Colors.grey[700]!;
+        fontWeight = FontWeight.w500;
       } else {
         bgColor = Colors.transparent;
       }
-      lineWidgets.add(Container(
-        color: bgColor,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 1),
-        child: Text(line.isEmpty ? ' ' : line, style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: textColor, fontWeight: fontWeight), softWrap: _wrap),
-      ));
+      lineWidgets.add(
+        Container(
+          color: bgColor,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 1),
+          child: Text(
+            line.isEmpty ? ' ' : line,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12,
+              color: textColor,
+              fontWeight: fontWeight,
+            ),
+            softWrap: _wrap,
+          ),
+        ),
+      );
     }
-    final content = Column(crossAxisAlignment: CrossAxisAlignment.start, children: lineWidgets);
-    if (_wrap) return SingleChildScrollView(controller: scrollController, child: content);
-    return SingleChildScrollView(controller: scrollController, child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: content));
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: lineWidgets,
+    );
+    if (_wrap) {
+      return SingleChildScrollView(
+        controller: scrollController,
+        child: content,
+      );
+    }
+    return SingleChildScrollView(
+      controller: scrollController,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: content,
+      ),
+    );
   }
 }
 
@@ -833,19 +1173,27 @@ class _ImageSheet extends StatelessWidget {
   final String path;
   final Uint8List bytes;
   final String mime;
-  const _ImageSheet({required this.path, required this.bytes, required this.mime});
+  const _ImageSheet({
+    required this.path,
+    required this.bytes,
+    required this.mime,
+  });
 
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
-      initialChildSize: 0.8, maxChildSize: 0.95, minChildSize: 0.3, expand: false,
+      initialChildSize: 0.8,
+      maxChildSize: 0.95,
+      minChildSize: 0.3,
+      expand: false,
       builder: (context, scrollController) {
         return Column(
           children: [
             _header(context),
             Expanded(
               child: InteractiveViewer(
-                minScale: 0.5, maxScale: 5.0,
+                minScale: 0.5,
+                maxScale: 5.0,
                 child: Center(child: Image.memory(bytes, fit: BoxFit.contain)),
               ),
             ),
@@ -858,14 +1206,27 @@ class _ImageSheet extends StatelessWidget {
   Widget _header(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[300]!))),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+      ),
       child: Row(
         children: [
           const Icon(Icons.image, size: 18),
           const SizedBox(width: 8),
-          Expanded(child: Text(path, style: const TextStyle(fontWeight: FontWeight.w500))),
-          Text('${(bytes.length / 1024).toStringAsFixed(1)} KB', style: TextStyle(fontSize: 12, color: Colors.grey[600])),
-          IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+          Expanded(
+            child: Text(
+              path,
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ),
+          Text(
+            '${(bytes.length / 1024).toStringAsFixed(1)} KB',
+            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
         ],
       ),
     );
@@ -874,18 +1235,30 @@ class _ImageSheet extends StatelessWidget {
 
 class _MarkdownSheet extends StatelessWidget {
   final String path;
-  final String content;
+  final ValueListenable<String> content;
   const _MarkdownSheet({required this.path, required this.content});
 
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
-      initialChildSize: 0.8, maxChildSize: 0.95, minChildSize: 0.3, expand: false,
+      initialChildSize: 0.8,
+      maxChildSize: 0.95,
+      minChildSize: 0.3,
+      expand: false,
       builder: (context, scrollController) {
         return Column(
           children: [
             _header(context),
-            Expanded(child: Markdown(data: content, controller: scrollController, padding: const EdgeInsets.all(16))),
+            Expanded(
+              child: ValueListenableBuilder<String>(
+                valueListenable: content,
+                builder: (context, value, _) => Markdown(
+                  data: value,
+                  controller: scrollController,
+                  padding: const EdgeInsets.all(16),
+                ),
+              ),
+            ),
           ],
         );
       },
@@ -895,13 +1268,23 @@ class _MarkdownSheet extends StatelessWidget {
   Widget _header(BuildContext context) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[300]!))),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+      ),
       child: Row(
         children: [
           const Icon(Icons.description, size: 18),
           const SizedBox(width: 8),
-          Expanded(child: Text(path, style: const TextStyle(fontWeight: FontWeight.w500))),
-          IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+          Expanded(
+            child: Text(
+              path,
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
         ],
       ),
     );
@@ -910,9 +1293,13 @@ class _MarkdownSheet extends StatelessWidget {
 
 class _CodeSheet extends StatefulWidget {
   final String path;
-  final String content;
+  final ValueListenable<String> content;
   final String language;
-  const _CodeSheet({required this.path, required this.content, required this.language});
+  const _CodeSheet({
+    required this.path,
+    required this.content,
+    required this.language,
+  });
 
   @override
   State<_CodeSheet> createState() => _CodeSheetState();
@@ -923,57 +1310,107 @@ class _CodeSheetState extends State<_CodeSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final codeView = HighlightView(
-      widget.content, language: widget.language, theme: githubTheme,
-      padding: const EdgeInsets.all(16),
-      textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-    );
-
     return DraggableScrollableSheet(
-      initialChildSize: 0.8, maxChildSize: 0.95, minChildSize: 0.3, expand: false,
+      initialChildSize: 0.8,
+      maxChildSize: 0.95,
+      minChildSize: 0.3,
+      expand: false,
       builder: (context, scrollController) {
-        return Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[300]!))),
-              child: Row(
-                children: [
-                  const Icon(Icons.code, size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(widget.path, style: const TextStyle(fontWeight: FontWeight.w500))),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                    decoration: BoxDecoration(color: Colors.blue[50], borderRadius: BorderRadius.circular(8)),
-                    child: Text(widget.language, style: TextStyle(fontSize: 10, color: Colors.blue[700])),
+        return ValueListenableBuilder<String>(
+          valueListenable: widget.content,
+          builder: (context, content, _) {
+            final codeView = HighlightView(
+              content,
+              language: widget.language,
+              theme: githubTheme,
+              padding: const EdgeInsets.all(16),
+              textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            );
+            return Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
                   ),
-                  Tooltip(
-                    message: _wrap ? 'No wrap' : 'Wrap',
-                    child: IconButton(
-                      icon: Icon(_wrap ? Icons.wrap_text : Icons.horizontal_rule, size: 18),
-                      onPressed: () => setState(() => _wrap = !_wrap),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(color: Colors.grey[300]!),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.copy, size: 18),
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: widget.content));
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)));
-                    },
+                  child: Row(
+                    children: [
+                      const Icon(Icons.code, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          widget.path,
+                          style: const TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.blue[50],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          widget.language,
+                          style: TextStyle(
+                            fontSize: 10,
+                            color: Colors.blue[700],
+                          ),
+                        ),
+                      ),
+                      Tooltip(
+                        message: _wrap ? 'No wrap' : 'Wrap',
+                        child: IconButton(
+                          icon: Icon(
+                            _wrap ? Icons.wrap_text : Icons.horizontal_rule,
+                            size: 18,
+                          ),
+                          onPressed: () => setState(() => _wrap = !_wrap),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.copy, size: 18),
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: content));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Copied'),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
                   ),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
-                ],
-              ),
-            ),
-            Expanded(
-              child: _wrap
-                  ? SingleChildScrollView(controller: scrollController, child: codeView)
-                  : SingleChildScrollView(
-                      controller: scrollController,
-                      child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: codeView),
-                    ),
-            ),
-          ],
+                ),
+                Expanded(
+                  child: _wrap
+                      ? SingleChildScrollView(
+                          controller: scrollController,
+                          child: codeView,
+                        )
+                      : SingleChildScrollView(
+                          controller: scrollController,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            child: codeView,
+                          ),
+                        ),
+                ),
+              ],
+            );
+          },
         );
       },
     );
@@ -982,7 +1419,7 @@ class _CodeSheetState extends State<_CodeSheet> {
 
 class _TextFileSheet extends StatefulWidget {
   final String path;
-  final String content;
+  final ValueListenable<String> content;
   const _TextFileSheet({required this.path, required this.content});
 
   @override
@@ -994,51 +1431,89 @@ class _TextFileSheetState extends State<_TextFileSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final textView = SelectableText(
-      widget.content,
-      style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-    );
-
     return DraggableScrollableSheet(
-      initialChildSize: 0.8, maxChildSize: 0.95, minChildSize: 0.3, expand: false,
+      initialChildSize: 0.8,
+      maxChildSize: 0.95,
+      minChildSize: 0.3,
+      expand: false,
       builder: (context, scrollController) {
-        return Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[300]!))),
-              child: Row(
-                children: [
-                  const Icon(Icons.description, size: 18),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text(widget.path, style: const TextStyle(fontWeight: FontWeight.w500))),
-                  Tooltip(
-                    message: _wrap ? 'No wrap' : 'Wrap',
-                    child: IconButton(
-                      icon: Icon(_wrap ? Icons.wrap_text : Icons.horizontal_rule, size: 18),
-                      onPressed: () => setState(() => _wrap = !_wrap),
+        return ValueListenableBuilder<String>(
+          valueListenable: widget.content,
+          builder: (context, content, _) {
+            final textView = SelectableText(
+              content,
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+            );
+            return Column(
+              children: [
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 12,
+                  ),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(color: Colors.grey[300]!),
                     ),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.copy, size: 18),
-                    onPressed: () {
-                      Clipboard.setData(ClipboardData(text: widget.content));
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)));
-                    },
+                  child: Row(
+                    children: [
+                      const Icon(Icons.description, size: 18),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          widget.path,
+                          style: const TextStyle(fontWeight: FontWeight.w500),
+                        ),
+                      ),
+                      Tooltip(
+                        message: _wrap ? 'No wrap' : 'Wrap',
+                        child: IconButton(
+                          icon: Icon(
+                            _wrap ? Icons.wrap_text : Icons.horizontal_rule,
+                            size: 18,
+                          ),
+                          onPressed: () => setState(() => _wrap = !_wrap),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.copy, size: 18),
+                        onPressed: () {
+                          Clipboard.setData(ClipboardData(text: content));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Copied'),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
+                        },
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(context),
+                      ),
+                    ],
                   ),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
-                ],
-              ),
-            ),
-            Expanded(
-              child: _wrap
-                  ? SingleChildScrollView(controller: scrollController, padding: const EdgeInsets.all(16), child: textView)
-                  : SingleChildScrollView(
-                      controller: scrollController,
-                      child: SingleChildScrollView(scrollDirection: Axis.horizontal, padding: const EdgeInsets.all(16), child: textView),
-                    ),
-            ),
-          ],
+                ),
+                Expanded(
+                  child: _wrap
+                      ? SingleChildScrollView(
+                          controller: scrollController,
+                          padding: const EdgeInsets.all(16),
+                          child: textView,
+                        )
+                      : SingleChildScrollView(
+                          controller: scrollController,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.horizontal,
+                            padding: const EdgeInsets.all(16),
+                            child: textView,
+                          ),
+                        ),
+                ),
+              ],
+            );
+          },
         );
       },
     );

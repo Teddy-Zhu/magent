@@ -60,21 +60,13 @@ func (p *AiderProvider) Detect(ctx context.Context) (*provider.ProviderInfo, err
 }
 
 func (p *AiderProvider) CreateSession(ctx context.Context, req provider.CreateSessionRequest) (*provider.Session, error) {
+	req.ApplyDefaults(p.Config())
 	sessionID := uuid.New().String()
-
-	args := []string{
-		"--yes",
-		"--no-git",
-		"--no-auto-commits",
-	}
-	if req.Model != "" {
-		args = append(args, "--model", req.Model)
-	}
 
 	r := runner.NewPTYRunner()
 	if err := r.Start(ctx, runner.CommandSpec{
 		Bin:     "aider",
-		Args:    args,
+		Args:    aiderArgs(req),
 		Workdir: req.Workdir,
 		UsePTY:  true,
 	}); err != nil {
@@ -98,7 +90,7 @@ func (p *AiderProvider) CreateSession(ctx context.Context, req provider.CreateSe
 		ProviderID: "aider",
 		ProjectID:  req.ProjectID,
 		Workdir:    req.Workdir,
-		Status:     "running",
+		Status:     string(provider.SessionStatusRunning),
 		RunnerType: "pty",
 		Model:      req.Model,
 		CreatedAt:  time.Now(),
@@ -112,32 +104,9 @@ func (p *AiderProvider) collectOutput(sessionID string, r *runner.PTYRunner) {
 	p.mu.RUnlock()
 
 	for event := range r.Events() {
-		var evt provider.ProviderEvent
-		switch event.Type {
-		case "output":
-			evt = provider.ProviderEvent{
-				SessionID: sessionID,
-				Type:      "session.output",
-				Payload:   map[string]any{"content": string(event.Data)},
-				Timestamp: time.Now(),
-			}
-		case "exit":
-			evt = provider.ProviderEvent{
-				SessionID: sessionID,
-				Type:      "session.exited",
-				Payload:   map[string]any{"exit_code": event.ExitCode},
-				Timestamp: time.Now(),
-			}
-		case "error":
-			evt = provider.ProviderEvent{
-				SessionID: sessionID,
-				Type:      "session.error",
-				Payload:   map[string]any{"error": event.Err.Error()},
-				Timestamp: time.Now(),
-			}
-		}
+		evt, ok := aiderRunnerEvent(sessionID, event)
 
-		if ch != nil {
+		if ok && ch != nil {
 			select {
 			case ch <- evt:
 			default:
@@ -161,14 +130,14 @@ func (p *AiderProvider) ForkSession(ctx context.Context, sessionID, threadID str
 	return "", fmt.Errorf("aider does not support fork")
 }
 
-func (p *AiderProvider) SendInput(ctx context.Context, sessionID, input string) error {
+func (p *AiderProvider) SendInput(ctx context.Context, sessionID string, input provider.SendInputRequest) error {
 	p.mu.RLock()
 	r, ok := p.runners[sessionID]
 	p.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
-	return r.Write([]byte(input + "\n"))
+	return r.Write([]byte(input.Input + "\n"))
 }
 
 func (p *AiderProvider) InterruptSession(ctx context.Context, sessionID string) error {
@@ -211,21 +180,23 @@ func (p *AiderProvider) RollbackSession(ctx context.Context, sessionID string, t
 	return fmt.Errorf("aider does not support rollback")
 }
 
+func (p *AiderProvider) ResolveApproval(ctx context.Context, sessionID, approvalID string, decision provider.ApprovalDecision) error {
+	return fmt.Errorf("aider does not support approval")
+}
+
 func (p *AiderProvider) Subscribe(sessionID string) <-chan provider.ProviderEvent {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	ch := make(chan provider.ProviderEvent, 256)
-	p.sessions[sessionID] = ch
+	ch, ok := p.sessions[sessionID]
+	if !ok {
+		ch = make(chan provider.ProviderEvent, 256)
+		p.sessions[sessionID] = ch
+	}
 	return ch
 }
 
 func (p *AiderProvider) Unsubscribe(sessionID string) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if ch, ok := p.sessions[sessionID]; ok {
-		close(ch)
-		delete(p.sessions, sessionID)
-	}
+	// No-op: channel is cleaned up when the session exits
 }
 
 func (p *AiderProvider) Capabilities() provider.ProviderCapabilities {
@@ -243,15 +214,23 @@ func (p *AiderProvider) Capabilities() provider.ProviderCapabilities {
 	}
 }
 
-func (p *AiderProvider) Config() provider.ProviderConfig {
-	return provider.ProviderConfig{
-		Models: []provider.ModelInfo{
-			{ID: "gpt-4o", Name: "GPT-4o", Default: true},
-			{ID: "claude-sonnet-4-20250514", Name: "Claude Sonnet"},
-			{ID: "claude-opus-4-20250514", Name: "Claude Opus"},
-			{ID: "deepseek/deepseek-chat", Name: "DeepSeek Chat"},
-		},
-	}
+func (p *AiderProvider) ListThreads(ctx context.Context, cwd string, limit int) ([]provider.Session, error) {
+	return nil, nil
+}
+
+func (p *AiderProvider) HasSession(sessionID string) bool {
+	p.mu.RLock()
+	_, ok := p.runners[sessionID]
+	p.mu.RUnlock()
+	return ok
+}
+
+func (p *AiderProvider) ReadThreadEvents(ctx context.Context, threadID, cursor string, limit int) (*provider.EventPage, error) {
+	return &provider.EventPage{SessionID: threadID, Events: []provider.ProviderEvent{}}, nil
+}
+
+func (p *AiderProvider) ReadThreadItems(ctx context.Context, threadID, cursor string, limit int) (*provider.ItemPage, error) {
+	return &provider.ItemPage{SessionID: threadID, Items: []provider.SessionItem{}}, nil
 }
 
 func (p *AiderProvider) Close() error {

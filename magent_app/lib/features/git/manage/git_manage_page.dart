@@ -1,7 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
+import 'package:magent_app/core/api/error_messages.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
+import 'package:magent_app/core/repositories/file_repository.dart';
+import 'package:magent_app/core/repositories/git_repository.dart';
 import 'package:magent_app/features/git/widgets/diff_sheet.dart';
 import 'package:magent_app/features/git/widgets/commit_sheet.dart';
 
@@ -14,9 +20,14 @@ class GitManagePage extends ConsumerStatefulWidget {
   ConsumerState<GitManagePage> createState() => _GitManagePageState();
 }
 
-class _GitManagePageState extends ConsumerState<GitManagePage> with SingleTickerProviderStateMixin {
+class _GitManagePageState extends ConsumerState<GitManagePage>
+    with SingleTickerProviderStateMixin {
   late TabController _tabController;
   AppApiClient? _api;
+  GitRepository? _gitRepo;
+  FileRepository? _fileRepo;
+  StreamSubscription<Map<String, dynamic>>? _gitInvalidationSub;
+  final _gitInvalidationSignal = ValueNotifier<int>(0);
 
   @override
   void initState() {
@@ -27,11 +38,33 @@ class _GitManagePageState extends ConsumerState<GitManagePage> with SingleTicker
 
   Future<void> _init() async {
     _api = await loadActiveApi(ref);
+    if (_api != null) {
+      final db = ref.read(appDatabaseProvider);
+      _gitRepo = GitRepository(agentId: _api!.agentId, api: _api!.git, db: db);
+      _fileRepo = FileRepository(
+        agentId: _api!.agentId,
+        api: _api!.file,
+        db: db,
+      );
+      _connectRealtime();
+    }
     if (mounted) setState(() {});
+  }
+
+  void _connectRealtime() {
+    final engine = ref.read(syncEngineProvider);
+    if (engine == null) return;
+    _gitInvalidationSub = engine.gitInvalidations.listen((event) {
+      if (!mounted) return;
+      if (event['project_id']?.toString() != widget.projectId) return;
+      _gitInvalidationSignal.value++;
+    });
   }
 
   @override
   void dispose() {
+    _gitInvalidationSub?.cancel();
+    _gitInvalidationSignal.dispose();
     _tabController.dispose();
     super.dispose();
   }
@@ -55,7 +88,12 @@ class _GitManagePageState extends ConsumerState<GitManagePage> with SingleTicker
           : TabBarView(
               controller: _tabController,
               children: [
-                _StatusTab(api: _api!, projectId: widget.projectId),
+                _StatusTab(
+                  git: _gitRepo!,
+                  file: _fileRepo!,
+                  projectId: widget.projectId,
+                  invalidationSignal: _gitInvalidationSignal,
+                ),
                 _LogTab(api: _api!, projectId: widget.projectId),
                 _BranchesTab(api: _api!, projectId: widget.projectId),
               ],
@@ -67,9 +105,16 @@ class _GitManagePageState extends ConsumerState<GitManagePage> with SingleTicker
 // ==================== Status Tab ====================
 
 class _StatusTab extends StatefulWidget {
-  final AppApiClient api;
+  final GitRepository git;
+  final FileRepository file;
   final String projectId;
-  const _StatusTab({required this.api, required this.projectId});
+  final ValueListenable<int>? invalidationSignal;
+  const _StatusTab({
+    required this.git,
+    required this.file,
+    required this.projectId,
+    this.invalidationSignal,
+  });
 
   @override
   State<_StatusTab> createState() => _StatusTabState();
@@ -92,33 +137,57 @@ class _StatusTabState extends State<_StatusTab>
     _tabController.addListener(() {
       setState(() => _selectedPaths.clear());
     });
+    widget.invalidationSignal?.addListener(_handleInvalidation);
     _load();
   }
 
   @override
   void dispose() {
+    widget.invalidationSignal?.removeListener(_handleInvalidation);
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _handleInvalidation() {
+    _refreshFromInvalidation();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final results = await Future.wait([
-        widget.api.git.getSummary(widget.projectId),
-        widget.api.git.getChanges(widget.projectId),
-      ]);
+      final cached = await widget.git.getCachedSnapshot(widget.projectId);
+      if (mounted && cached != null) {
+        setState(() {
+          _summary = cached.summary;
+          _allFiles = cached.files;
+          _loading = false;
+        });
+      }
+      final snapshot = await widget.git.refreshSnapshot(widget.projectId);
       if (mounted) {
         setState(() {
-          _summary = results[0];
-          final changes = results[1];
-          _allFiles = (changes['files'] ?? []) as List<dynamic>;
+          _summary = snapshot.summary;
+          _allFiles = snapshot.files;
           _loading = false;
         });
       }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _refreshFromInvalidation() async {
+    if (!mounted) return;
+    try {
+      final snapshot = await widget.git.refreshSnapshot(widget.projectId);
+      if (mounted) {
+        setState(() {
+          _summary = snapshot.summary;
+          _allFiles = snapshot.files;
+          _loading = false;
+        });
+      }
+    } catch (_) {}
   }
 
   List<dynamic> get _stagedFiles =>
@@ -156,11 +225,11 @@ class _StatusTabState extends State<_StatusTab>
     if (_selectedPaths.isEmpty) return;
     setState(() => _operating = true);
     try {
-      await widget.api.git.stage(widget.projectId, _selectedPaths.toList());
+      await widget.git.stage(widget.projectId, _selectedPaths.toList());
       setState(() => _selectedPaths.clear());
       await _load();
     } catch (e) {
-      if (mounted) _showError('Stage failed: $e');
+      if (mounted) _showError(e, action: 'Stage failed');
     } finally {
       if (mounted) setState(() => _operating = false);
     }
@@ -170,11 +239,11 @@ class _StatusTabState extends State<_StatusTab>
     if (_selectedPaths.isEmpty) return;
     setState(() => _operating = true);
     try {
-      await widget.api.git.unstage(widget.projectId, _selectedPaths.toList());
+      await widget.git.unstage(widget.projectId, _selectedPaths.toList());
       setState(() => _selectedPaths.clear());
       await _load();
     } catch (e) {
-      if (mounted) _showError('Unstage failed: $e');
+      if (mounted) _showError(e, action: 'Unstage failed');
     } finally {
       if (mounted) setState(() => _operating = false);
     }
@@ -185,27 +254,28 @@ class _StatusTabState extends State<_StatusTab>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Discard Changes'),
-        content: Text('Discard ${_selectedPaths.length} file(s)?'),
+        title: const Text('放弃更改'),
+        content: Text('确定放弃 ${_selectedPaths.length} 个文件的更改？此操作不可撤销。'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Discard',
-                  style: TextStyle(color: Colors.red))),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('放弃', style: TextStyle(color: Colors.red)),
+          ),
         ],
       ),
     );
     if (confirmed == true) {
       setState(() => _operating = true);
       try {
-        await widget.api.git.discard(widget.projectId, _selectedPaths.toList());
+        await widget.git.discard(widget.projectId, _selectedPaths.toList());
         setState(() => _selectedPaths.clear());
         await _load();
       } catch (e) {
-        if (mounted) _showError('Discard failed: $e');
+        if (mounted) _showError(e, action: 'Discard failed');
       } finally {
         if (mounted) setState(() => _operating = false);
       }
@@ -215,33 +285,37 @@ class _StatusTabState extends State<_StatusTab>
   Future<void> _push({bool force = false}) async {
     setState(() => _pushing = true);
     try {
-      await widget.api.git.push(widget.projectId, force: force);
+      await widget.git.push(widget.projectId, force: force);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('Push successful'),
-              backgroundColor: Colors.green),
+            content: Text('Push successful'),
+            backgroundColor: Colors.green,
+          ),
         );
         await _load();
       }
     } catch (e) {
-      if (mounted) _showError('Push failed: $e');
+      if (mounted) _showError(e, action: 'Push failed');
     } finally {
       if (mounted) setState(() => _pushing = false);
     }
   }
 
-  void _showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.red),
-    );
+  void _showError(Object error, {String? action}) {
+    final msg = error is String
+        ? error
+        : userFriendlyErrorMessage(error, action: action);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
   }
 
   void _openDiff(dynamic file) {
     DiffSheet.show(
       context: context,
-      gitApi: widget.api.git,
-      fileApi: widget.api.file,
+      git: widget.git,
+      file: widget.file,
       projectId: widget.projectId,
       path: file['path'] as String? ?? '',
       diffHash: file['diff_hash'] as String? ?? '',
@@ -253,7 +327,7 @@ class _StatusTabState extends State<_StatusTab>
   void _openCommitSheet() {
     CommitSheet.show(
       context: context,
-      gitApi: widget.api.git,
+      git: widget.git,
       projectId: widget.projectId,
       onCommitted: _load,
     );
@@ -264,19 +338,23 @@ class _StatusTabState extends State<_StatusTab>
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Force Push'),
-        content:
-            const Text('Force push will overwrite remote history. Continue?'),
+        content: const Text(
+          'Force push will overwrite remote history. Continue?',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
               _push(force: true);
             },
-            child: const Text('Force Push',
-                style: TextStyle(color: Colors.red)),
+            child: const Text(
+              'Force Push',
+              style: TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -300,8 +378,7 @@ class _StatusTabState extends State<_StatusTab>
             _buildSummaryCard(),
             Container(
               decoration: BoxDecoration(
-                border: Border(
-                    bottom: BorderSide(color: Colors.grey[300]!)),
+                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
               ),
               child: TabBar(
                 controller: _tabController,
@@ -311,7 +388,7 @@ class _StatusTabState extends State<_StatusTab>
                 ],
               ),
             ),
-            _buildActionBar(hasChanges, stagedCount, hasSelection),
+            _buildActionBar(stagedCount, hasSelection),
             Expanded(
               child: hasChanges
                   ? _buildFileList()
@@ -319,12 +396,19 @@ class _StatusTabState extends State<_StatusTab>
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.check_circle_outline,
-                              size: 64, color: Colors.green[200]),
+                          Icon(
+                            Icons.check_circle_outline,
+                            size: 64,
+                            color: Colors.green[200],
+                          ),
                           const SizedBox(height: 12),
-                          Text('Working tree clean',
-                              style: TextStyle(
-                                  color: Colors.grey[500], fontSize: 15)),
+                          Text(
+                            'Working tree clean',
+                            style: TextStyle(
+                              color: Colors.grey[500],
+                              fontSize: 15,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -342,9 +426,10 @@ class _StatusTabState extends State<_StatusTab>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2)),
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
                       SizedBox(width: 12),
                       Text('Processing...'),
                     ],
@@ -371,37 +456,42 @@ class _StatusTabState extends State<_StatusTab>
           children: [
             Icon(Icons.alt_route, size: 16, color: Colors.blue[600]),
             const SizedBox(width: 6),
-            Text(branch,
-                style: const TextStyle(
-                    fontWeight: FontWeight.w600, fontSize: 14)),
+            Text(
+              branch,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            ),
             if (upstream.isNotEmpty) ...[
               const SizedBox(width: 6),
-              Text('→ $upstream',
-                  style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+              Text(
+                '→ $upstream',
+                style: TextStyle(color: Colors.grey[500], fontSize: 12),
+              ),
             ],
             const Spacer(),
             if (ahead > 0)
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                    color: Colors.blue[50],
-                    borderRadius: BorderRadius.circular(8)),
-                child: Text('↑$ahead',
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.blue[700])),
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '↑$ahead',
+                  style: TextStyle(fontSize: 11, color: Colors.blue[700]),
+                ),
               ),
             if (behind > 0) ...[
               const SizedBox(width: 4),
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                    color: Colors.orange[50],
-                    borderRadius: BorderRadius.circular(8)),
-                child: Text('↓$behind',
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.orange[700])),
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '↓$behind',
+                  style: TextStyle(fontSize: 11, color: Colors.orange[700]),
+                ),
               ),
             ],
           ],
@@ -410,114 +500,149 @@ class _StatusTabState extends State<_StatusTab>
     );
   }
 
-  Widget _buildActionBar(
-      bool hasChanges, int stagedCount, bool hasSelection) {
-    if (hasSelection) {
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: Theme.of(context)
-              .colorScheme
-              .primaryContainer
-              .withValues(alpha: 0.3),
-        ),
-        child: Row(
-          children: [
-            Text('${_selectedPaths.length} selected',
-                style: const TextStyle(
-                    fontWeight: FontWeight.w600, fontSize: 13)),
-            const Spacer(),
-            if (_isStagedTab)
-              SizedBox(
-                height: 32,
-                child: FilledButton(
-                  onPressed: _operating ? null : _unstageSelected,
-                  style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12)),
-                  child: const Text('Unstage',
-                      style: TextStyle(fontSize: 12)),
-                ),
-              )
-            else ...[
-              SizedBox(
-                height: 32,
-                child: FilledButton(
-                  onPressed: _operating ? null : _stageSelected,
-                  style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12)),
-                  child: const Text('Stage',
-                      style: TextStyle(fontSize: 12)),
-                ),
-              ),
-              const SizedBox(width: 6),
-              SizedBox(
-                height: 32,
-                child: OutlinedButton(
-                  onPressed: _operating ? null : _discardSelected,
-                  style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12)),
-                  child: const Text('Discard',
-                      style: TextStyle(fontSize: 12, color: Colors.red)),
-                ),
-              ),
-            ],
-            const SizedBox(width: 8),
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              onPressed: () => setState(() => _selectedPaths.clear()),
-              padding: EdgeInsets.zero,
-              constraints:
-                  const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        children: [
-          SizedBox(
-            height: 32,
-            child: OutlinedButton.icon(
-              onPressed: _currentFiles.isNotEmpty ? _selectAll : null,
-              icon: const Icon(Icons.checklist, size: 16),
-              label: const Text('Select', style: TextStyle(fontSize: 12)),
-              style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10)),
-            ),
-          ),
-          const Spacer(),
-          if (_isStagedTab)
-            SizedBox(
-              height: 32,
-              child: FilledButton.icon(
-                onPressed: (stagedCount > 0 && !_operating)
-                    ? _openCommitSheet
-                    : null,
-                icon: const Icon(Icons.commit, size: 16),
-                label:
-                    const Text('Commit', style: TextStyle(fontSize: 12)),
-              ),
-            ),
-          if (_isStagedTab) const SizedBox(width: 6),
-          SizedBox(
-            height: 32,
-            child: FilledButton.tonal(
-              onPressed: _pushing ? null : () => _push(),
-              onLongPress: _pushing ? null : _confirmForcePush,
-              child: _pushing
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child:
-                          CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.upload, size: 18),
-            ),
-          ),
-        ],
+  Widget _buildActionBar(int stagedCount, bool hasSelection) {
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: hasSelection
+            ? Theme.of(
+                context,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.3)
+            : Theme.of(context).colorScheme.surface,
+        border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
       ),
+      child: Row(
+        children: hasSelection
+            ? [
+                Text(
+                  '${_selectedPaths.length} selected',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+                const Spacer(),
+                if (_isStagedTab)
+                  SizedBox(
+                    height: 30,
+                    child: FilledButton(
+                      onPressed: _operating ? null : _unstageSelected,
+                      style: _barFilledStyle(),
+                      child: const Text(
+                        'Unstage',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  )
+                else ...[
+                  SizedBox(
+                    height: 30,
+                    child: FilledButton(
+                      onPressed: _operating ? null : _stageSelected,
+                      style: _barFilledStyle(),
+                      child: const Text(
+                        'Stage',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  SizedBox(
+                    height: 30,
+                    child: OutlinedButton(
+                      onPressed: _operating ? null : _discardSelected,
+                      style: _barOutlinedStyle(),
+                      child: const Text(
+                        'Discard',
+                        style: TextStyle(fontSize: 12, color: Colors.red),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => setState(() => _selectedPaths.clear()),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 30,
+                    minHeight: 30,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ]
+            : [
+                SizedBox(
+                  height: 30,
+                  child: OutlinedButton.icon(
+                    onPressed: _currentFiles.isNotEmpty ? _selectAll : null,
+                    icon: const Icon(Icons.checklist, size: 16),
+                    label: const Text('Select', style: TextStyle(fontSize: 12)),
+                    style: _barOutlinedStyle(horizontal: 10),
+                  ),
+                ),
+                const Spacer(),
+                if (_isStagedTab)
+                  SizedBox(
+                    height: 30,
+                    child: FilledButton.icon(
+                      onPressed: (stagedCount > 0 && !_operating)
+                          ? _openCommitSheet
+                          : null,
+                      icon: const Icon(Icons.commit, size: 16),
+                      label: const Text(
+                        'Commit',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      style: _barFilledStyle(horizontal: 10),
+                    ),
+                  ),
+                if (_isStagedTab) const SizedBox(width: 6),
+                SizedBox(
+                  height: 30,
+                  child: FilledButton.tonal(
+                    onPressed: _pushing ? null : () => _push(),
+                    onLongPress: _pushing ? null : _confirmForcePush,
+                    style: _barTonalStyle(horizontal: 10),
+                    child: _pushing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.upload, size: 18),
+                  ),
+                ),
+              ],
+      ),
+    );
+  }
+
+  ButtonStyle _barFilledStyle({double horizontal = 12}) {
+    return FilledButton.styleFrom(
+      padding: EdgeInsets.symmetric(horizontal: horizontal),
+      minimumSize: const Size(0, 30),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  ButtonStyle _barOutlinedStyle({double horizontal = 12}) {
+    return OutlinedButton.styleFrom(
+      padding: EdgeInsets.symmetric(horizontal: horizontal),
+      minimumSize: const Size(0, 30),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  ButtonStyle _barTonalStyle({double horizontal = 12}) {
+    return FilledButton.styleFrom(
+      padding: EdgeInsets.symmetric(horizontal: horizontal),
+      minimumSize: const Size(0, 30),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
     );
   }
 
@@ -578,42 +703,54 @@ class _StatusTabState extends State<_StatusTab>
               : _statusIconSmall(status),
         ),
       ),
-      title: Text(fileName,
-          style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis),
+      title: Text(
+        fileName,
+        style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
       subtitle: path.contains('/')
-          ? Text(path.substring(0, path.lastIndexOf('/')),
+          ? Text(
+              path.substring(0, path.lastIndexOf('/')),
               style: TextStyle(fontSize: 10, color: Colors.grey[500]),
               maxLines: 1,
-              overflow: TextOverflow.ellipsis)
+              overflow: TextOverflow.ellipsis,
+            )
           : null,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (isBinary)
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
               decoration: BoxDecoration(
-                  color: Colors.grey[200],
-                  borderRadius: BorderRadius.circular(4)),
-              child: Text('binary',
-                  style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+                color: Colors.grey[200],
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                'binary',
+                style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+              ),
             ),
           if (additions > 0 && !isBinary)
-            Text('+$additions',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.green[600],
-                    fontWeight: FontWeight.w500)),
+            Text(
+              '+$additions',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.green[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           if (deletions > 0 && !isBinary) ...[
             const SizedBox(width: 4),
-            Text('-$deletions',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.red[600],
-                    fontWeight: FontWeight.w500)),
+            Text(
+              '-$deletions',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.red[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ],
         ],
       ),
@@ -672,7 +809,11 @@ class _LogTabState extends State<_LogTab> {
     if (_loadingMore) return;
     if (_offset > 0) setState(() => _loadingMore = true);
     try {
-      final commits = await widget.api.git.getLog(widget.projectId, limit: 50, offset: _offset);
+      final commits = await widget.api.git.getLog(
+        widget.projectId,
+        limit: 50,
+        offset: _offset,
+      );
       if (mounted) {
         setState(() {
           _commits.addAll(commits);
@@ -682,7 +823,12 @@ class _LogTabState extends State<_LogTab> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() { _loading = false; _loadingMore = false; });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _loadingMore = false;
+        });
+      }
     }
   }
 
@@ -693,7 +839,10 @@ class _LogTabState extends State<_LogTab> {
 
     return NotificationListener<ScrollNotification>(
       onNotification: (n) {
-        if (n is ScrollEndNotification && n.metrics.pixels >= n.metrics.maxScrollExtent - 200 && _hasMore && !_loadingMore) {
+        if (n is ScrollEndNotification &&
+            n.metrics.pixels >= n.metrics.maxScrollExtent - 200 &&
+            _hasMore &&
+            !_loadingMore) {
           _offset += 50;
           _loadCommits();
         }
@@ -703,7 +852,10 @@ class _LogTabState extends State<_LogTab> {
         itemCount: _commits.length + (_hasMore ? 1 : 0),
         itemBuilder: (context, index) {
           if (index >= _commits.length) {
-            return const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()));
+            return const Padding(
+              padding: EdgeInsets.all(16),
+              child: Center(child: CircularProgressIndicator()),
+            );
           }
           final commit = _commits[index];
           final hash = commit['hash'] as String? ?? '';
@@ -714,13 +866,28 @@ class _LogTabState extends State<_LogTab> {
 
           return ListTile(
             leading: Container(
-              width: 10, height: 10,
+              width: 10,
+              height: 10,
               margin: const EdgeInsets.only(top: 6),
-              decoration: BoxDecoration(color: Theme.of(context).colorScheme.primary, shape: BoxShape.circle),
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.primary,
+                shape: BoxShape.circle,
+              ),
             ),
-            title: Text(message, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 14)),
-            subtitle: Text('$author · $shortHash', style: const TextStyle(fontSize: 11)),
-            trailing: Text(_formatTime(timestamp), style: TextStyle(fontSize: 11, color: Colors.grey[600])),
+            title: Text(
+              message,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontSize: 14),
+            ),
+            subtitle: Text(
+              '$author · $shortHash',
+              style: const TextStyle(fontSize: 11),
+            ),
+            trailing: Text(
+              _formatTime(timestamp),
+              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+            ),
             onTap: () => _openCommitDetail(commit as Map<String, dynamic>),
           );
         },
@@ -762,7 +929,12 @@ class _CommitDetailSheet extends StatefulWidget {
   final String projectId;
   final String hash;
   final String message;
-  const _CommitDetailSheet({required this.api, required this.projectId, required this.hash, required this.message});
+  const _CommitDetailSheet({
+    required this.api,
+    required this.projectId,
+    required this.hash,
+    required this.message,
+  });
 
   @override
   State<_CommitDetailSheet> createState() => _CommitDetailSheetState();
@@ -780,8 +952,16 @@ class _CommitDetailSheetState extends State<_CommitDetailSheet> {
 
   Future<void> _loadFiles() async {
     try {
-      final resp = await widget.api.git.getCommitFiles(widget.projectId, widget.hash);
-      if (mounted) setState(() { _files = (resp['files'] ?? []) as List<dynamic>; _loading = false; });
+      final resp = await widget.api.git.getCommitFiles(
+        widget.projectId,
+        widget.hash,
+      );
+      if (mounted) {
+        setState(() {
+          _files = (resp['files'] ?? []) as List<dynamic>;
+          _loading = false;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
@@ -789,42 +969,69 @@ class _CommitDetailSheetState extends State<_CommitDetailSheet> {
 
   @override
   Widget build(BuildContext context) {
-    final shortHash = widget.hash.length > 7 ? widget.hash.substring(0, 7) : widget.hash;
+    final shortHash = widget.hash.length > 7
+        ? widget.hash.substring(0, 7)
+        : widget.hash;
 
     return DraggableScrollableSheet(
-      initialChildSize: 0.7, maxChildSize: 0.95, minChildSize: 0.3, expand: false,
+      initialChildSize: 0.7,
+      maxChildSize: 0.95,
+      minChildSize: 0.3,
+      expand: false,
       builder: (context, scrollController) {
         return Column(
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[300]!))),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+              ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
                         decoration: BoxDecoration(
                           color: Theme.of(context).colorScheme.primaryContainer,
                           borderRadius: BorderRadius.circular(4),
                         ),
-                        child: Text(shortHash, style: const TextStyle(fontSize: 12, fontFamily: 'monospace')),
+                        child: Text(
+                          shortHash,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontFamily: 'monospace',
+                          ),
+                        ),
                       ),
                       const Spacer(),
                       IconButton(
                         icon: const Icon(Icons.copy, size: 18),
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: widget.hash));
-                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)));
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('Copied'),
+                              duration: Duration(seconds: 1),
+                            ),
+                          );
                         },
                       ),
-                      IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                      IconButton(
+                        icon: const Icon(Icons.close),
+                        onPressed: () => Navigator.pop(context),
+                      ),
                     ],
                   ),
                   const SizedBox(height: 4),
-                  Text(widget.message, style: const TextStyle(fontWeight: FontWeight.w500)),
+                  Text(
+                    widget.message,
+                    style: const TextStyle(fontWeight: FontWeight.w500),
+                  ),
                 ],
               ),
             ),
@@ -832,37 +1039,50 @@ class _CommitDetailSheetState extends State<_CommitDetailSheet> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _files.isEmpty
-                      ? const Center(child: Text('No files changed'))
-                      : ListView.builder(
-                          controller: scrollController,
-                          itemCount: _files.length,
-                          itemBuilder: (context, index) {
-                            final file = _files[index];
-                            final status = file['status'] as String? ?? '';
-                            final path = file['path'] as String? ?? '';
-                            return ListTile(
-                              dense: true,
-                              leading: Container(
-                                width: 24,
-                                alignment: Alignment.center,
-                                child: Text(status, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: _statusColor(status))),
+                  ? const Center(child: Text('No files changed'))
+                  : ListView.builder(
+                      controller: scrollController,
+                      itemCount: _files.length,
+                      itemBuilder: (context, index) {
+                        final file = _files[index];
+                        final status = file['status'] as String? ?? '';
+                        final path = file['path'] as String? ?? '';
+                        return ListTile(
+                          dense: true,
+                          leading: Container(
+                            width: 24,
+                            alignment: Alignment.center,
+                            child: Text(
+                              status,
+                              style: TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.bold,
+                                color: _statusColor(status),
                               ),
-                              title: Text(path, style: const TextStyle(fontSize: 13, fontFamily: 'monospace')),
-                              onTap: () {
-                                showModalBottomSheet(
-                                  context: context,
-                                  isScrollControlled: true,
-                                  builder: (_) => _CommitFileDiffSheet(
-                                    api: widget.api,
-                                    projectId: widget.projectId,
-                                    hash: widget.hash,
-                                    path: path,
-                                  ),
-                                );
-                              },
+                            ),
+                          ),
+                          title: Text(
+                            path,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontFamily: 'monospace',
+                            ),
+                          ),
+                          onTap: () {
+                            showModalBottomSheet(
+                              context: context,
+                              isScrollControlled: true,
+                              builder: (_) => _CommitFileDiffSheet(
+                                api: widget.api,
+                                projectId: widget.projectId,
+                                hash: widget.hash,
+                                path: path,
+                              ),
                             );
                           },
-                        ),
+                        );
+                      },
+                    ),
             ),
           ],
         );
@@ -872,11 +1092,16 @@ class _CommitDetailSheetState extends State<_CommitDetailSheet> {
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'A': return Colors.green;
-      case 'M': return Colors.orange;
-      case 'D': return Colors.red;
-      case 'R': return Colors.blue;
-      default: return Colors.grey;
+      case 'A':
+        return Colors.green;
+      case 'M':
+        return Colors.orange;
+      case 'D':
+        return Colors.red;
+      case 'R':
+        return Colors.blue;
+      default:
+        return Colors.grey;
     }
   }
 }
@@ -886,7 +1111,12 @@ class _CommitFileDiffSheet extends StatefulWidget {
   final String projectId;
   final String hash;
   final String path;
-  const _CommitFileDiffSheet({required this.api, required this.projectId, required this.hash, required this.path});
+  const _CommitFileDiffSheet({
+    required this.api,
+    required this.projectId,
+    required this.hash,
+    required this.path,
+  });
 
   @override
   State<_CommitFileDiffSheet> createState() => _CommitFileDiffSheetState();
@@ -905,32 +1135,60 @@ class _CommitFileDiffSheetState extends State<_CommitFileDiffSheet> {
 
   Future<void> _loadDiff() async {
     try {
-      final resp = await widget.api.git.getCommitFileDiff(widget.projectId, widget.hash, widget.path);
-      if (mounted) setState(() { _content = resp['content'] as String? ?? ''; _loading = false; });
+      final resp = await widget.api.git.getCommitFileDiff(
+        widget.projectId,
+        widget.hash,
+        widget.path,
+      );
+      if (mounted) {
+        setState(() {
+          _content = resp['content'] as String? ?? '';
+          _loading = false;
+        });
+      }
     } catch (e) {
-      if (mounted) setState(() { _loading = false; _content = 'Failed to load: $e'; });
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _content = userFriendlyErrorMessage(e, action: '加载失败');
+        });
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     return DraggableScrollableSheet(
-      initialChildSize: 0.85, maxChildSize: 0.95, minChildSize: 0.3, expand: false,
+      initialChildSize: 0.85,
+      maxChildSize: 0.95,
+      minChildSize: 0.3,
+      expand: false,
       builder: (context, scrollController) {
         return Column(
           children: [
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey[300]!))),
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+              ),
               child: Row(
                 children: [
                   const Icon(Icons.code, size: 18),
                   const SizedBox(width: 8),
-                  Expanded(child: Text(widget.path, style: const TextStyle(fontWeight: FontWeight.w500), overflow: TextOverflow.ellipsis)),
+                  Expanded(
+                    child: Text(
+                      widget.path,
+                      style: const TextStyle(fontWeight: FontWeight.w500),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
                   Tooltip(
                     message: _wrap ? 'No wrap' : 'Wrap',
                     child: IconButton(
-                      icon: Icon(_wrap ? Icons.wrap_text : Icons.horizontal_rule, size: 18),
+                      icon: Icon(
+                        _wrap ? Icons.wrap_text : Icons.horizontal_rule,
+                        size: 18,
+                      ),
                       onPressed: () => setState(() => _wrap = !_wrap),
                     ),
                   ),
@@ -938,10 +1196,18 @@ class _CommitFileDiffSheetState extends State<_CommitFileDiffSheet> {
                     icon: const Icon(Icons.copy, size: 18),
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: _content));
-                      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Copied'), duration: Duration(seconds: 1)));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(
+                          content: Text('Copied'),
+                          duration: Duration(seconds: 1),
+                        ),
+                      );
                     },
                   ),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(context),
+                  ),
                 ],
               ),
             ),
@@ -975,7 +1241,10 @@ class _CommitFileDiffSheetState extends State<_CommitFileDiffSheet> {
       } else if (line.startsWith('-')) {
         bgColor = Colors.red[50]!;
         textColor = Colors.red[900]!;
-      } else if (line.startsWith('diff --git') || line.startsWith('index ') || line.startsWith('---') || line.startsWith('+++')) {
+      } else if (line.startsWith('diff --git') ||
+          line.startsWith('index ') ||
+          line.startsWith('---') ||
+          line.startsWith('+++')) {
         bgColor = Colors.grey[100]!;
         textColor = Colors.grey[700]!;
         fontWeight = FontWeight.w500;
@@ -983,21 +1252,42 @@ class _CommitFileDiffSheetState extends State<_CommitFileDiffSheet> {
         bgColor = Colors.transparent;
       }
 
-      lineWidgets.add(Container(
-        color: bgColor,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 1),
-        child: Text(
-          line.isEmpty ? ' ' : line,
-          style: TextStyle(fontFamily: 'monospace', fontSize: 12, color: textColor, fontWeight: fontWeight),
-          softWrap: _wrap,
+      lineWidgets.add(
+        Container(
+          color: bgColor,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 1),
+          child: Text(
+            line.isEmpty ? ' ' : line,
+            style: TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12,
+              color: textColor,
+              fontWeight: fontWeight,
+            ),
+            softWrap: _wrap,
+          ),
         ),
-      ));
+      );
     }
 
-    final content = Column(crossAxisAlignment: CrossAxisAlignment.start, children: lineWidgets);
+    final content = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: lineWidgets,
+    );
 
-    if (_wrap) return SingleChildScrollView(controller: scrollController, child: content);
-    return SingleChildScrollView(controller: scrollController, child: SingleChildScrollView(scrollDirection: Axis.horizontal, child: content));
+    if (_wrap) {
+      return SingleChildScrollView(
+        controller: scrollController,
+        child: content,
+      );
+    }
+    return SingleChildScrollView(
+      controller: scrollController,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: content,
+      ),
+    );
   }
 }
 
@@ -1025,7 +1315,12 @@ class _BranchesTabState extends State<_BranchesTab> {
   Future<void> _load() async {
     try {
       final branches = await widget.api.git.getBranches(widget.projectId);
-      if (mounted) setState(() { _branches = branches; _loading = false; });
+      if (mounted) {
+        setState(() {
+          _branches = branches;
+          _loading = false;
+        });
+      }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
@@ -1042,17 +1337,32 @@ class _BranchesTabState extends State<_BranchesTab> {
         final branch = _branches[index];
         final name = branch['name'] as String? ?? '';
         final isCurrent = branch['current'] as bool? ?? false;
-        final isRemote = name.startsWith('origin/') || name.startsWith('remote/');
+        final isRemote =
+            name.startsWith('origin/') || name.startsWith('remote/');
 
         return ListTile(
           leading: Icon(
-            isCurrent ? Icons.check_circle : (isRemote ? Icons.cloud : Icons.account_tree),
-            color: isCurrent ? Colors.green : (isRemote ? Colors.blue : Colors.grey),
+            isCurrent
+                ? Icons.check_circle
+                : (isRemote ? Icons.cloud : Icons.account_tree),
+            color: isCurrent
+                ? Colors.green
+                : (isRemote ? Colors.blue : Colors.grey),
             size: 20,
           ),
-          title: Text(name, style: TextStyle(fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal, fontSize: 14)),
+          title: Text(
+            name,
+            style: TextStyle(
+              fontWeight: isCurrent ? FontWeight.bold : FontWeight.normal,
+              fontSize: 14,
+            ),
+          ),
           trailing: isCurrent
-              ? Chip(label: const Text('current', style: TextStyle(fontSize: 10)), padding: EdgeInsets.zero, materialTapTargetSize: MaterialTapTargetSize.shrinkWrap)
+              ? Chip(
+                  label: const Text('current', style: TextStyle(fontSize: 10)),
+                  padding: EdgeInsets.zero,
+                  materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                )
               : null,
         );
       },

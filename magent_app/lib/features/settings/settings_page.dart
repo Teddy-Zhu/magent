@@ -31,8 +31,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     List<dynamic> providers = [];
     if (api != null) {
       try {
-        final resp = await api.client.dio.get('/api/providers');
-        providers = (resp.data['data'] ?? []) as List<dynamic>;
+        final bootstrap = createBootstrapRepository(ref, api);
+        providers = await bootstrap.getProviders();
       } catch (_) {}
     }
 
@@ -54,6 +54,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : ListView(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              cacheExtent: 640,
               children: [
                 _buildSection(
                   context,
@@ -78,9 +80,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   context,
                   title: l10n.settingsDefaultCli,
                   icon: Icons.tune,
-                  children: [
-                    _buildDefaultProviderTile(l10n),
-                  ],
+                  children: [_buildDefaultProviderTile(l10n)],
                 ),
                 _buildSection(
                   context,
@@ -113,9 +113,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   title: l10n.settingsAbout,
                   icon: Icons.info_outline,
                   children: [
-                    ListTile(
+                    _SettingsTile(
+                      icon: Icons.tag,
                       title: Text(l10n.settingsVersion),
                       subtitle: const Text('1.0.0-dev'),
+                      onTap: null,
                     ),
                   ],
                 ),
@@ -125,21 +127,25 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   Widget _buildDefaultProviderTile(AppLocalizations l10n) {
-    final available = _providers.where((p) => p['status'] == 'available').toList();
+    final available = _providers
+        .where((p) => p['status'] == 'available')
+        .toList();
 
-    return ListTile(
-      leading: const Icon(Icons.smart_toy),
+    return _SettingsTile(
+      icon: Icons.smart_toy,
       title: Text(l10n.settingsDefaultCli),
       subtitle: Text(
         _defaultProvider ?? l10n.sessionsModelDefault,
         style: TextStyle(color: _defaultProvider != null ? null : Colors.grey),
       ),
-      trailing: const Icon(Icons.chevron_right),
       onTap: () => _showDefaultProviderPicker(l10n, available),
     );
   }
 
-  void _showDefaultProviderPicker(AppLocalizations l10n, List<dynamic> available) {
+  void _showDefaultProviderPicker(
+    AppLocalizations l10n,
+    List<dynamic> available,
+  ) {
     showModalBottomSheet(
       context: context,
       builder: (context) {
@@ -150,7 +156,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               ListTile(
                 title: Text(l10n.sessionsModelDefault),
                 leading: Icon(
-                  _defaultProvider == null ? Icons.check_circle : Icons.circle_outlined,
+                  _defaultProvider == null
+                      ? Icons.check_circle
+                      : Icons.circle_outlined,
                   color: _defaultProvider == null ? Colors.green : Colors.grey,
                 ),
                 onTap: () async {
@@ -196,28 +204,43 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     required IconData icon,
     required List<Widget> children,
   }) {
+    final scheme = Theme.of(context).colorScheme;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+          padding: const EdgeInsets.fromLTRB(4, 14, 4, 8),
           child: Row(
             children: [
-              Icon(icon, size: 18, color: Theme.of(context).colorScheme.primary),
+              Icon(icon, size: 16, color: scheme.primary),
               const SizedBox(width: 8),
               Text(
                 title,
-                style: TextStyle(
-                  fontSize: 14,
-                  fontWeight: FontWeight.bold,
-                  color: Theme.of(context).colorScheme.primary,
+                style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: scheme.primary,
                 ),
               ),
             ],
           ),
         ),
-        ...children,
-        const Divider(height: 1),
+        Card(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < children.length; i++) ...[
+                children[i],
+                if (i != children.length - 1)
+                  Divider(
+                    height: 1,
+                    indent: 58,
+                    color: scheme.outlineVariant.withValues(alpha: 0.55),
+                  ),
+              ],
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -228,12 +251,85 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     required String subtitle,
     required VoidCallback onTap,
   }) {
-    return ListTile(
-      leading: Icon(icon),
+    return _SettingsTile(
+      icon: icon,
       title: Text(title),
       subtitle: Text(subtitle),
-      trailing: const Icon(Icons.chevron_right),
       onTap: onTap,
+    );
+  }
+}
+
+class _SettingsTile extends StatelessWidget {
+  final IconData icon;
+  final Widget title;
+  final Widget subtitle;
+  final VoidCallback? onTap;
+
+  const _SettingsTile({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(8),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        child: Row(
+          children: [
+            Container(
+              width: 34,
+              height: 34,
+              decoration: BoxDecoration(
+                color: scheme.primaryContainer.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Icon(icon, size: 18, color: scheme.onPrimaryContainer),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DefaultTextStyle.merge(
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                    child: title,
+                  ),
+                  const SizedBox(height: 3),
+                  DefaultTextStyle.merge(
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: scheme.onSurfaceVariant,
+                    ),
+                    child: subtitle,
+                  ),
+                ],
+              ),
+            ),
+            if (onTap != null) ...[
+              const SizedBox(width: 8),
+              Icon(
+                Icons.chevron_right,
+                size: 20,
+                color: scheme.onSurfaceVariant,
+              ),
+            ],
+          ],
+        ),
+      ),
     );
   }
 }

@@ -5,8 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 )
 
@@ -48,9 +46,9 @@ func (s *Service) GetSummary(ctx context.Context, projectID, projectPath string)
 	worktreeHash := s.computeWorktreeHash(ctx, projectPath)
 	indexHash := s.computeIndexHash(ctx, projectPath)
 
-	version := s.getOrBumpVersion(ctx, projectID, head, worktreeHash, indexHash)
+	version := ComputeGitVersion(head, worktreeHash, indexHash)
 
-	return &GitSummary{
+	summary := &GitSummary{
 		ProjectID:      projectID,
 		Head:           head,
 		Branch:         branch,
@@ -64,7 +62,9 @@ func (s *Service) GetSummary(ctx context.Context, projectID, projectPath string)
 		UnstagedCount:  unstaged,
 		UntrackedCount: untracked,
 		Version:        version,
-	}, nil
+	}
+
+	return summary, nil
 }
 
 func parseStatusCounts(status string) (staged, unstaged, untracked int) {
@@ -87,53 +87,50 @@ func parseStatusCounts(status string) (staged, unstaged, untracked int) {
 	return
 }
 
-type gitState struct {
-	Head         string
-	WorktreeHash string
-	IndexHash    string
-	Version      int64
-}
-
-func (s *Service) getGitState(ctx context.Context, projectID string) (*gitState, error) {
-	row := s.db.DB().QueryRowContext(ctx,
-		`SELECT head, worktree_hash, index_hash, version FROM git_state WHERE project_id = ?`,
-		projectID)
-	var state gitState
-	err := row.Scan(&state.Head, &state.WorktreeHash, &state.IndexHash, &state.Version)
-	if err != nil {
-		return nil, err
-	}
-	return &state, nil
-}
-
-func (s *Service) saveGitState(ctx context.Context, projectID string, version int64, head, worktreeHash, indexHash string) {
-	s.db.DB().ExecContext(ctx,
-		`INSERT OR REPLACE INTO git_state (project_id, version, head, worktree_hash, index_hash, updated_at)
-		 VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'))`,
-		projectID, version, head, worktreeHash, indexHash)
-}
-
-func (s *Service) getOrBumpVersion(ctx context.Context, projectID, head, worktreeHash, indexHash string) int64 {
-	current, _ := s.getGitState(ctx, projectID)
-	if current != nil && current.Head == head && current.WorktreeHash == worktreeHash && current.IndexHash == indexHash {
-		return current.Version
-	}
-	newVersion := int64(1)
-	if current != nil {
-		newVersion = current.Version + 1
-	}
-	s.saveGitState(ctx, projectID, newVersion, head, worktreeHash, indexHash)
-	return newVersion
-}
-
 func (s *Service) computeWorktreeHash(ctx context.Context, projectPath string) string {
-	out, _ := s.Git(ctx, projectPath, "ls-files", "-s")
-	h := sha256.Sum256(out)
-	return "wt_" + hex.EncodeToString(h[:])[:16]
+	statusOut, _ := s.Git(ctx, projectPath, "status", "--porcelain=v2", "-z", "--branch")
+	diffOut, _ := s.Git(ctx, projectPath, "diff", "--binary")
+	untrackedOut, _ := s.Git(ctx, projectPath, "ls-files", "--others", "--exclude-standard", "-z")
+	h := sha256.New()
+	h.Write(statusOut)
+	h.Write([]byte{0})
+	h.Write(diffOut)
+	h.Write([]byte{0})
+	for _, path := range strings.Split(strings.TrimRight(string(untrackedOut), "\x00"), "\x00") {
+		if path == "" {
+			continue
+		}
+		contentHash, _ := s.Git(ctx, projectPath, "hash-object", "--no-filters", "--", path)
+		h.Write([]byte(path))
+		h.Write([]byte{0})
+		h.Write(contentHash)
+		h.Write([]byte{0})
+	}
+	return "wt_" + hex.EncodeToString(h.Sum(nil))[:16]
 }
 
 func (s *Service) computeIndexHash(ctx context.Context, projectPath string) string {
-	indexBytes, _ := os.ReadFile(filepath.Join(projectPath, ".git", "index"))
-	h := sha256.Sum256(indexBytes)
+	out, _ := s.Git(ctx, projectPath, "diff", "--cached", "--binary")
+	h := sha256.Sum256(out)
 	return "idx_" + hex.EncodeToString(h[:])[:16]
+}
+
+func ComputeGitVersion(parts ...string) int64 {
+	h := sha256.New()
+	for _, part := range parts {
+		h.Write([]byte(part))
+		h.Write([]byte{0})
+	}
+	sum := h.Sum(nil)
+	var version int64
+	for _, b := range sum[:8] {
+		version = (version << 8) | int64(b)
+	}
+	if version < 0 {
+		version = -version
+	}
+	if version == 0 {
+		version = 1
+	}
+	return version
 }

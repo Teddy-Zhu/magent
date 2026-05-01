@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:magent_app/core/api/api_client.dart';
+import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 
 class AgentEditPage extends StatefulWidget {
@@ -60,15 +61,15 @@ class _AgentEditPageState extends State<AgentEditPage> {
       );
 
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Agent updated')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('Agent updated')));
         Navigator.pop(context, true);
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Connection failed: $e')),
+          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '连接失败'))),
         );
       }
     } finally {
@@ -116,8 +117,13 @@ class _AgentEditPageState extends State<AgentEditPage> {
                         border: const OutlineInputBorder(),
                         prefixIcon: const Icon(Icons.key),
                         suffixIcon: IconButton(
-                          icon: Icon(_obscureToken ? Icons.visibility : Icons.visibility_off),
-                          onPressed: () => setState(() => _obscureToken = !_obscureToken),
+                          icon: Icon(
+                            _obscureToken
+                                ? Icons.visibility
+                                : Icons.visibility_off,
+                          ),
+                          onPressed: () =>
+                              setState(() => _obscureToken = !_obscureToken),
                         ),
                       ),
                       obscureText: _obscureToken,

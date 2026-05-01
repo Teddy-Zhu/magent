@@ -1,19 +1,25 @@
 import 'package:flutter/material.dart';
-import 'package:magent_app/core/api/git_api.dart';
-import 'package:magent_app/core/providers/api_provider.dart';
+import 'package:flutter/foundation.dart';
+import 'package:magent_app/core/api/error_messages.dart';
+import 'package:magent_app/core/repositories/file_repository.dart';
+import 'package:magent_app/core/repositories/git_repository.dart';
 import 'package:magent_app/features/git/widgets/commit_sheet.dart';
 import 'package:magent_app/features/git/widgets/diff_sheet.dart';
 
 class ProjectChangesTab extends StatefulWidget {
   final String projectId;
-  final AppApiClient api;
+  final GitRepository git;
+  final FileRepository file;
+  final ValueListenable<int>? invalidationSignal;
   final VoidCallback? onViewLog;
   final VoidCallback? onViewBranches;
 
   const ProjectChangesTab({
     super.key,
     required this.projectId,
-    required this.api,
+    required this.git,
+    required this.file,
+    this.invalidationSignal,
     this.onViewLog,
     this.onViewBranches,
   });
@@ -32,8 +38,6 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
   bool _pushing = false;
   final Set<String> _selectedPaths = {};
 
-  GitApi get _git => widget.api.git;
-
   @override
   void initState() {
     super.initState();
@@ -41,33 +45,57 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     _tabController.addListener(() {
       setState(() => _selectedPaths.clear());
     });
+    widget.invalidationSignal?.addListener(_handleInvalidation);
     _load();
   }
 
   @override
   void dispose() {
+    widget.invalidationSignal?.removeListener(_handleInvalidation);
     _tabController.dispose();
     super.dispose();
+  }
+
+  void _handleInvalidation() {
+    _refreshFromInvalidation();
   }
 
   Future<void> _load() async {
     setState(() => _loading = true);
     try {
-      final results = await Future.wait([
-        _git.getSummary(widget.projectId),
-        _git.getChanges(widget.projectId),
-      ]);
+      final cached = await widget.git.getCachedSnapshot(widget.projectId);
+      if (mounted && cached != null) {
+        setState(() {
+          _summary = cached.summary;
+          _allFiles = cached.files;
+          _loading = false;
+        });
+      }
+      final snapshot = await widget.git.refreshSnapshot(widget.projectId);
       if (mounted) {
         setState(() {
-          _summary = results[0];
-          final changes = results[1];
-          _allFiles = (changes['files'] ?? []) as List<dynamic>;
+          _summary = snapshot.summary;
+          _allFiles = snapshot.files;
           _loading = false;
         });
       }
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
+  }
+
+  Future<void> _refreshFromInvalidation() async {
+    if (!mounted) return;
+    try {
+      final snapshot = await widget.git.refreshSnapshot(widget.projectId);
+      if (mounted) {
+        setState(() {
+          _summary = snapshot.summary;
+          _allFiles = snapshot.files;
+          _loading = false;
+        });
+      }
+    } catch (_) {}
   }
 
   List<dynamic> get _stagedFiles =>
@@ -105,11 +133,11 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     if (_selectedPaths.isEmpty) return;
     setState(() => _operating = true);
     try {
-      await _git.stage(widget.projectId, _selectedPaths.toList());
+      await widget.git.stage(widget.projectId, _selectedPaths.toList());
       setState(() => _selectedPaths.clear());
       await _load();
     } catch (e) {
-      if (mounted) _showError('Stage failed: $e');
+      if (mounted) _showError(e, action: 'Stage failed');
     } finally {
       if (mounted) setState(() => _operating = false);
     }
@@ -119,11 +147,11 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     if (_selectedPaths.isEmpty) return;
     setState(() => _operating = true);
     try {
-      await _git.unstage(widget.projectId, _selectedPaths.toList());
+      await widget.git.unstage(widget.projectId, _selectedPaths.toList());
       setState(() => _selectedPaths.clear());
       await _load();
     } catch (e) {
-      if (mounted) _showError('Unstage failed: $e');
+      if (mounted) _showError(e, action: 'Unstage failed');
     } finally {
       if (mounted) setState(() => _operating = false);
     }
@@ -134,27 +162,28 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Discard Changes'),
-        content: Text('Discard ${_selectedPaths.length} file(s)?'),
+        title: const Text('放弃更改'),
+        content: Text('确定放弃 ${_selectedPaths.length} 个文件的更改？此操作不可撤销。'),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
           TextButton(
-              onPressed: () => Navigator.pop(ctx, true),
-              child: const Text('Discard',
-                  style: TextStyle(color: Colors.red))),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('放弃', style: TextStyle(color: Colors.red)),
+          ),
         ],
       ),
     );
     if (confirmed == true) {
       setState(() => _operating = true);
       try {
-        await _git.discard(widget.projectId, _selectedPaths.toList());
+        await widget.git.discard(widget.projectId, _selectedPaths.toList());
         setState(() => _selectedPaths.clear());
         await _load();
       } catch (e) {
-        if (mounted) _showError('Discard failed: $e');
+        if (mounted) _showError(e, action: 'Discard failed');
       } finally {
         if (mounted) setState(() => _operating = false);
       }
@@ -164,33 +193,37 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
   Future<void> _push({bool force = false}) async {
     setState(() => _pushing = true);
     try {
-      await _git.push(widget.projectId, force: force);
+      await widget.git.push(widget.projectId, force: force);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-              content: Text('Push successful'),
-              backgroundColor: Colors.green),
+            content: Text('Push successful'),
+            backgroundColor: Colors.green,
+          ),
         );
         await _load();
       }
     } catch (e) {
-      if (mounted) _showError('Push failed: $e');
+      if (mounted) _showError(e, action: 'Push failed');
     } finally {
       if (mounted) setState(() => _pushing = false);
     }
   }
 
-  void _showError(String msg) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(msg), backgroundColor: Colors.red),
-    );
+  void _showError(Object error, {String? action}) {
+    final msg = error is String
+        ? error
+        : userFriendlyErrorMessage(error, action: action);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
   }
 
   void _openDiff(dynamic file) {
     DiffSheet.show(
       context: context,
-      gitApi: _git,
-      fileApi: widget.api.file,
+      git: widget.git,
+      file: widget.file,
       projectId: widget.projectId,
       path: file['path'] as String? ?? '',
       diffHash: file['diff_hash'] as String? ?? '',
@@ -202,7 +235,7 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
   void _openCommitSheet() {
     CommitSheet.show(
       context: context,
-      gitApi: _git,
+      git: widget.git,
       projectId: widget.projectId,
       onCommitted: _load,
     );
@@ -213,19 +246,23 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text('Force Push'),
-        content:
-            const Text('Force push will overwrite remote history. Continue?'),
+        content: const Text(
+          'Force push will overwrite remote history. Continue?',
+        ),
         actions: [
           TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Cancel')),
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Cancel'),
+          ),
           TextButton(
             onPressed: () {
               Navigator.pop(ctx);
               _push(force: true);
             },
-            child: const Text('Force Push',
-                style: TextStyle(color: Colors.red)),
+            child: const Text(
+              'Force Push',
+              style: TextStyle(color: Colors.red),
+            ),
           ),
         ],
       ),
@@ -251,21 +288,18 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
             // Tab bar
             Container(
               decoration: BoxDecoration(
-                border: Border(
-                    bottom: BorderSide(color: Colors.grey[300]!)),
+                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
               ),
               child: TabBar(
                 controller: _tabController,
                 tabs: [
                   Tab(text: 'Staged ($stagedCount)'),
-                  Tab(
-                      text:
-                          'Unstaged (${_unstagedFiles.length})'),
+                  Tab(text: 'Unstaged (${_unstagedFiles.length})'),
                 ],
               ),
             ),
             // Action bar
-            _buildActionBar(hasChanges, stagedCount, hasSelection),
+            _buildActionBar(stagedCount, hasSelection),
             // File list
             Expanded(
               child: hasChanges
@@ -274,12 +308,19 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                       child: Column(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          Icon(Icons.check_circle_outline,
-                              size: 64, color: Colors.green[200]),
+                          Icon(
+                            Icons.check_circle_outline,
+                            size: 64,
+                            color: Colors.green[200],
+                          ),
                           const SizedBox(height: 12),
-                          Text('Working tree clean',
-                              style: TextStyle(
-                                  color: Colors.grey[500], fontSize: 15)),
+                          Text(
+                            'Working tree clean',
+                            style: TextStyle(
+                              color: Colors.grey[500],
+                              fontSize: 15,
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -297,9 +338,10 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       SizedBox(
-                          width: 20,
-                          height: 20,
-                          child: CircularProgressIndicator(strokeWidth: 2)),
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
                       SizedBox(width: 12),
                       Text('Processing...'),
                     ],
@@ -326,37 +368,42 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
           children: [
             Icon(Icons.alt_route, size: 16, color: Colors.blue[600]),
             const SizedBox(width: 6),
-            Text(branch,
-                style: const TextStyle(
-                    fontWeight: FontWeight.w600, fontSize: 14)),
+            Text(
+              branch,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            ),
             if (upstream.isNotEmpty) ...[
               const SizedBox(width: 6),
-              Text('→ $upstream',
-                  style: TextStyle(color: Colors.grey[500], fontSize: 12)),
+              Text(
+                '→ $upstream',
+                style: TextStyle(color: Colors.grey[500], fontSize: 12),
+              ),
             ],
             const Spacer(),
             if (ahead > 0)
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                    color: Colors.blue[50],
-                    borderRadius: BorderRadius.circular(8)),
-                child: Text('↑$ahead',
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.blue[700])),
+                  color: Colors.blue[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '↑$ahead',
+                  style: TextStyle(fontSize: 11, color: Colors.blue[700]),
+                ),
               ),
             if (behind > 0) ...[
               const SizedBox(width: 4),
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                    color: Colors.orange[50],
-                    borderRadius: BorderRadius.circular(8)),
-                child: Text('↓$behind',
-                    style: TextStyle(
-                        fontSize: 11, color: Colors.orange[700])),
+                  color: Colors.orange[50],
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '↓$behind',
+                  style: TextStyle(fontSize: 11, color: Colors.orange[700]),
+                ),
               ),
             ],
           ],
@@ -365,119 +412,149 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     );
   }
 
-  Widget _buildActionBar(
-      bool hasChanges, int stagedCount, bool hasSelection) {
-    if (hasSelection) {
-      // Selection mode: show selection actions
-      return Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: Theme.of(context)
-              .colorScheme
-              .primaryContainer
-              .withValues(alpha: 0.3),
-        ),
-        child: Row(
-          children: [
-            Text('${_selectedPaths.length} selected',
-                style: const TextStyle(
-                    fontWeight: FontWeight.w600, fontSize: 13)),
-            const Spacer(),
-            if (_isStagedTab)
-              SizedBox(
-                height: 32,
-                child: FilledButton(
-                  onPressed: _operating ? null : _unstageSelected,
-                  style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12)),
-                  child: const Text('Unstage',
-                      style: TextStyle(fontSize: 12)),
-                ),
-              )
-            else ...[
-              SizedBox(
-                height: 32,
-                child: FilledButton(
-                  onPressed: _operating ? null : _stageSelected,
-                  style: FilledButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12)),
-                  child: const Text('Stage',
-                      style: TextStyle(fontSize: 12)),
-                ),
-              ),
-              const SizedBox(width: 6),
-              SizedBox(
-                height: 32,
-                child: OutlinedButton(
-                  onPressed: _operating ? null : _discardSelected,
-                  style: OutlinedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(horizontal: 12)),
-                  child: const Text('Discard',
-                      style: TextStyle(fontSize: 12, color: Colors.red)),
-                ),
-              ),
-            ],
-            const SizedBox(width: 8),
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              onPressed: () => setState(() => _selectedPaths.clear()),
-              padding: EdgeInsets.zero,
-              constraints:
-                  const BoxConstraints(minWidth: 32, minHeight: 32),
-            ),
-          ],
-        ),
-      );
-    }
-
-    // Normal mode: show main actions
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      child: Row(
-        children: [
-          // Select all toggle
-          SizedBox(
-            height: 32,
-            child: OutlinedButton.icon(
-              onPressed: _currentFiles.isNotEmpty ? _selectAll : null,
-              icon: const Icon(Icons.checklist, size: 16),
-              label: const Text('Select', style: TextStyle(fontSize: 12)),
-              style: OutlinedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(horizontal: 10)),
-            ),
-          ),
-          const Spacer(),
-          // Commit (only on staged tab)
-          if (_isStagedTab)
-            SizedBox(
-              height: 32,
-              child: FilledButton.icon(
-                onPressed: (stagedCount > 0 && !_operating)
-                    ? _openCommitSheet
-                    : null,
-                icon: const Icon(Icons.commit, size: 16),
-                label:
-                    const Text('Commit', style: TextStyle(fontSize: 12)),
-              ),
-            ),
-          if (_isStagedTab) const SizedBox(width: 6),
-          // Push
-          SizedBox(
-            height: 32,
-            child: FilledButton.tonal(
-              onPressed: _pushing ? null : () => _push(),
-              onLongPress: _pushing ? null : _confirmForcePush,
-              child: _pushing
-                  ? const SizedBox(
-                      width: 16,
-                      height: 16,
-                      child:
-                          CircularProgressIndicator(strokeWidth: 2))
-                  : const Icon(Icons.upload, size: 18),
-            ),
-          ),
-        ],
+  Widget _buildActionBar(int stagedCount, bool hasSelection) {
+    return Container(
+      height: 44,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: hasSelection
+            ? Theme.of(
+                context,
+              ).colorScheme.primaryContainer.withValues(alpha: 0.3)
+            : Theme.of(context).colorScheme.surface,
+        border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
       ),
+      child: Row(
+        children: hasSelection
+            ? [
+                Text(
+                  '${_selectedPaths.length} selected',
+                  style: const TextStyle(
+                    fontWeight: FontWeight.w600,
+                    fontSize: 13,
+                  ),
+                ),
+                const Spacer(),
+                if (_isStagedTab)
+                  SizedBox(
+                    height: 30,
+                    child: FilledButton(
+                      onPressed: _operating ? null : _unstageSelected,
+                      style: _barFilledStyle(),
+                      child: const Text(
+                        'Unstage',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  )
+                else ...[
+                  SizedBox(
+                    height: 30,
+                    child: FilledButton(
+                      onPressed: _operating ? null : _stageSelected,
+                      style: _barFilledStyle(),
+                      child: const Text(
+                        'Stage',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                  SizedBox(
+                    height: 30,
+                    child: OutlinedButton(
+                      onPressed: _operating ? null : _discardSelected,
+                      style: _barOutlinedStyle(),
+                      child: const Text(
+                        'Discard',
+                        style: TextStyle(fontSize: 12, color: Colors.red),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(width: 8),
+                IconButton(
+                  icon: const Icon(Icons.close, size: 18),
+                  onPressed: () => setState(() => _selectedPaths.clear()),
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 30,
+                    minHeight: 30,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+              ]
+            : [
+                SizedBox(
+                  height: 30,
+                  child: OutlinedButton.icon(
+                    onPressed: _currentFiles.isNotEmpty ? _selectAll : null,
+                    icon: const Icon(Icons.checklist, size: 16),
+                    label: const Text('Select', style: TextStyle(fontSize: 12)),
+                    style: _barOutlinedStyle(horizontal: 10),
+                  ),
+                ),
+                const Spacer(),
+                if (_isStagedTab)
+                  SizedBox(
+                    height: 30,
+                    child: FilledButton.icon(
+                      onPressed: (stagedCount > 0 && !_operating)
+                          ? _openCommitSheet
+                          : null,
+                      icon: const Icon(Icons.commit, size: 16),
+                      label: const Text(
+                        'Commit',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      style: _barFilledStyle(horizontal: 10),
+                    ),
+                  ),
+                if (_isStagedTab) const SizedBox(width: 6),
+                SizedBox(
+                  height: 30,
+                  child: FilledButton.tonal(
+                    onPressed: _pushing ? null : () => _push(),
+                    onLongPress: _pushing ? null : _confirmForcePush,
+                    style: _barTonalStyle(horizontal: 10),
+                    child: _pushing
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.upload, size: 18),
+                  ),
+                ),
+              ],
+      ),
+    );
+  }
+
+  ButtonStyle _barFilledStyle({double horizontal = 12}) {
+    return FilledButton.styleFrom(
+      padding: EdgeInsets.symmetric(horizontal: horizontal),
+      minimumSize: const Size(0, 30),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  ButtonStyle _barOutlinedStyle({double horizontal = 12}) {
+    return OutlinedButton.styleFrom(
+      padding: EdgeInsets.symmetric(horizontal: horizontal),
+      minimumSize: const Size(0, 30),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
+    );
+  }
+
+  ButtonStyle _barTonalStyle({double horizontal = 12}) {
+    return FilledButton.styleFrom(
+      padding: EdgeInsets.symmetric(horizontal: horizontal),
+      minimumSize: const Size(0, 30),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      visualDensity: VisualDensity.compact,
     );
   }
 
@@ -540,42 +617,54 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
               : _statusIconSmall(status),
         ),
       ),
-      title: Text(fileName,
-          style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis),
+      title: Text(
+        fileName,
+        style: const TextStyle(fontSize: 13, fontFamily: 'monospace'),
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+      ),
       subtitle: path.contains('/')
-          ? Text(path.substring(0, path.lastIndexOf('/')),
+          ? Text(
+              path.substring(0, path.lastIndexOf('/')),
               style: TextStyle(fontSize: 10, color: Colors.grey[500]),
               maxLines: 1,
-              overflow: TextOverflow.ellipsis)
+              overflow: TextOverflow.ellipsis,
+            )
           : null,
       trailing: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (isBinary)
             Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
               decoration: BoxDecoration(
-                  color: Colors.grey[200],
-                  borderRadius: BorderRadius.circular(4)),
-              child: Text('binary',
-                  style: TextStyle(fontSize: 10, color: Colors.grey[600])),
+                color: Colors.grey[200],
+                borderRadius: BorderRadius.circular(4),
+              ),
+              child: Text(
+                'binary',
+                style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+              ),
             ),
           if (additions > 0 && !isBinary)
-            Text('+$additions',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.green[600],
-                    fontWeight: FontWeight.w500)),
+            Text(
+              '+$additions',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.green[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           if (deletions > 0 && !isBinary) ...[
             const SizedBox(width: 4),
-            Text('-$deletions',
-                style: TextStyle(
-                    fontSize: 11,
-                    color: Colors.red[600],
-                    fontWeight: FontWeight.w500)),
+            Text(
+              '-$deletions',
+              style: TextStyle(
+                fontSize: 11,
+                color: Colors.red[600],
+                fontWeight: FontWeight.w500,
+              ),
+            ),
           ],
         ],
       ),
@@ -613,15 +702,13 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
           TextButton.icon(
             onPressed: widget.onViewLog,
             icon: const Icon(Icons.history, size: 16),
-            label:
-                const Text('Commit Log', style: TextStyle(fontSize: 12)),
+            label: const Text('Commit Log', style: TextStyle(fontSize: 12)),
           ),
           const SizedBox(width: 8),
           TextButton.icon(
             onPressed: widget.onViewBranches,
             icon: const Icon(Icons.account_tree, size: 16),
-            label:
-                const Text('Branches', style: TextStyle(fontSize: 12)),
+            label: const Text('Branches', style: TextStyle(fontSize: 12)),
           ),
         ],
       ),

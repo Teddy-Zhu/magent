@@ -1,20 +1,44 @@
 import 'package:dio/dio.dart';
+import 'package:magent_app/core/api/api_exceptions.dart';
 
 class GitApi {
+  static const _apiPrefix = '/api/v1';
+
   final Dio _dio;
 
   GitApi(this._dio);
 
-  Future<Map<String, dynamic>> getSummary(String projectId) async {
-    final resp = await _dio.get('/api/git/summary', queryParameters: {'project_id': projectId});
+  Future<Map<String, dynamic>> getSummary(
+    String projectId, {
+    int? knownVersion,
+  }) async {
+    final resp = await _dio.get(
+      '$_apiPrefix/projects/$projectId/git/summary',
+      options: Options(
+        headers: knownVersion == null
+            ? null
+            : {'If-None-Match': knownVersion.toString()},
+        validateStatus: (status) =>
+            status != null && status >= 200 && status < 400,
+      ),
+    );
+    if (resp.statusCode == 304) throw const NotModifiedException();
     return resp.data['data'];
   }
 
-  Future<Map<String, dynamic>> getChanges(String projectId, {int baseVersion = 0}) async {
-    final resp = await _dio.get('/api/git/changes', queryParameters: {
-      'project_id': projectId,
-      'base_version': baseVersion,
-    });
+  Future<Map<String, dynamic>> getChanges(
+    String projectId, {
+    int baseVersion = 0,
+  }) async {
+    final resp = await _dio.get(
+      '$_apiPrefix/projects/$projectId/git/changes',
+      queryParameters: {'base_version': baseVersion},
+      options: Options(
+        validateStatus: (status) =>
+            status != null && status >= 200 && status < 400,
+      ),
+    );
+    if (resp.statusCode == 304) throw const NotModifiedException();
     return resp.data['data'];
   }
 
@@ -26,51 +50,61 @@ class GitApi {
     int limit = 200,
     bool staged = false,
   }) async {
-    final resp = await _dio.get('/api/git/diff/file', queryParameters: {
-      'project_id': projectId,
-      'path': path,
-      'diff_hash': diffHash,
-      'offset': offset,
-      'limit': limit,
-      'staged': staged.toString(),
-    });
+    final resp = await _dio.get(
+      '$_apiPrefix/projects/$projectId/git/diff/file',
+      queryParameters: {
+        'path': path,
+        'diff_hash': diffHash,
+        'offset': offset,
+        'limit': limit,
+        'staged': staged.toString(),
+      },
+    );
     return resp.data['data'];
   }
 
   Future<void> stage(String projectId, List<String> paths) async {
-    await _dio.post('/api/git/stage', data: {
-      'project_id': projectId,
-      'paths': paths,
-    });
+    await _dio.post(
+      '$_apiPrefix/projects/$projectId/git/stage',
+      data: {'paths': paths},
+    );
   }
 
   Future<void> unstage(String projectId, List<String> paths) async {
-    await _dio.post('/api/git/unstage', data: {
-      'project_id': projectId,
-      'paths': paths,
-    });
+    await _dio.post(
+      '$_apiPrefix/projects/$projectId/git/unstage',
+      data: {'paths': paths},
+    );
   }
 
   Future<void> discard(String projectId, List<String> paths) async {
-    await _dio.post('/api/git/discard', data: {
-      'project_id': projectId,
-      'paths': paths,
-    });
+    await _dio.post(
+      '$_apiPrefix/projects/$projectId/git/discard',
+      data: {'paths': paths, 'confirm': true},
+    );
   }
 
-  Future<void> commit(String projectId, String message, {bool all = false}) async {
-    await _dio.post('/api/git/commit', data: {
-      'project_id': projectId,
-      'message': message,
-      'all': all,
-    });
+  Future<void> commit(
+    String projectId,
+    String message, {
+    bool all = false,
+  }) async {
+    await _dio.post(
+      '$_apiPrefix/projects/$projectId/git/commit',
+      data: {'message': message, 'all': all},
+    );
   }
 
   Future<String> suggestCommitMessage(String projectId) async {
-    final resp = await _dio.post('/api/git/commit/suggest', data: {
-      'project_id': projectId,
-    });
-    return resp.data['data']['message'] as String? ?? '';
+    final resp = await _dio.post(
+      '$_apiPrefix/projects/$projectId/git/commit/suggest',
+    );
+    final data = resp.data['data'] as Map<String, dynamic>? ?? {};
+    final error = data['error'] as String?;
+    if (error != null && error.isNotEmpty) {
+      throw Exception(error);
+    }
+    return data['message'] as String? ?? '';
   }
 
   Future<Map<String, dynamic>> push(
@@ -79,49 +113,72 @@ class GitApi {
     String? branch,
     bool force = false,
   }) async {
-    final resp = await _dio.post('/api/git/push', data: {
-      'project_id': projectId,
-      'remote': remote,
-      'branch': branch,
-      'force': force,
-    });
+    final resp = await _dio.post(
+      '$_apiPrefix/projects/$projectId/git/push',
+      data: {
+        'remote': remote,
+        'branch': branch,
+        'force': force,
+        'confirm_force': force,
+      },
+    );
     return resp.data['data'] ?? {};
   }
 
-  Future<List<dynamic>> getLog(String projectId, {int limit = 50, int offset = 0}) async {
-    final resp = await _dio.get('/api/git/log', queryParameters: {
-      'project_id': projectId,
-      'limit': limit,
-      'offset': offset,
-    });
+  Future<Map<String, dynamic>> pull(
+    String projectId, {
+    String? remote,
+    String? branch,
+    bool rebase = false,
+  }) async {
+    final resp = await _dio.post(
+      '$_apiPrefix/projects/$projectId/git/pull',
+      data: {'remote': remote, 'branch': branch, 'rebase': rebase},
+    );
+    return resp.data['data'] ?? {};
+  }
+
+  Future<List<dynamic>> getLog(
+    String projectId, {
+    int limit = 50,
+    int offset = 0,
+  }) async {
+    final resp = await _dio.get(
+      '$_apiPrefix/projects/$projectId/git/log',
+      queryParameters: {'limit': limit, 'offset': offset},
+    );
     final data = resp.data['data'];
     if (data is List) return data;
     return (data as Map<String, dynamic>?)?['commits'] ?? [];
   }
 
   Future<List<dynamic>> getBranches(String projectId) async {
-    final resp = await _dio.get('/api/git/branches', queryParameters: {
-      'project_id': projectId,
-    });
+    final resp = await _dio.get('$_apiPrefix/projects/$projectId/git/branches');
     final data = resp.data['data'];
     if (data is List) return data;
     return (data as Map<String, dynamic>?)?['branches'] ?? [];
   }
 
-  Future<Map<String, dynamic>> getCommitFiles(String projectId, String hash) async {
-    final resp = await _dio.get('/api/git/commit/files', queryParameters: {
-      'project_id': projectId,
-      'hash': hash,
-    });
+  Future<Map<String, dynamic>> getCommitFiles(
+    String projectId,
+    String hash,
+  ) async {
+    final resp = await _dio.get(
+      '$_apiPrefix/projects/$projectId/git/commit/files',
+      queryParameters: {'hash': hash},
+    );
     return resp.data['data'];
   }
 
-  Future<Map<String, dynamic>> getCommitFileDiff(String projectId, String hash, String path) async {
-    final resp = await _dio.get('/api/git/commit/file-diff', queryParameters: {
-      'project_id': projectId,
-      'hash': hash,
-      'path': path,
-    });
+  Future<Map<String, dynamic>> getCommitFileDiff(
+    String projectId,
+    String hash,
+    String path,
+  ) async {
+    final resp = await _dio.get(
+      '$_apiPrefix/projects/$projectId/git/commit/file-diff',
+      queryParameters: {'hash': hash, 'path': path},
+    );
     return resp.data['data'];
   }
 }

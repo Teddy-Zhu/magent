@@ -1,9 +1,12 @@
 package ws
 
 import (
+	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/magent/agent/internal/log"
 )
 
 const (
@@ -14,11 +17,13 @@ const (
 )
 
 type Client struct {
-	hub       *Hub
-	conn      *websocket.Conn
-	send      chan []byte
-	tokenName string
-	lastPong  time.Time
+	hub        *Hub
+	conn       *websocket.Conn
+	send       chan []byte
+	tokenName  string
+	lastPong   time.Time
+	sessionsMu sync.RWMutex
+	sessions   map[string]string
 }
 
 func NewClient(hub *Hub, conn *websocket.Conn, tokenName string) *Client {
@@ -28,6 +33,7 @@ func NewClient(hub *Hub, conn *websocket.Conn, tokenName string) *Client {
 		send:      make(chan []byte, 256),
 		tokenName: tokenName,
 		lastPong:  time.Now(),
+		sessions:  make(map[string]string),
 	}
 }
 
@@ -37,6 +43,36 @@ func (c *Client) Send(msg []byte) {
 	default:
 		// channel full, drop message
 	}
+}
+
+func (c *Client) MessagesForTest() <-chan []byte {
+	return c.send
+}
+
+func (c *Client) ShouldReceive(msg []byte) bool {
+	var envelope struct {
+		SessionID string `json:"session_id"`
+		Data      struct {
+			SessionID string `json:"session_id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(msg, &envelope); err != nil {
+		return true
+	}
+	sessionID := envelope.SessionID
+	if sessionID == "" {
+		sessionID = envelope.Data.SessionID
+	}
+	if sessionID == "" {
+		return true
+	}
+	c.sessionsMu.RLock()
+	defer c.sessionsMu.RUnlock()
+	if len(c.sessions) == 0 {
+		return true
+	}
+	_, ok := c.sessions[sessionID]
+	return ok
 }
 
 func (c *Client) ReadPump() {
@@ -52,12 +88,88 @@ func (c *Client) ReadPump() {
 		return nil
 	})
 	for {
-		_, _, err := c.conn.ReadMessage()
+		_, msg, err := c.conn.ReadMessage()
 		if err != nil {
 			break
 		}
-		// TODO: 处理客户端消息
+		c.handleMessage(msg)
 	}
+}
+
+func (c *Client) handleMessage(data []byte) {
+	var msg struct {
+		Type         string `json:"type"`
+		SessionID    string `json:"session_id"`
+		Cursor       string `json:"cursor"`
+		OpenSessions []struct {
+			SessionID string `json:"session_id"`
+			Cursor    string `json:"cursor"`
+		} `json:"open_sessions"`
+	}
+	if err := json.Unmarshal(data, &msg); err != nil {
+		log.Warn("ws", "invalid client message token=%s err=%v", c.tokenName, err)
+		c.sendJSON(map[string]any{"type": "error", "code": "INVALID_MESSAGE", "message": "invalid json"})
+		return
+	}
+
+	switch msg.Type {
+	case "client.hello":
+		c.sessionsMu.Lock()
+		for _, session := range msg.OpenSessions {
+			if session.SessionID != "" {
+				c.sessions[session.SessionID] = session.Cursor
+			}
+		}
+		c.sessionsMu.Unlock()
+		c.sendJSON(map[string]any{
+			"type":          "server.hello",
+			"subscriptions": c.sessionIDs(),
+		})
+		for _, session := range msg.OpenSessions {
+			if session.SessionID != "" {
+				c.hub.ReplaySession(c, session.SessionID, session.Cursor)
+			}
+		}
+	case "session.subscribe":
+		if msg.SessionID != "" {
+			c.sessionsMu.Lock()
+			c.sessions[msg.SessionID] = msg.Cursor
+			c.sessionsMu.Unlock()
+		}
+		c.sendJSON(map[string]any{
+			"type":       "session.subscribed",
+			"session_id": msg.SessionID,
+		})
+		c.hub.ReplaySession(c, msg.SessionID, msg.Cursor)
+	case "session.unsubscribe":
+		c.sessionsMu.Lock()
+		delete(c.sessions, msg.SessionID)
+		c.sessionsMu.Unlock()
+		c.sendJSON(map[string]any{
+			"type":       "session.unsubscribed",
+			"session_id": msg.SessionID,
+		})
+	default:
+		c.sendJSON(map[string]any{"type": "error", "code": "UNKNOWN_MESSAGE_TYPE", "message": "unknown message type"})
+	}
+}
+
+func (c *Client) sessionIDs() []string {
+	c.sessionsMu.RLock()
+	defer c.sessionsMu.RUnlock()
+	ids := make([]string, 0, len(c.sessions))
+	for id := range c.sessions {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+func (c *Client) sendJSON(event any) {
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	c.Send(data)
 }
 
 func (c *Client) WritePump() {

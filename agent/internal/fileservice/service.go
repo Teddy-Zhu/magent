@@ -1,6 +1,7 @@
 package fileservice
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -13,6 +14,8 @@ import (
 
 	"github.com/magent/agent/internal/storage"
 )
+
+const DefaultRawFileLimit = 2 * 1024 * 1024
 
 type Service struct {
 	db             *storage.SQLite
@@ -93,7 +96,22 @@ func (s *Service) validatePath(path, projectPath string) error {
 	if err != nil {
 		return err
 	}
-	if !strings.HasPrefix(absPath, absProject) {
+	resolvedProject, err := filepath.EvalSymlinks(absProject)
+	if err != nil {
+		return err
+	}
+	resolvedPath, err := filepath.EvalSymlinks(absPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return err
+		}
+		resolvedPath = absPath
+	}
+	rel, err := filepath.Rel(resolvedProject, resolvedPath)
+	if err != nil {
+		return err
+	}
+	if rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) || filepath.IsAbs(rel) {
 		return fmt.Errorf("path traversal detected")
 	}
 	return nil
@@ -146,6 +164,18 @@ type FileContent struct {
 	Content    string `json:"content"`
 }
 
+type RawFileContent struct {
+	Path      string `json:"path"`
+	Hash      string `json:"hash"`
+	Mime      string `json:"mime"`
+	Encoding  string `json:"encoding"`
+	Data      []byte `json:"-"`
+	Size      int64  `json:"size"`
+	Offset    int64  `json:"offset"`
+	Limit     int64  `json:"limit"`
+	Truncated bool   `json:"truncated"`
+}
+
 func (s *Service) ReadFile(ctx context.Context, projectPath, relPath, knownHash string, offset, limit int) (*FileContent, int, error) {
 	fullPath := filepath.Join(projectPath, relPath)
 
@@ -184,6 +214,60 @@ func (s *Service) ReadFile(ctx context.Context, projectPath, relPath, knownHash 
 		Offset:     offset,
 		Limit:      limit,
 		Content:    strings.Join(lines, "\n"),
+	}, 200, nil
+}
+
+func (s *Service) ReadRawFile(ctx context.Context, projectPath, relPath, knownHash string, offset, limit int64) (*RawFileContent, int, error) {
+	fullPath := filepath.Join(projectPath, relPath)
+	if err := s.validatePath(fullPath, projectPath); err != nil {
+		return nil, 403, err
+	}
+
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		return nil, 404, err
+	}
+	if info.IsDir() {
+		return nil, 400, fmt.Errorf("path is a directory")
+	}
+
+	hash := s.fileHash(fullPath, info)
+	if knownHash != "" && knownHash == hash {
+		return nil, 304, nil
+	}
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 || limit > DefaultRawFileLimit {
+		limit = DefaultRawFileLimit
+	}
+	if offset > info.Size() {
+		offset = info.Size()
+	}
+
+	f, err := os.Open(fullPath)
+	if err != nil {
+		return nil, 500, err
+	}
+	defer f.Close()
+
+	if _, err := f.Seek(offset, io.SeekStart); err != nil {
+		return nil, 500, err
+	}
+	var buf bytes.Buffer
+	n, err := io.CopyN(&buf, f, limit)
+	if err != nil && err != io.EOF {
+		return nil, 500, err
+	}
+
+	return &RawFileContent{
+		Path:      relPath,
+		Hash:      hash,
+		Data:      buf.Bytes(),
+		Size:      info.Size(),
+		Offset:    offset,
+		Limit:     limit,
+		Truncated: offset+n < info.Size(),
 	}, 200, nil
 }
 

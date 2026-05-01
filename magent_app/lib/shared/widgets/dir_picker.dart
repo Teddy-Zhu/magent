@@ -32,7 +32,10 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
     Map<String, String>? agent;
     if (activeId != null) {
       for (final a in agents) {
-        if (a['id'] == activeId) { agent = a; break; }
+        if (a['id'] == activeId) {
+          agent = a;
+          break;
+        }
       }
     }
     agent ??= agents.first;
@@ -48,7 +51,7 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
   Future<void> _loadHome() async {
     if (_api == null) return;
     try {
-      final resp = await _api!.client.dio.get('/api/dirs/home');
+      final resp = await _api!.client.dio.get('/api/v1/dirs/home');
       final homePath = resp.data['data']['path'] as String;
       await _loadDir(homePath);
     } catch (e) {
@@ -60,7 +63,10 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
     if (_api == null) return;
     setState(() => _loading = true);
     try {
-      final resp = await _api!.client.dio.get('/api/dirs/list', queryParameters: {'path': path});
+      final resp = await _api!.client.dio.get(
+        '/api/v1/dirs/list',
+        queryParameters: {'path': path},
+      );
       final data = resp.data['data'];
       if (mounted) {
         setState(() {
@@ -134,20 +140,24 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _entries.isEmpty
-                      ? const Center(child: Text('No subdirectories'))
-                      : ListView.builder(
-                          controller: scrollController,
-                          itemCount: _entries.length,
-                          itemBuilder: (context, index) {
-                            final entry = _entries[index];
-                            return ListTile(
-                              leading: const Icon(Icons.folder, color: Colors.amber, size: 20),
-                              title: Text(entry['name'] ?? ''),
-                              dense: true,
-                              onTap: () => _loadDir(entry['path']),
-                            );
-                          },
-                        ),
+                  ? const Center(child: Text('No subdirectories'))
+                  : ListView.builder(
+                      controller: scrollController,
+                      itemCount: _entries.length,
+                      itemBuilder: (context, index) {
+                        final entry = _entries[index];
+                        return ListTile(
+                          leading: const Icon(
+                            Icons.folder,
+                            color: Colors.amber,
+                            size: 20,
+                          ),
+                          title: Text(entry['name'] ?? ''),
+                          dense: true,
+                          onTap: () => _loadDir(entry['path']),
+                        );
+                      },
+                    ),
             ),
             // Select button
             Padding(

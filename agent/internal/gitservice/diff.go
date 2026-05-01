@@ -3,6 +3,7 @@ package gitservice
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -24,12 +25,7 @@ type DiffLine struct {
 	NewLine int    `json:"new_line,omitempty"`
 }
 
-func (s *Service) GetFileDiff(ctx context.Context, projectPath, filePath, diffHash string, offset, limit int, staged bool) (*DiffResult, error) {
-	cached := s.getDiffCache(ctx, filePath, diffHash)
-	if cached != nil {
-		return s.paginateDiff(cached, diffHash, offset, limit), nil
-	}
-
+func (s *Service) GetFileDiff(ctx context.Context, projectID, projectPath, filePath, diffHash string, offset, limit int, staged bool) (*DiffResult, error) {
 	var args []string
 	if staged {
 		args = []string{"diff", "--cached", "--", filePath}
@@ -37,11 +33,30 @@ func (s *Service) GetFileDiff(ctx context.Context, projectPath, filePath, diffHa
 		args = []string{"diff", "--", filePath}
 	}
 	out, _ := s.Git(ctx, projectPath, args...)
-	lines := parseDiffOutput(string(out))
+	if strings.TrimSpace(string(out)) == "" && !staged && s.isUntracked(ctx, projectPath, filePath) {
+		out, _ = s.Git(ctx, projectPath, "diff", "--no-index", "--", "/dev/null", filePath)
+	}
+	actualHash := ComputeDiffContentHash(out)
+	if diffHash != "" && diffHash != actualHash {
+		return nil, fmt.Errorf("diff hash mismatch: requested %s current %s", diffHash, actualHash)
+	}
+	cacheKey := diffCacheKey(projectID, filePath, actualHash, staged)
+	lines, ok := s.diffCache.Get(cacheKey)
+	if !ok {
+		lines = parseDiffOutput(string(out))
+		s.diffCache.Add(cacheKey, lines)
+	}
 
-	s.saveDiffCache(ctx, filePath, diffHash, lines)
+	return s.paginateDiff(lines, actualHash, offset, limit), nil
+}
 
-	return s.paginateDiff(lines, diffHash, offset, limit), nil
+func diffCacheKey(projectID, filePath, diffHash string, staged bool) string {
+	return projectID + "\x00" + filePath + "\x00" + diffHash + "\x00" + strconv.FormatBool(staged)
+}
+
+func (s *Service) isUntracked(ctx context.Context, projectPath, filePath string) bool {
+	out, _ := s.Git(ctx, projectPath, "ls-files", "--others", "--exclude-standard", "-z", "--", filePath)
+	return strings.TrimRight(string(out), "\x00") == filePath
 }
 
 func (s *Service) paginateDiff(lines []DiffLine, diffHash string, offset, limit int) *DiffResult {
@@ -103,36 +118,4 @@ func parseDiffOutput(diff string) []DiffLine {
 		}
 	}
 	return lines
-}
-
-func (s *Service) getDiffCache(ctx context.Context, path, diffHash string) []DiffLine {
-	row := s.db.DB().QueryRowContext(ctx,
-		`SELECT content FROM git_diff_cache WHERE path = ? AND diff_hash = ?`,
-		path, diffHash)
-	var content string
-	if err := row.Scan(&content); err != nil {
-		return nil
-	}
-	return parseDiffOutput(content)
-}
-
-func (s *Service) saveDiffCache(ctx context.Context, path, diffHash string, lines []DiffLine) {
-	var sb strings.Builder
-	for _, line := range lines {
-		switch line.Type {
-		case "add":
-			sb.WriteString("+")
-		case "del":
-			sb.WriteString("-")
-		case "context":
-			sb.WriteString(" ")
-		}
-		sb.WriteString(line.Content)
-		sb.WriteString("\n")
-	}
-
-	s.db.DB().ExecContext(ctx,
-		`INSERT OR REPLACE INTO git_diff_cache (project_id, path, diff_hash, content, total_lines, created_at)
-		 VALUES (?, ?, ?, ?, ?, strftime('%s', 'now'))`,
-		"", path, diffHash, sb.String(), len(lines))
 }

@@ -1,7 +1,18 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:go_router/go_router.dart';
+import 'package:dio/dio.dart';
+import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
+import 'package:magent_app/core/repositories/bootstrap_repository.dart';
+import 'package:magent_app/core/repositories/file_repository.dart';
+import 'package:magent_app/core/repositories/session_repository.dart';
+import 'package:magent_app/core/session/session_language.dart';
+import 'package:magent_app/core/services/message_template_service.dart';
+import 'package:magent_app/features/sessions/widgets/message_template_sheet.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   final String sessionId;
@@ -13,13 +24,41 @@ class ChatPage extends ConsumerStatefulWidget {
 }
 
 class _ChatPageState extends ConsumerState<ChatPage> {
+  static const _initialVisibleEventCount = 200;
+  static const _eventPageSize = 200;
+
   final List<Map<String, dynamic>> _events = [];
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
+  final _templateService = MessageTemplateService();
+  final List<Map<String, dynamic>> _inputItems = [];
+  final List<Map<String, dynamic>> _selectedSkills = [];
+  var _disposed = false;
   bool _loading = true;
-  int _lastSeq = 0;
+  bool _resuming = false;
   AppApiClient? _api;
+  SessionRepository? _repo;
+  BootstrapRepository? _bootstrap;
+  FileRepository? _files;
+  StreamSubscription<Map<String, dynamic>>? _sessionEventsSub;
+  StreamSubscription<List<Map<String, dynamic>>>? _itemsSub;
+  StreamSubscription<int>? _itemCountSub;
   Map<String, dynamic>? _session;
+  int _visibleEventCount = _initialVisibleEventCount;
+  int _totalEventCount = 0;
+
+  bool get _isRunning {
+    return SessionStatuses.isRunning(_session?['status']);
+  }
+
+  bool get _isExited {
+    return SessionStatuses.isEnded(_session?['status']);
+  }
+
+  /// Session exists but is not loaded in provider — needs resume
+  bool get _isIdle {
+    return SessionStatuses.canResume(_session?['status']);
+  }
 
   @override
   void initState() {
@@ -29,45 +68,116 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _init() async {
     _api = await loadActiveApi(ref);
-    if (_api == null || !mounted) return;
+    if (_api == null || !_isActive) return;
+    final db = ref.read(appDatabaseProvider);
+    _repo = SessionRepository(
+      agentId: _api!.agentId,
+      api: _api!.session,
+      db: db,
+    );
+    _bootstrap = createBootstrapRepository(ref, _api!);
+    _files = FileRepository(agentId: _api!.agentId, api: _api!.file, db: db);
+    _subscribeItems();
+    _itemCountSub = _repo!.watchItemCount(widget.sessionId).listen((count) {
+      if (!_isActive) return;
+      setState(() => _totalEventCount = count);
+    });
+    final engine = ref.read(syncEngineProvider);
+    engine?.start();
     await _loadSession();
-    await _loadEvents();
+    await _loadItems();
+    _connectSessionEvents();
+  }
+
+  void _subscribeItems() {
+    _itemsSub?.cancel();
+    _itemsSub = _repo!
+        .watchItems(widget.sessionId, limit: _visibleEventCount)
+        .listen((items) {
+          if (!_isActive) return;
+          final shouldAutoScroll = _isNearBottom();
+          if (!_isActive) return;
+          setState(() {
+            _events
+              ..clear()
+              ..addAll(items.map(_itemToEvent));
+            _loading = false;
+          });
+          if (shouldAutoScroll || items.length <= 1) {
+            _scrollToBottom();
+          }
+        });
+  }
+
+  Future<void> _connectSessionEvents() async {
+    final engine = ref.read(syncEngineProvider);
+    if (engine == null) return;
+    _sessionEventsSub = engine.sessionEvents.listen((event) {
+      if (!_isActive) return;
+      final sessionId = event['session_id']?.toString();
+      if (sessionId != null && sessionId != widget.sessionId) return;
+      final type = event['type']?.toString() ?? '';
+      if (type == 'session.sync_required') {
+        _loadItems();
+        return;
+      }
+      if (type == 'server.hello' ||
+          type == 'session.subscribed' ||
+          type == 'session.replay_complete') {
+        return;
+      }
+      final eventType =
+          event['event_type']?.toString() ?? event['type']?.toString() ?? '';
+      if (eventType == 'session.event') return;
+      final normalized = <String, dynamic>{
+        'type': SessionEventTypes.normalize(eventType),
+        'data': event['data'],
+      };
+      final shouldAutoScroll = _isNearBottom();
+      if (!_isActive) return;
+      setState(() => _events.add(normalized));
+      if (shouldAutoScroll) _scrollToBottom();
+    });
+    await engine.subscribeSession(widget.sessionId);
   }
 
   Future<void> _loadSession() async {
     if (_api == null) return;
     try {
-      final resp = await _api!.client.dio.get('/api/sessions/${widget.sessionId}');
+      final session = await _api!.session.getSession(widget.sessionId);
       if (mounted) {
         setState(() {
-          _session = resp.data['data'];
+          _session = session;
         });
+        debugPrint('ChatPage: loaded session status=${_session?['status']}');
       }
-    } catch (_) {}
-  }
-
-  Future<void> _loadEvents() async {
-    if (_api == null) return;
-    try {
-      final events = await _api!.session.getEvents(
-        widget.sessionId,
-        afterSeq: _lastSeq,
-        limit: 500,
+    } on DioException catch (e) {
+      debugPrint(
+        'ChatPage: loadSession DioException: ${e.response?.statusCode} ${e.response?.data}',
       );
-      if (mounted) {
+      // If 404, session might only exist in provider — set as idle
+      if (e.response?.statusCode == 404 && mounted) {
         setState(() {
-          for (final e in events) {
-            final seq = e['seq'] as int? ?? 0;
-            if (seq > _lastSeq) {
-              _lastSeq = seq;
-              _events.add(Map<String, dynamic>.from(e));
-            }
-          }
-          _loading = false;
+          _session = {
+            'id': widget.sessionId,
+            'status': 'stopped',
+            'provider_id': 'codex',
+          };
         });
-        _scrollToBottom();
       }
     } catch (e) {
+      debugPrint('ChatPage: loadSession error: $e');
+    }
+  }
+
+  Future<void> _loadItems() async {
+    if (_repo == null) return;
+    try {
+      await _repo!.getItems(widget.sessionId, limit: _visibleEventCount);
+      await _repo!.refreshItems(widget.sessionId);
+      if (mounted) setState(() => _loading = false);
+    } catch (e) {
+      debugPrint('ChatPage: loadEvents error: $e');
       if (mounted) setState(() => _loading = false);
     }
   }
@@ -76,23 +186,88 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final input = _inputController.text.trim();
     if (input.isEmpty || _api == null) return;
 
-    _inputController.clear();
+    final items = List<Map<String, dynamic>>.from(_inputItems);
     setState(() {
-      _events.add({
-        'type': 'user.input',
-        'data': {'content': input},
-      });
+      _inputController.clear();
+      _inputItems.clear();
+      _selectedSkills.clear();
     });
+    await _repo?.addPendingUserMessage(widget.sessionId, input);
+    _visibleEventCount = _initialVisibleEventCount;
     _scrollToBottom();
 
+    // Save to recent messages
+    _templateService.addRecent(input);
+
     try {
-      await _api!.session.sendInput(widget.sessionId, input);
+      await _api!.session.sendInput(widget.sessionId, input, items: items);
+    } on DioException catch (e) {
+      if (!mounted) return;
+      final errCode = e.response?.data?['error']?['code'] as String?;
+      if (errCode == 'SESSION_NOT_FOUND') {
+        _showSessionLostDialog();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '发送失败'))),
+        );
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Send failed: $e')),
+          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '发送失败'))),
         );
       }
+    }
+  }
+
+  void _showSessionLostDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('会话已失效'),
+        content: const Text('此会话在服务器上已不存在，可能是因为服务器重启。请创建新会话。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              context.pop();
+            },
+            child: const Text('返回'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _resume() async {
+    if (_api == null) return;
+    setState(() => _resuming = true);
+    try {
+      await _api!.session.resume(widget.sessionId);
+      await _loadSession();
+      await _loadItems();
+    } on DioException catch (e) {
+      if (!mounted) return;
+      final errCode = e.response?.data?['error']?['code'] as String?;
+      if (errCode == 'SESSION_NOT_FOUND') {
+        _showSessionLostDialog();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '启动失败'))),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '启动失败'))),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _resuming = false);
     }
   }
 
@@ -100,10 +275,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (_api == null) return;
     try {
       await _api!.session.interrupt(widget.sessionId);
+      if (mounted) {
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('已发送中断请求')));
+      }
+    } on DioException catch (e) {
+      if (mounted) {
+        final msg = userFriendlyErrorMessage(e, action: '中断失败');
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(msg)));
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Interrupt failed: $e')),
+          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '中断失败'))),
         );
       }
     }
@@ -111,17 +298,39 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _stop() async {
     if (_api == null) return;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('停止会话'),
+        content: const Text('确定要停止此会话吗？'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('停止', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+
     try {
       await _api!.session.stop(widget.sessionId);
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Session stopped')),
-        );
+        setState(() {
+          _session = {...?_session, 'status': 'stopped'};
+        });
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('会话已停止')));
       }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Stop failed: $e')),
+          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '停止失败'))),
         );
       }
     }
@@ -130,11 +339,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Future<void> _respondApproval(String approvalId, String action) async {
     if (_api == null) return;
     try {
-      await _api!.session.approve(approvalId, action);
+      await _api!.session.approve(widget.sessionId, approvalId, action);
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Approval failed: $e')),
+          SnackBar(content: Text(userFriendlyErrorMessage(e, action: '审批失败'))),
         );
       }
     }
@@ -142,6 +351,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   void _scrollToBottom() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_isActive) return;
       if (_scrollController.hasClients) {
         _scrollController.animateTo(
           _scrollController.position.maxScrollExtent,
@@ -152,10 +362,192 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
   }
 
+  bool _isNearBottom() {
+    if (!_isActive) return false;
+    if (!_scrollController.hasClients) return true;
+    final position = _scrollController.position;
+    return position.maxScrollExtent - position.pixels < 180;
+  }
+
+  List<Map<String, dynamic>> get _visibleEvents {
+    if (_events.length <= _visibleEventCount) return _events;
+    return _events
+        .skip(_events.length - _visibleEventCount)
+        .toList(growable: false);
+  }
+
+  int get _hiddenEventCount {
+    final hidden = _totalEventCount - _events.length;
+    return hidden > 0 ? hidden : 0;
+  }
+
+  void _loadMoreEvents() {
+    if (_hiddenEventCount == 0) return;
+    if (!_isActive) return;
+    setState(() => _visibleEventCount += _eventPageSize);
+    _subscribeItems();
+    _loadItems();
+  }
+
+  void _openTemplates() {
+    MessageTemplateSheet.show(
+      context,
+      onSelect: (text) {
+        _inputController.text = text;
+      },
+    );
+  }
+
+  Future<void> _openSkillPicker() async {
+    if (_bootstrap == null) return;
+    final providerId = _session == null
+        ? 'codex'
+        : canonicalProviderId(Map<String, dynamic>.from(_session!)) ?? 'codex';
+    final provider = await _bootstrap!.getProvider(providerId);
+    if (!mounted) return;
+    final skills = _skillsFromProvider(provider);
+    if (skills.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前没有可用技能')));
+      return;
+    }
+    final selected = await _SkillPickerSheet.show(context, skills);
+    if (selected == null) return;
+    _insertSkill(selected);
+  }
+
+  Future<void> _openFilePicker() async {
+    if (_files == null || _session == null) return;
+    final projectId = _session!['project_id']?.toString();
+    if (projectId == null || projectId.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前会话缺少项目信息')));
+      return;
+    }
+    final selected = await _WorkspaceFilePickerSheet.show(
+      context,
+      file: _files!,
+      projectId: projectId,
+    );
+    if (selected == null || selected.isEmpty) return;
+    _insertTextToken('@$selected');
+  }
+
+  List<Map<String, dynamic>> _skillsFromProvider(
+    Map<String, dynamic>? provider,
+  ) {
+    final config = provider?['config'];
+    if (config is! Map) return const [];
+    final rawSkills = config['skills'];
+    final result = <Map<String, dynamic>>[];
+
+    void collect(dynamic value) {
+      if (value is Map) {
+        final map = Map<String, dynamic>.from(value);
+        if (map['name'] != null && map['path'] != null) {
+          result.add(map);
+        }
+        final nestedSkills = map['skills'];
+        if (nestedSkills is List) {
+          for (final skill in nestedSkills) {
+            collect(skill);
+          }
+        }
+        final data = map['data'];
+        if (data is List) {
+          for (final item in data) {
+            collect(item);
+          }
+        }
+      } else if (value is List) {
+        for (final item in value) {
+          collect(item);
+        }
+      }
+    }
+
+    collect(rawSkills);
+    final seen = <String>{};
+    return result
+        .where((skill) {
+          final key = '${skill['name']}|${skill['path']}';
+          if (seen.contains(key)) return false;
+          seen.add(key);
+          return true;
+        })
+        .toList(growable: false);
+  }
+
+  void _insertSkill(Map<String, dynamic> skill) {
+    final name = skill['name']?.toString() ?? '';
+    final path = skill['path']?.toString() ?? '';
+    if (name.isEmpty || path.isEmpty) return;
+    _inputItems.removeWhere(
+      (item) => item['type'] == 'skill' && item['name'] == name,
+    );
+    _inputItems.add({'type': 'skill', 'name': name, 'path': path});
+    _selectedSkills.removeWhere((item) => item['name'] == name);
+    _selectedSkills.add(skill);
+    _insertTextToken('\$$name');
+  }
+
+  void _insertTextToken(String token) {
+    final current = _inputController.text;
+    final selection = _inputController.selection;
+    final insert = current.isEmpty || current.endsWith(' ') ? token : ' $token';
+    final start = selection.isValid ? selection.start : current.length;
+    final end = selection.isValid ? selection.end : current.length;
+    final next = current.replaceRange(start, end, insert);
+    _inputController.value = TextEditingValue(
+      text: next,
+      selection: TextSelection.collapsed(offset: start + insert.length),
+    );
+  }
+
+  Map<String, dynamic> _itemToEvent(Map<String, dynamic> item) {
+    final type = SessionItemTypes.normalize(item['type']?.toString() ?? '');
+    final content = item['content'];
+    final data = content is Map<String, dynamic>
+        ? content
+        : <String, dynamic>{'value': content};
+    switch (type) {
+      case SessionItemTypes.userMessage:
+        return {'type': SessionEventTypes.userMessage, 'data': data};
+      case SessionItemTypes.agentMessage:
+        return {'type': SessionEventTypes.message, 'data': data};
+      case SessionItemTypes.commandExecution:
+        return {'type': SessionEventTypes.commandCompleted, 'data': data};
+      case SessionItemTypes.fileChange:
+        return {'type': SessionEventTypes.fileWrite, 'data': data};
+      case SessionItemTypes.fileRead:
+        return {'type': SessionEventTypes.fileRead, 'data': data};
+      case SessionItemTypes.mcpToolCall:
+        return {'type': SessionEventTypes.mcpToolCompleted, 'data': data};
+      case SessionItemTypes.plan:
+        return {'type': SessionEventTypes.plan, 'data': data};
+      case SessionItemTypes.reasoning:
+        return {'type': SessionEventTypes.reasoning, 'data': data};
+      case SessionItemTypes.diff:
+        return {'type': SessionEventTypes.diffUpdated, 'data': data};
+      default:
+        return {
+          'type': SessionEventTypes.itemCompleted,
+          'data': {...data, 'item_type': type},
+        };
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    final status = _session?['status'] as String? ?? '';
+    final status = SessionStatuses.normalizeOrStopped(_session?['status']);
     final title = _session?['title'] as String? ?? 'Session';
+    final provider = _session == null
+        ? null
+        : canonicalProviderId(Map<String, dynamic>.from(_session!));
+    final visibleEvents = _visibleEvents;
+    final hiddenEventCount = _hiddenEventCount;
 
     return Scaffold(
       appBar: AppBar(
@@ -163,13 +555,41 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(title, style: const TextStyle(fontSize: 16)),
-            if (status.isNotEmpty)
-              Text(status, style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+            Row(
+              children: [
+                _StatusDot(status: status),
+                const SizedBox(width: 4),
+                Text(
+                  SessionStatuses.label(status),
+                  style: TextStyle(fontSize: 12, color: _statusColor(status)),
+                ),
+                if (provider != null && provider.isNotEmpty) ...[
+                  Text(
+                    ' · ',
+                    style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                  ),
+                  Text(
+                    provider,
+                    style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                  ),
+                ],
+              ],
+            ),
           ],
         ),
         actions: [
-          IconButton(icon: const Icon(Icons.refresh), onPressed: _loadEvents),
-          IconButton(icon: const Icon(Icons.stop), onPressed: _stop),
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _loadItems,
+            tooltip: '刷新',
+          ),
+          if (_isRunning)
+            IconButton(
+              icon: const Icon(Icons.stop_circle_outlined),
+              onPressed: _stop,
+              tooltip: '停止会话',
+              color: Colors.red,
+            ),
         ],
       ),
       body: Column(
@@ -178,16 +598,196 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _events.isEmpty
-                    ? const Center(child: Text('No events yet'))
-                    : ListView.builder(
-                        controller: _scrollController,
-                        itemCount: _events.length,
-                        itemBuilder: (context, index) {
-                          return _buildEventWidget(_events[index]);
-                        },
-                      ),
+                ? _buildEmptyState()
+                : ListView.builder(
+                    controller: _scrollController,
+                    cacheExtent: 900,
+                    itemCount:
+                        visibleEvents.length + (hiddenEventCount > 0 ? 1 : 0),
+                    itemBuilder: (context, index) {
+                      if (hiddenEventCount > 0 && index == 0) {
+                        return _LoadMoreEventsBanner(
+                          hiddenCount: hiddenEventCount,
+                          onTap: _loadMoreEvents,
+                        );
+                      }
+                      final eventIndex = hiddenEventCount > 0
+                          ? index - 1
+                          : index;
+                      return _buildEventWidget(visibleEvents[eventIndex]);
+                    },
+                  ),
           ),
-          _buildInputBar(),
+          if (_isIdle) _buildIdleBar(),
+          if (_isRunning) _buildInputBar(),
+          if (_isExited) _buildExitedBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildEmptyState() {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey[300]),
+          const SizedBox(height: 12),
+          Text(
+            _isExited ? '会话已结束' : '暂无消息',
+            style: TextStyle(color: Colors.grey[500], fontSize: 15),
+          ),
+          if (_isExited) ...[
+            const SizedBox(height: 16),
+            OutlinedButton.icon(
+              onPressed: () =>
+                  context.push('/sessions/${widget.sessionId}/fork'),
+              icon: const Icon(Icons.fork_right, size: 16),
+              label: const Text('创建新会话'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildIdleBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            Icons.play_circle_outline,
+            size: 40,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '会话未启动',
+            style: TextStyle(color: Colors.grey[600], fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          FilledButton.icon(
+            onPressed: _resuming ? null : _resume,
+            icon: _resuming
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  )
+                : const Icon(Icons.play_arrow),
+            label: Text(_resuming ? '启动中...' : '启动会话'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildExitedBar() {
+    final status = SessionStatuses.normalizeOrStopped(_session?['status']);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.05),
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, size: 16, color: Colors.grey[500]),
+          const SizedBox(width: 8),
+          Text(
+            '会话${SessionStatuses.label(status)}',
+            style: TextStyle(color: Colors.grey[600], fontSize: 13),
+          ),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: () {
+              // Navigate back to project to create a new session
+              context.pop();
+            },
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('新建会话'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInputBar() {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
+      decoration: BoxDecoration(
+        color: Theme.of(context).cardColor,
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withValues(alpha: 0.1),
+            blurRadius: 4,
+            offset: const Offset(0, -2),
+          ),
+        ],
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _InputToolbar(
+            selectedSkills: _selectedSkills,
+            onTemplates: _openTemplates,
+            onSkill: _openSkillPicker,
+            onFile: _openFilePicker,
+            onInterrupt: _interrupt,
+            onRemoveSkill: (name) {
+              setState(() {
+                _selectedSkills.removeWhere((s) => s['name'] == name);
+                _inputItems.removeWhere(
+                  (item) => item['type'] == 'skill' && item['name'] == name,
+                );
+              });
+            },
+          ),
+          const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _inputController,
+                  decoration: InputDecoration(
+                    hintText: '输入消息...',
+                    border: const OutlineInputBorder(),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 8,
+                    ),
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      icon: const Icon(Icons.send, size: 18),
+                      onPressed: _sendInput,
+                    ),
+                  ),
+                  onSubmitted: (_) => _sendInput(),
+                  textInputAction: TextInputAction.send,
+                  minLines: 1,
+                  maxLines: 4,
+                ),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -200,38 +800,118 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     switch (type) {
       case 'user.input':
         return _UserBubble(content: data?['content'] ?? '');
-      case 'session.message':
+      case SessionEventTypes.userMessage:
+        return _UserBubble(content: data?['text'] ?? data?['content'] ?? '');
+      case SessionEventTypes.message:
         return _MessageBubble(content: data?['text'] ?? '');
-      case 'session.output':
+      case SessionEventTypes.messageDelta:
+        return _MessageBubble(content: data?['delta'] ?? data?['text'] ?? '');
+      case SessionEventTypes.output:
         return _MessageBubble(content: data?['content'] ?? '');
-      case 'session.command_completed':
+      case SessionEventTypes.plan:
+      case SessionEventTypes.planDelta:
+      case SessionEventTypes.planUpdated:
+        return _StructuredInfoCard(
+          icon: Icons.checklist,
+          title: '计划',
+          content: _planText(data),
+        );
+      case SessionEventTypes.reasoning:
+      case SessionEventTypes.reasoningSummaryDelta:
+      case SessionEventTypes.reasoningTextDelta:
+      case SessionEventTypes.reasoningSummaryPart:
+        return _StructuredInfoCard(
+          icon: Icons.psychology_outlined,
+          title: '推理摘要',
+          content: _reasoningText(data),
+        );
+      case SessionEventTypes.diffUpdated:
+        return _StructuredInfoCard(
+          icon: Icons.difference_outlined,
+          title: '变更摘要',
+          content: data?['diff']?.toString() ?? 'Diff updated',
+          monospace: true,
+        );
+      case SessionEventTypes.commandOutputDelta:
         return _ToolCallCard(
           icon: Icons.terminal,
-          title: data?['command'] ?? '',
-          output: data?['output'] ?? '',
-          success: data?['exit_code'] == 0,
+          title: _commandTitle(data?['command'], fallback: '命令输出'),
+          output: _toolText(data?['delta'] ?? data?['output']),
+          success: true,
         );
-      case 'session.file_write':
+      case SessionEventTypes.fileChangeOutputDelta:
         return _ToolCallCard(
           icon: Icons.edit_note,
-          title: data?['path'] ?? '',
+          title: _toolText(data?['path'], fallback: '文件变更输出'),
+          output: _toolText(data?['delta'] ?? data?['output']),
+          success: true,
+        );
+      case SessionEventTypes.commandCompleted:
+        return _ToolCallCard(
+          icon: Icons.terminal,
+          title: _commandTitle(data?['command'], fallback: '命令'),
+          output: _toolText(data?['output']),
+          success: data?['exit_code'] == 0,
+        );
+      case SessionEventTypes.fileWrite:
+        return _ToolCallCard(
+          icon: Icons.edit_note,
+          title: _toolText(data?['path'], fallback: '文件变更'),
           output: '+${data?['additions'] ?? 0} -${data?['deletions'] ?? 0}',
           success: true,
         );
-      case 'session.approval_request':
+      case SessionEventTypes.fileRead:
+        return _ToolCallCard(
+          icon: Icons.visibility_outlined,
+          title: _toolText(data?['path'], fallback: '读取文件'),
+          output: '读取文件',
+          success: true,
+        );
+      case SessionEventTypes.mcpToolCompleted:
+        return _ToolCallCard(
+          icon: Icons.extension_outlined,
+          title: _toolText(
+            data?['tool'] ?? data?['name'],
+            fallback: 'MCP Tool',
+          ),
+          output: _toolText(data?['output'] ?? data?['result']),
+          success: data?['error'] == null,
+        );
+      case SessionEventTypes.turnStarted:
+        return _InfoChip(label: '开始处理...', icon: Icons.play_circle_outline);
+      case SessionEventTypes.turnCompleted:
+        return _InfoChip(label: '处理完成', icon: Icons.check_circle_outline);
+      case SessionEventTypes.turnFailed:
+        return _InfoChip(
+          label: '处理失败',
+          icon: Icons.error_outline,
+          isError: true,
+        );
+      case SessionEventTypes.approvalRequest:
+        final approvalId =
+            data?['approval_id']?.toString() ??
+            data?['id']?.toString() ??
+            data?['item_id']?.toString() ??
+            '';
         return _ApprovalCard(
           request: data,
-          onRespond: (action) =>
-              _respondApproval(data?['id']?.toString() ?? '', action),
+          onRespond: (action) => _respondApproval(approvalId, action),
         );
-      case 'session.error':
-        return _ErrorCard(message: data?['error'] ?? data?['message'] ?? 'Unknown error');
-      case 'session.exited':
+      case SessionEventTypes.approvalResolved:
+        return _InfoChip(label: '审批已处理', icon: Icons.check_circle_outline);
+      case SessionEventTypes.error:
+        return _ErrorCard(
+          message: _toolText(
+            data?['error'] ?? data?['message'],
+            fallback: 'Unknown error',
+          ),
+        );
+      case SessionEventTypes.exited:
         return Padding(
           padding: const EdgeInsets.all(16),
           child: Center(
             child: Text(
-              'Session exited (code: ${data?['exit_code'] ?? 0})',
+              '会话已退出 (code: ${data?['exit_code'] ?? 0})',
               style: TextStyle(color: Colors.grey[600]),
             ),
           ),
@@ -241,65 +921,578 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  Widget _buildInputBar() {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: Theme.of(context).cardColor,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
-            blurRadius: 4,
-            offset: const Offset(0, -2),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              _QuickButton(label: 'Continue', onPressed: () {
-                _inputController.text = 'continue';
-                _sendInput();
-              }),
-              _QuickButton(label: 'Summarize', onPressed: () {
-                _inputController.text = 'summarize what you have done so far';
-                _sendInput();
-              }),
-              _QuickButton(label: 'Interrupt', onPressed: _interrupt),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: TextField(
-                  controller: _inputController,
-                  decoration: const InputDecoration(
-                    hintText: 'Type a message...',
-                    border: OutlineInputBorder(),
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+  String _planText(dynamic data) {
+    if (data is! Map) return '';
+    final text = data['text']?.toString();
+    if (text != null && text.isNotEmpty) return text;
+    final explanation = data['explanation']?.toString();
+    final plan = data['plan'];
+    if (plan is List && plan.isNotEmpty) {
+      final lines = <String>[];
+      if (explanation != null && explanation.isNotEmpty) {
+        lines.add(explanation);
+      }
+      for (final item in plan) {
+        if (item is Map) {
+          final step = item['step']?.toString() ?? item['text']?.toString();
+          final status = item['status']?.toString();
+          if (step != null && step.isNotEmpty) {
+            lines.add(
+              status == null || status.isEmpty
+                  ? '- $step'
+                  : '- [$status] $step',
+            );
+          }
+        } else {
+          lines.add('- $item');
+        }
+      }
+      return lines.join('\n');
+    }
+    return explanation ?? '计划已更新';
+  }
+
+  String _reasoningText(dynamic data) {
+    if (data is! Map) return '';
+    final summary = data['summary']?.toString();
+    if (summary != null && summary.isNotEmpty) return summary;
+    final content = data['content']?.toString();
+    if (content != null && content.isNotEmpty) return content;
+    final delta = data['delta']?.toString() ?? data['text']?.toString();
+    if (delta != null && delta.isNotEmpty) return delta;
+    final parts = data['summary_parts'];
+    if (parts is List && parts.isNotEmpty) {
+      return parts.map((e) => e.toString()).join('\n');
+    }
+    return '推理摘要已更新';
+  }
+
+  String _commandTitle(dynamic command, {required String fallback}) {
+    final text = _commandText(command);
+    return text.isEmpty ? fallback : text;
+  }
+
+  String _commandText(dynamic command) {
+    if (command == null) return '';
+    if (command is String) return command.trim();
+    if (command is List) {
+      return command.map((part) => part.toString()).join(' ').trim();
+    }
+    if (command is Map) {
+      for (final key in [
+        'command',
+        'cmd',
+        'cmdline',
+        'argv',
+        'args',
+        'script',
+      ]) {
+        final text = _commandText(command[key]);
+        if (text.isNotEmpty) return text;
+      }
+      final program = command['program']?.toString();
+      if (program != null && program.isNotEmpty) {
+        final args = _commandText(command['args']);
+        return args.isEmpty ? program : '$program $args';
+      }
+    }
+    return command.toString().trim();
+  }
+
+  String _toolText(dynamic value, {String fallback = ''}) {
+    if (value == null) return fallback;
+    if (value is String) {
+      final text = value.trim();
+      return text.isEmpty ? fallback : text;
+    }
+    if (value is List) {
+      final text = value.map((item) => _toolText(item)).join('\n').trim();
+      return text.isEmpty ? fallback : text;
+    }
+    if (value is Map) {
+      for (final key in ['text', 'content', 'message', 'value', 'path']) {
+        final text = _toolText(value[key]);
+        if (text.isNotEmpty) return text;
+      }
+    }
+    final text = value.toString().trim();
+    return text.isEmpty ? fallback : text;
+  }
+
+  Color _statusColor(String status) {
+    switch (status) {
+      case 'running':
+        return Colors.green;
+      case 'completed':
+        return Colors.blue;
+      case 'stopped':
+        return Colors.orange;
+      case 'failed':
+        return Colors.red;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    ref.read(syncEngineProvider)?.unsubscribeSession(widget.sessionId);
+    _sessionEventsSub?.cancel();
+    _itemsSub?.cancel();
+    _itemCountSub?.cancel();
+    _inputController.dispose();
+    _scrollController.dispose();
+    super.dispose();
+  }
+
+  bool get _isActive => mounted && !_disposed;
+}
+
+// --- Sub-widgets ---
+
+class _InputToolbar extends StatelessWidget {
+  final List<Map<String, dynamic>> selectedSkills;
+  final VoidCallback onTemplates;
+  final VoidCallback onSkill;
+  final VoidCallback onFile;
+  final VoidCallback onInterrupt;
+  final ValueChanged<String> onRemoveSkill;
+
+  const _InputToolbar({
+    required this.selectedSkills,
+    required this.onTemplates,
+    required this.onSkill,
+    required this.onFile,
+    required this.onInterrupt,
+    required this.onRemoveSkill,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        _ToolbarIconButton(
+          icon: Icons.history,
+          tooltip: '历史消息和模板',
+          onPressed: onTemplates,
+        ),
+        _ToolbarIconButton(
+          icon: Icons.auto_awesome,
+          tooltip: '调用技能',
+          onPressed: onSkill,
+        ),
+        _ToolbarIconButton(
+          icon: Icons.attach_file,
+          tooltip: '引用工作区文件',
+          onPressed: onFile,
+        ),
+        _ToolbarIconButton(
+          icon: Icons.stop_outlined,
+          tooltip: '中断当前操作',
+          onPressed: onInterrupt,
+        ),
+        const SizedBox(width: 6),
+        Expanded(
+          child: selectedSkills.isEmpty
+              ? const SizedBox(height: 28)
+              : SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: selectedSkills.map((skill) {
+                      final name = skill['name']?.toString() ?? '';
+                      return Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: InputChip(
+                          label: Text('\$$name'),
+                          avatar: const Icon(Icons.auto_awesome, size: 14),
+                          onDeleted: () => onRemoveSkill(name),
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          visualDensity: VisualDensity.compact,
+                        ),
+                      );
+                    }).toList(),
                   ),
-                  onSubmitted: (_) => _sendInput(),
+                ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ToolbarIconButton extends StatelessWidget {
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  const _ToolbarIconButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return IconButton(
+      icon: Icon(icon, size: 19),
+      onPressed: onPressed,
+      tooltip: tooltip,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+      visualDensity: VisualDensity.compact,
+    );
+  }
+}
+
+class _SkillPickerSheet extends StatelessWidget {
+  final List<Map<String, dynamic>> skills;
+
+  const _SkillPickerSheet({required this.skills});
+
+  static Future<Map<String, dynamic>?> show(
+    BuildContext context,
+    List<Map<String, dynamic>> skills,
+  ) {
+    return showModalBottomSheet<Map<String, dynamic>>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _SkillPickerSheet(skills: skills),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.72,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const _SheetHeader(title: '选择技能', icon: Icons.auto_awesome),
+            Flexible(
+              child: ListView.separated(
+                shrinkWrap: true,
+                itemCount: skills.length,
+                separatorBuilder: (_, _) => const Divider(height: 1),
+                itemBuilder: (context, index) {
+                  final skill = skills[index];
+                  final name = skill['name']?.toString() ?? '';
+                  final iface = skill['interface'];
+                  final displayName = iface is Map
+                      ? iface['displayName']?.toString()
+                      : null;
+                  final desc =
+                      (iface is Map
+                          ? iface['shortDescription']?.toString()
+                          : null) ??
+                      skill['description']?.toString() ??
+                      skill['path']?.toString() ??
+                      '';
+                  return ListTile(
+                    leading: const Icon(Icons.auto_awesome),
+                    title: Text(
+                      displayName?.isNotEmpty == true ? displayName! : name,
+                    ),
+                    subtitle: desc.isEmpty
+                        ? null
+                        : Text(
+                            desc,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                    onTap: () => Navigator.pop(context, skill),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WorkspaceFilePickerSheet extends StatefulWidget {
+  final FileRepository file;
+  final String projectId;
+
+  const _WorkspaceFilePickerSheet({
+    required this.file,
+    required this.projectId,
+  });
+
+  static Future<String?> show(
+    BuildContext context, {
+    required FileRepository file,
+    required String projectId,
+  }) {
+    return showModalBottomSheet<String>(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) =>
+          _WorkspaceFilePickerSheet(file: file, projectId: projectId),
+    );
+  }
+
+  @override
+  State<_WorkspaceFilePickerSheet> createState() =>
+      _WorkspaceFilePickerSheetState();
+}
+
+class _WorkspaceFilePickerSheetState extends State<_WorkspaceFilePickerSheet> {
+  final List<String> _stack = [''];
+  final List<Map<String, dynamic>> _items = [];
+  bool _loading = true;
+  String _error = '';
+
+  String get _path => _stack.last;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    setState(() {
+      _loading = true;
+      _error = '';
+    });
+    try {
+      final data = await widget.file.listDir(widget.projectId, _path);
+      final items = (data['items'] as List? ?? const [])
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList();
+      items.sort((a, b) {
+        final dirA = a['type'] == 'dir' || a['is_dir'] == true;
+        final dirB = b['type'] == 'dir' || b['is_dir'] == true;
+        if (dirA != dirB) return dirA ? -1 : 1;
+        return (a['name']?.toString() ?? '').compareTo(
+          b['name']?.toString() ?? '',
+        );
+      });
+      if (mounted) {
+        setState(() {
+          _items
+            ..clear()
+            ..addAll(items);
+          _loading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+          _error = userFriendlyErrorMessage(e);
+        });
+      }
+    }
+  }
+
+  void _openDir(String name) {
+    setState(() {
+      _stack.add(_path.isEmpty ? name : '$_path/$name');
+    });
+    _load();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.of(context).size.height * 0.74,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _SheetHeader(
+              title: _path.isEmpty ? '选择工作区文件' : _path,
+              icon: Icons.attach_file,
+              leading: _stack.length > 1
+                  ? IconButton(
+                      icon: const Icon(Icons.arrow_back),
+                      onPressed: () {
+                        setState(() => _stack.removeLast());
+                        _load();
+                      },
+                    )
+                  : null,
+            ),
+            if (_loading)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(),
+              )
+            else if (_error.isNotEmpty)
+              Padding(padding: const EdgeInsets.all(24), child: Text(_error))
+            else
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _items.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final item = _items[index];
+                    final name = item['name']?.toString() ?? '';
+                    final path =
+                        item['path']?.toString() ??
+                        (_path.isEmpty ? name : '$_path/$name');
+                    final isDir =
+                        item['type'] == 'dir' || item['is_dir'] == true;
+                    return ListTile(
+                      leading: Icon(
+                        isDir
+                            ? Icons.folder_outlined
+                            : Icons.description_outlined,
+                      ),
+                      title: Text(name),
+                      subtitle: Text(
+                        path,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: isDir ? const Icon(Icons.chevron_right) : null,
+                      onTap: isDir
+                          ? () => _openDir(name)
+                          : () => Navigator.pop(context, path),
+                    );
+                  },
                 ),
               ),
-              const SizedBox(width: 8),
-              IconButton(
-                icon: const Icon(Icons.send),
-                onPressed: _sendInput,
-              ),
-            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetHeader extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Widget? leading;
+
+  const _SheetHeader({required this.title, required this.icon, this.leading});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 54,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+      ),
+      child: Row(
+        children: [
+          if (leading != null) leading! else Icon(icon, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
           ),
         ],
       ),
     );
   }
+}
+
+class _LoadMoreEventsBanner extends StatelessWidget {
+  final int hiddenCount;
+  final VoidCallback onTap;
+
+  const _LoadMoreEventsBanner({required this.hiddenCount, required this.onTap});
 
   @override
-  void dispose() {
-    _inputController.dispose();
-    _scrollController.dispose();
-    super.dispose();
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 10, 16, 6),
+      child: Center(
+        child: OutlinedButton.icon(
+          onPressed: onTap,
+          icon: const Icon(Icons.history, size: 16),
+          label: Text('已折叠 $hiddenCount 条更早消息'),
+          style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
+        ),
+      ),
+    );
+  }
+}
+
+class _StatusDot extends StatelessWidget {
+  final String status;
+  const _StatusDot({required this.status});
+
+  @override
+  Widget build(BuildContext context) {
+    Color color;
+    switch (status) {
+      case 'running':
+        color = Colors.green;
+        break;
+      case 'completed':
+        color = Colors.blue;
+        break;
+      case 'stopped':
+      case 'exited':
+        color = Colors.orange;
+        break;
+      case 'failed':
+      case 'lost':
+        color = Colors.red;
+        break;
+      default:
+        color = Colors.grey;
+    }
+    return Container(
+      width: 8,
+      height: 8,
+      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
+    );
+  }
+}
+
+class _InfoChip extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final bool isError;
+
+  const _InfoChip({
+    required this.label,
+    required this.icon,
+    this.isError = false,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            icon,
+            size: 14,
+            color: isError ? Colors.red[400] : Colors.grey[500],
+          ),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 12,
+              color: isError ? Colors.red[400] : Colors.grey[500],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
@@ -309,27 +1502,30 @@ class _UserBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final maxWidth = MediaQuery.sizeOf(context).width * 0.72;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Spacer(),
-          Flexible(
-            flex: 4,
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(content),
+          ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: maxWidth.clamp(180.0, 720.0).toDouble(),
+            ),
+            child: _ExpandableBubble(
+              content: content,
+              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
+              borderRadius: BorderRadius.circular(12),
+              childBuilder: (context, text, collapsed, maxLines) =>
+                  SelectableText(text, maxLines: collapsed ? maxLines : null),
             ),
           ),
           const SizedBox(width: 12),
           CircleAvatar(
+            radius: 14,
             backgroundColor: Theme.of(context).colorScheme.primary,
-            child: const Icon(Icons.person, color: Colors.white, size: 18),
+            child: const Icon(Icons.person, color: Colors.white, size: 16),
           ),
         ],
       ),
@@ -343,21 +1539,31 @@ class _MessageBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final maxWidth = MediaQuery.sizeOf(context).width * 0.82;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const CircleAvatar(child: Icon(Icons.smart_toy)),
+          CircleAvatar(
+            radius: 14,
+            child: const Icon(Icons.smart_toy, size: 16),
+          ),
           const SizedBox(width: 12),
-          Expanded(
-            child: Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
+          Flexible(
+            child: ConstrainedBox(
+              constraints: BoxConstraints(
+                maxWidth: maxWidth.clamp(200.0, 840.0).toDouble(),
               ),
-              child: MarkdownBody(data: content),
+              child: _ExpandableBubble(
+                content: content,
+                backgroundColor: Theme.of(
+                  context,
+                ).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(12),
+                childBuilder: (context, text, collapsed, maxLines) =>
+                    MarkdownBody(data: text, shrinkWrap: true),
+              ),
             ),
           ),
         ],
@@ -366,7 +1572,115 @@ class _MessageBubble extends StatelessWidget {
   }
 }
 
-class _ToolCallCard extends StatelessWidget {
+typedef _ExpandableBubbleChildBuilder =
+    Widget Function(
+      BuildContext context,
+      String text,
+      bool collapsed,
+      int maxLines,
+    );
+
+class _ExpandableBubble extends StatefulWidget {
+  final String content;
+  final Color backgroundColor;
+  final BorderRadius borderRadius;
+  final _ExpandableBubbleChildBuilder childBuilder;
+
+  const _ExpandableBubble({
+    required this.content,
+    required this.backgroundColor,
+    required this.borderRadius,
+    required this.childBuilder,
+  });
+
+  @override
+  State<_ExpandableBubble> createState() => _ExpandableBubbleState();
+}
+
+class _ExpandableBubbleState extends State<_ExpandableBubble> {
+  static const _collapseLines = 8;
+  static const _collapseChars = 700;
+  var _expanded = false;
+
+  bool get _shouldCollapse {
+    final lineCount = '\n'.allMatches(widget.content).length + 1;
+    return widget.content.length > _collapseChars || lineCount > _collapseLines;
+  }
+
+  @override
+  void didUpdateWidget(covariant _ExpandableBubble oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.content != widget.content && !_shouldCollapse) {
+      _expanded = false;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final collapsed = _shouldCollapse && !_expanded;
+    final displayText = collapsed
+        ? _collapsedText(widget.content, _collapseChars)
+        : widget.content;
+
+    return InkWell(
+      onTap: _shouldCollapse
+          ? () => setState(() => _expanded = !_expanded)
+          : null,
+      borderRadius: widget.borderRadius,
+      child: Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: widget.backgroundColor,
+          borderRadius: widget.borderRadius,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            widget.childBuilder(
+              context,
+              displayText,
+              collapsed,
+              _collapseLines,
+            ),
+            if (_shouldCollapse) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => setState(() => _expanded = !_expanded),
+                  icon: Icon(
+                    _expanded ? Icons.unfold_less : Icons.unfold_more,
+                    size: 16,
+                  ),
+                  label: Text(_expanded ? '收起' : '展开'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _collapsedText(String text, int maxChars) {
+    final lines = text.split('\n');
+    var value = lines.length > _collapseLines
+        ? lines.take(_collapseLines).join('\n')
+        : text;
+    if (value.length > maxChars) {
+      value = value.substring(0, maxChars);
+    }
+    return '${value.trimRight()}...';
+  }
+}
+
+class _ToolCallCard extends StatefulWidget {
   final IconData icon;
   final String title;
   final String output;
@@ -380,26 +1694,181 @@ class _ToolCallCard extends StatelessWidget {
   });
 
   @override
+  State<_ToolCallCard> createState() => _ToolCallCardState();
+}
+
+class _ToolCallCardState extends State<_ToolCallCard> {
+  var _expanded = false;
+
+  @override
   Widget build(BuildContext context) {
+    final color = widget.success ? Colors.green : Colors.red;
+    final title = widget.title.trim().isEmpty ? '操作' : widget.title.trim();
+    final output = widget.output.trim();
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: Card(
-        child: ExpansionTile(
-          leading: Icon(icon, color: success ? Colors.green : Colors.red),
-          title: Text(title, style: const TextStyle(fontFamily: 'monospace', fontSize: 13)),
-          subtitle: Text(
-            output.length > 100 ? '${output.substring(0, 100)}...' : output,
-            style: const TextStyle(fontSize: 12),
-          ),
-          children: [
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: SelectableText(output, style: const TextStyle(fontFamily: 'monospace', fontSize: 12)),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Padding(
+            padding: EdgeInsets.fromLTRB(10, 8, 8, _expanded ? 12 : 8),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    Icon(widget.icon, color: color, size: 18),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        title,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 13,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    Icon(
+                      _expanded
+                          ? Icons.keyboard_arrow_up
+                          : Icons.keyboard_arrow_down,
+                      size: 18,
+                      color: Colors.grey[600],
+                    ),
+                  ],
+                ),
+                if (_expanded) ...[
+                  const SizedBox(height: 10),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: SelectableText(
+                      [
+                        title,
+                        if (output.isNotEmpty) '',
+                        if (output.isNotEmpty) output,
+                      ].join('\n'),
+                      style: const TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 12,
+                      ),
+                    ),
+                  ),
+                ],
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
+  }
+}
+
+class _StructuredInfoCard extends StatefulWidget {
+  final IconData icon;
+  final String title;
+  final String content;
+  final bool monospace;
+
+  const _StructuredInfoCard({
+    required this.icon,
+    required this.title,
+    required this.content,
+    this.monospace = false,
+  });
+
+  @override
+  State<_StructuredInfoCard> createState() => _StructuredInfoCardState();
+}
+
+class _StructuredInfoCardState extends State<_StructuredInfoCard> {
+  static const _collapseChars = 220;
+  var _expanded = false;
+
+  bool get _shouldCollapse {
+    final lineCount = '\n'.allMatches(widget.content).length + 1;
+    return widget.content.length > _collapseChars || lineCount > 3;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textStyle = TextStyle(
+      fontFamily: widget.monospace ? 'monospace' : null,
+      fontSize: 13,
+    );
+    final collapsed = _shouldCollapse && !_expanded;
+    final content = collapsed ? _collapsedText(widget.content) : widget.content;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      child: Card(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: _shouldCollapse
+              ? () => setState(() => _expanded = !_expanded)
+              : null,
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Icon(
+                  widget.icon,
+                  size: 18,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              widget.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                          if (_shouldCollapse)
+                            Icon(
+                              _expanded
+                                  ? Icons.keyboard_arrow_up
+                                  : Icons.keyboard_arrow_down,
+                              size: 18,
+                              color: Colors.grey[600],
+                            ),
+                        ],
+                      ),
+                      const SizedBox(height: 6),
+                      SelectableText(
+                        content,
+                        maxLines: collapsed ? 1 : null,
+                        style: textStyle,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  String _collapsedText(String text) {
+    final firstLine = text.split('\n').first.trim();
+    if (firstLine.length <= _collapseChars) return firstLine;
+    return '${firstLine.substring(0, _collapseChars).trimRight()}...';
   }
 }
 
@@ -422,30 +1891,40 @@ class _ApprovalCard extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  Icon(Icons.warning, color: Theme.of(context).colorScheme.error),
+                  Icon(
+                    Icons.warning,
+                    color: Theme.of(context).colorScheme.error,
+                    size: 20,
+                  ),
                   const SizedBox(width: 8),
-                  const Text('Approval Required', style: TextStyle(fontWeight: FontWeight.bold)),
+                  const Text(
+                    '需要审批',
+                    style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                  ),
                 ],
               ),
               const SizedBox(height: 8),
-              Text(request?['command'] ?? request?['file_path'] ?? 'Unknown operation'),
-              const SizedBox(height: 16),
+              Text(
+                request?['command'] ?? request?['file_path'] ?? '未知操作',
+                style: const TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 12),
               Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton(
                     onPressed: () => onRespond('decline'),
-                    child: const Text('Decline'),
+                    child: const Text('拒绝'),
                   ),
-                  const SizedBox(width: 8),
+                  const SizedBox(width: 4),
                   TextButton(
                     onPressed: () => onRespond('acceptForSession'),
-                    child: const Text('Allow for Session'),
+                    child: const Text('本次允许'),
                   ),
-                  const SizedBox(width: 8),
-                  ElevatedButton(
+                  const SizedBox(width: 4),
+                  FilledButton(
                     onPressed: () => onRespond('accept'),
-                    child: const Text('Allow'),
+                    child: const Text('允许'),
                   ),
                 ],
               ),
@@ -471,27 +1950,19 @@ class _ErrorCard extends StatelessWidget {
           padding: const EdgeInsets.all(16),
           child: Row(
             children: [
-              Icon(Icons.error, color: Theme.of(context).colorScheme.error),
+              Icon(
+                Icons.error,
+                color: Theme.of(context).colorScheme.error,
+                size: 20,
+              ),
               const SizedBox(width: 12),
-              Expanded(child: Text(message)),
+              Expanded(
+                child: Text(message, style: const TextStyle(fontSize: 13)),
+              ),
             ],
           ),
         ),
       ),
-    );
-  }
-}
-
-class _QuickButton extends StatelessWidget {
-  final String label;
-  final VoidCallback onPressed;
-  const _QuickButton({required this.label, required this.onPressed});
-
-  @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 8),
-      child: ActionChip(label: Text(label), onPressed: onPressed),
     );
   }
 }
