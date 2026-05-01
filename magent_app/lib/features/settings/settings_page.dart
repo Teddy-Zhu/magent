@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
+import 'package:magent_app/core/services/app_settings_service.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
 
@@ -13,8 +14,10 @@ class SettingsPage extends ConsumerStatefulWidget {
 }
 
 class _SettingsPageState extends ConsumerState<SettingsPage> {
+  final _settings = AppSettingsService();
   String? _defaultProvider;
   List<dynamic> _providers = [];
+  bool _sessionOpenAtBottom = true;
   bool _loading = true;
 
   @override
@@ -26,6 +29,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _load() async {
     final storage = AgentStorage();
     final provider = await storage.getDefaultProvider();
+    final sessionOpenAtBottom = await _settings.getSessionOpenAtBottom();
 
     final api = await loadActiveApi(ref);
     List<dynamic> providers = [];
@@ -40,6 +44,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       setState(() {
         _defaultProvider = provider;
         _providers = providers;
+        _sessionOpenAtBottom = sessionOpenAtBottom;
         _loading = false;
       });
     }
@@ -84,6 +89,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ),
                 _buildSection(
                   context,
+                  title: l10n.settingsSession,
+                  icon: Icons.chat_bubble_outline,
+                  children: [_buildSessionOpenAtBottomTile(l10n)],
+                ),
+                _buildSection(
+                  context,
                   title: l10n.settingsGit,
                   icon: Icons.alt_route,
                   children: [
@@ -124,6 +135,30 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
               ],
             ),
     );
+  }
+
+  Widget _buildSessionOpenAtBottomTile(AppLocalizations l10n) {
+    return _SettingsTile(
+      icon: Icons.vertical_align_bottom,
+      title: Text(l10n.settingsSessionOpenAtBottom),
+      subtitle: Text(l10n.settingsSessionOpenAtBottomSub),
+      onTap: _toggleSessionOpenAtBottom,
+      trailing: Switch(
+        value: _sessionOpenAtBottom,
+        onChanged: (value) => _setSessionOpenAtBottom(value),
+      ),
+    );
+  }
+
+  Future<void> _toggleSessionOpenAtBottom() {
+    return _setSessionOpenAtBottom(!_sessionOpenAtBottom);
+  }
+
+  Future<void> _setSessionOpenAtBottom(bool value) async {
+    await _settings.setSessionOpenAtBottom(value);
+    if (mounted) {
+      setState(() => _sessionOpenAtBottom = value);
+    }
   }
 
   Widget _buildDefaultProviderTile(AppLocalizations l10n) {
@@ -265,12 +300,14 @@ class _SettingsTile extends StatelessWidget {
   final Widget title;
   final Widget subtitle;
   final VoidCallback? onTap;
+  final Widget? trailing;
 
   const _SettingsTile({
     required this.icon,
     required this.title,
     required this.subtitle,
     required this.onTap,
+    this.trailing,
   });
 
   @override
@@ -319,7 +356,10 @@ class _SettingsTile extends StatelessWidget {
                 ],
               ),
             ),
-            if (onTap != null) ...[
+            if (trailing != null) ...[
+              const SizedBox(width: 8),
+              trailing!,
+            ] else if (onTap != null) ...[
               const SizedBox(width: 8),
               Icon(
                 Icons.chevron_right,

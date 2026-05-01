@@ -41,6 +41,24 @@ func TestNormalizeSandboxMode(t *testing.T) {
 	}
 }
 
+func TestNormalizeSendInputMode(t *testing.T) {
+	tests := map[string]string{
+		"":                    "auto",
+		"auto":                "auto",
+		"steer":               "steer",
+		"queue":               "queue",
+		"interrupt_then_send": "interrupt_then_send",
+		"interruptThenSend":   "interrupt_then_send",
+		"interrupt-and-send":  "interrupt_then_send",
+		"custom":              "custom",
+	}
+	for input, want := range tests {
+		if got := NormalizeSendInputMode(input); got != want {
+			t.Fatalf("NormalizeSendInputMode(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
 func TestNormalizeSessionStatus(t *testing.T) {
 	tests := map[string]string{
 		"idle":        "running",

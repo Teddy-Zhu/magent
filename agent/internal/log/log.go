@@ -3,6 +3,7 @@ package log
 import (
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"time"
 )
@@ -14,6 +15,7 @@ const (
 	LevelInfo
 	LevelWarn
 	LevelError
+	LevelOff
 )
 
 var levelNames = map[Level]string{
@@ -21,11 +23,13 @@ var levelNames = map[Level]string{
 	LevelInfo:  "INF",
 	LevelWarn:  "WRN",
 	LevelError: "ERR",
+	LevelOff:   "OFF",
 }
 
 var (
-	currentLevel = LevelInfo
-	mu           sync.RWMutex
+	currentLevel    = LevelInfo
+	componentLevels = map[string]Level{}
+	mu              sync.RWMutex
 )
 
 func SetLevel(l Level) {
@@ -40,35 +44,96 @@ func GetLevel() Level {
 	return currentLevel
 }
 
+func SetComponentLevel(component string, level Level) {
+	component = normalizeComponent(component)
+	if component == "" {
+		return
+	}
+	mu.Lock()
+	componentLevels[component] = level
+	mu.Unlock()
+}
+
+func GetComponentLevel(component string) (Level, bool) {
+	component = normalizeComponent(component)
+	if component == "" {
+		return LevelInfo, false
+	}
+	mu.RLock()
+	defer mu.RUnlock()
+	level, ok := componentLevels[component]
+	return level, ok
+}
+
 func parseLevel(s string) Level {
-	switch s {
-	case "debug", "DEBUG", "dbg":
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "debug", "dbg":
 		return LevelDebug
-	case "warn", "WARN":
+	case "warn":
 		return LevelWarn
-	case "error", "ERROR":
+	case "error":
 		return LevelError
+	case "off", "none", "disabled", "disable", "silent":
+		return LevelOff
 	default:
 		return LevelInfo
 	}
 }
 
 func Init(levelStr string) {
+	InitWithLevels(levelStr, nil)
+}
+
+func InitWithLevels(levelStr string, overrides map[string]string) {
+	mu.Lock()
+	componentLevels = map[string]Level{}
+	mu.Unlock()
+
+	if env := os.Getenv("MAGENT_LOG_LEVEL"); env != "" && levelStr == "" {
+		levelStr = env
+	}
 	if levelStr != "" {
 		SetLevel(parseLevel(levelStr))
-	} else {
-		if env := os.Getenv("MAGENT_LOG_LEVEL"); env != "" {
-			SetLevel(parseLevel(env))
-		}
 	}
+
+	for component, level := range overrides {
+		SetComponentLevel(component, parseLevel(level))
+	}
+	if env := os.Getenv("MAGENT_LOG_LEVELS"); env != "" {
+		ApplyComponentLevels(env)
+	}
+}
+
+func ApplyComponentLevels(spec string) {
+	for _, item := range strings.Split(spec, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		component, level, ok := strings.Cut(item, "=")
+		if !ok {
+			component, level, ok = strings.Cut(item, ":")
+		}
+		if !ok {
+			continue
+		}
+		SetComponentLevel(component, parseLevel(level))
+	}
+}
+
+func normalizeComponent(component string) string {
+	return strings.ToLower(strings.TrimSpace(component))
 }
 
 func output(level Level, component, msg string, args ...any) {
 	mu.RLock()
 	l := currentLevel
+	if componentLevel, ok := componentLevels[normalizeComponent(component)]; ok {
+		l = componentLevel
+	}
 	mu.RUnlock()
 
-	if level < l {
+	if l == LevelOff || level < l {
 		return
 	}
 

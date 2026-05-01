@@ -316,6 +316,55 @@ func TestCodexTurnsToItemsPreservesOrderIndexAndFileStats(t *testing.T) {
 	}
 }
 
+func TestCodexListedThreadStatusRequiresActiveSessionForRunning(t *testing.T) {
+	tests := []struct {
+		name   string
+		status ThreadStatus
+		active bool
+		want   string
+	}{
+		{
+			name:   "idle historical thread is stopped",
+			status: ThreadStatus{Type: "idle"},
+			active: false,
+			want:   string(provider.SessionStatusStopped),
+		},
+		{
+			name:   "idle active provider session is running",
+			status: ThreadStatus{Type: "idle"},
+			active: true,
+			want:   string(provider.SessionStatusRunning),
+		},
+		{
+			name:   "active provider session is running",
+			status: ThreadStatus{Type: "active"},
+			active: true,
+			want:   string(provider.SessionStatusRunning),
+		},
+		{
+			name:   "system error active session is failed",
+			status: ThreadStatus{Type: "systemError"},
+			active: true,
+			want:   string(provider.SessionStatusFailed),
+		},
+		{
+			name:   "completed active session remains completed",
+			status: ThreadStatus{Type: "completed"},
+			active: true,
+			want:   string(provider.SessionStatusCompleted),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := codexListedThreadStatus(tt.status, tt.active)
+			if got != tt.want {
+				t.Fatalf("status = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAppServerClientInitializeAndInitializedNotification(t *testing.T) {
 	client, server := newTestAppServerClient(t)
 	defer client.Close()

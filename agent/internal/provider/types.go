@@ -28,6 +28,15 @@ const (
 	SandboxModeDangerFullAccess SandboxMode = "danger-full-access"
 )
 
+type SendInputMode string
+
+const (
+	SendInputModeAuto              SendInputMode = "auto"
+	SendInputModeSteer             SendInputMode = "steer"
+	SendInputModeQueue             SendInputMode = "queue"
+	SendInputModeInterruptThenSend SendInputMode = "interrupt_then_send"
+)
+
 type EventType string
 
 const (
@@ -103,6 +112,33 @@ func NormalizeSandboxMode(value string) string {
 		return string(SandboxModeDangerFullAccess)
 	default:
 		return value
+	}
+}
+
+func NormalizeSendInputMode(value string) string {
+	switch value {
+	case "", "auto":
+		return string(SendInputModeAuto)
+	case "steer":
+		return string(SendInputModeSteer)
+	case "queue":
+		return string(SendInputModeQueue)
+	case "interrupt_then_send", "interruptThenSend", "interrupt-and-send":
+		return string(SendInputModeInterruptThenSend)
+	default:
+		return value
+	}
+}
+
+func IsSendInputMode(value string) bool {
+	switch NormalizeSendInputMode(value) {
+	case string(SendInputModeAuto),
+		string(SendInputModeSteer),
+		string(SendInputModeQueue),
+		string(SendInputModeInterruptThenSend):
+		return true
+	default:
+		return false
 	}
 }
 

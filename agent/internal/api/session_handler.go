@@ -135,16 +135,23 @@ func (h *SessionHandler) SendInput(c *gin.Context) {
 	var req struct {
 		Input string               `json:"input" binding:"required"`
 		Items []provider.InputItem `json:"items"`
+		Mode  string               `json:"mode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, 400, ErrInvalidRequest, err.Error())
 		return
 	}
+	req.Mode = provider.NormalizeSendInputMode(req.Mode)
+	if !provider.IsSendInputMode(req.Mode) {
+		Fail(c, 400, ErrInvalidRequest, "invalid send input mode")
+		return
+	}
 
-	log.Debug("session", "input id=%s len=%d", id, len(req.Input))
+	log.Debug("session", "input id=%s len=%d mode=%s", id, len(req.Input), req.Mode)
 	if err := h.manager.SendInput(c.Request.Context(), id, provider.SendInputRequest{
 		Input: req.Input,
 		Items: req.Items,
+		Mode:  req.Mode,
 	}); err != nil {
 		log.Error("session", "send input failed id=%s: %v", id, err)
 		// Return 404 if session not found so client can handle it

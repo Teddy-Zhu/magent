@@ -319,6 +319,17 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsDefaultCliSub => 'Default AI provider for new sessions';
 
   @override
+  String get settingsSession => 'Sessions';
+
+  @override
+  String get settingsSessionOpenAtBottom =>
+      'Open sessions at the latest message';
+
+  @override
+  String get settingsSessionOpenAtBottomSub =>
+      'Show the last conversation when entering a session';
+
+  @override
   String get settingsGit => 'Git Operations';
 
   @override

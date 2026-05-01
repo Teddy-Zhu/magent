@@ -51,12 +51,14 @@ class SessionApi implements SessionApiLike {
     String sessionId,
     String input, {
     List<Map<String, dynamic>> items = const [],
+    String? mode,
   }) async {
     await _dio.post(
       '$_apiPrefix/sessions/$sessionId/input',
       data: {
         'input': input,
         if (items.isNotEmpty) 'items': items,
+        if (mode != null && mode.isNotEmpty) 'mode': mode,
       },
     );
   }

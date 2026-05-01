@@ -14,7 +14,8 @@ type Config struct {
 	Server    ServerConfig    `mapstructure:"server"`
 	Auth      AuthConfig      `mapstructure:"auth"`
 	Workspace WorkspaceConfig `mapstructure:"workspace"`
-	LogLevel  string          `mapstructure:"log_level"`
+	LogLevel  string            `mapstructure:"log_level"`
+	LogLevels map[string]string `mapstructure:"log_levels"`
 }
 
 type ServerConfig struct {
@@ -66,6 +67,7 @@ func Load(cfgFile string) (*Config, error) {
 	viper.SetDefault("server.write_timeout", 30*time.Second)
 	viper.SetDefault("server.rate_limit_per_min", 120)
 	viper.SetDefault("log_level", "info")
+	viper.SetDefault("log_levels", map[string]string{})
 
 	if err := viper.ReadInConfig(); err != nil {
 		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {

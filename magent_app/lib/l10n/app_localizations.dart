@@ -704,6 +704,24 @@ abstract class AppLocalizations {
   /// **'Default AI provider for new sessions'**
   String get settingsDefaultCliSub;
 
+  /// No description provided for @settingsSession.
+  ///
+  /// In en, this message translates to:
+  /// **'Sessions'**
+  String get settingsSession;
+
+  /// No description provided for @settingsSessionOpenAtBottom.
+  ///
+  /// In en, this message translates to:
+  /// **'Open sessions at the latest message'**
+  String get settingsSessionOpenAtBottom;
+
+  /// No description provided for @settingsSessionOpenAtBottomSub.
+  ///
+  /// In en, this message translates to:
+  /// **'Show the last conversation when entering a session'**
+  String get settingsSessionOpenAtBottomSub;
+
   /// No description provided for @settingsGit.
   ///
   /// In en, this message translates to:

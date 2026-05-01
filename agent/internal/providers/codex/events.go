@@ -81,6 +81,13 @@ func (c *AppServerClient) handleNotification(msg *protocol.JSONRPCResponse) {
 
 	case "turn/failed":
 		payload := parsePayload(msg.Params)
+		if m, ok := payload.(map[string]any); ok {
+			if threadID, ok := m["threadId"].(string); ok {
+				c.activeTurnMu.Lock()
+				delete(c.activeTurnIDs, threadID)
+				c.activeTurnMu.Unlock()
+			}
+		}
 		c.emitEvent(provider.ProviderEvent{
 			Type:      string(provider.EventTurnFailed),
 			SessionID: sessionIDFromPayload(payload),

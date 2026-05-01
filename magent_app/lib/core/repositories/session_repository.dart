@@ -24,6 +24,7 @@ abstract class SessionApiLike {
     String sessionId,
     String input, {
     List<Map<String, dynamic>> items = const [],
+    String? mode,
   });
 
   Future<void> resume(String sessionId);

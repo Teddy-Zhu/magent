@@ -11,6 +11,7 @@ import 'package:magent_app/core/repositories/bootstrap_repository.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/session_repository.dart';
 import 'package:magent_app/core/session/session_language.dart';
+import 'package:magent_app/core/services/app_settings_service.dart';
 import 'package:magent_app/core/services/message_template_service.dart';
 import 'package:magent_app/features/sessions/widgets/message_template_sheet.dart';
 
@@ -26,10 +27,13 @@ class ChatPage extends ConsumerStatefulWidget {
 class _ChatPageState extends ConsumerState<ChatPage> {
   static const _initialVisibleEventCount = 200;
   static const _eventPageSize = 200;
+  static const _sendModeQueue = 'queue';
+  static const _sendModeInterruptThenSend = 'interrupt_then_send';
 
   final List<Map<String, dynamic>> _events = [];
   final _inputController = TextEditingController();
   final _scrollController = ScrollController();
+  final _settings = AppSettingsService();
   final _templateService = MessageTemplateService();
   final List<Map<String, dynamic>> _inputItems = [];
   final List<Map<String, dynamic>> _selectedSkills = [];
@@ -37,6 +41,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   var _disposed = false;
   bool _loading = true;
   bool _resuming = false;
+  bool _openAtBottom = true;
+  bool _didInitialBottomScroll = false;
+  bool _turnActive = false;
+  int _queuedInputCount = 0;
   AppApiClient? _api;
   SessionRepository? _repo;
   BootstrapRepository? _bootstrap;
@@ -68,6 +76,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Future<void> _init() async {
+    _openAtBottom = await _settings.getSessionOpenAtBottom();
     _api = await loadActiveApi(ref);
     if (_api == null || !_isActive) return;
     final db = ref.read(appDatabaseProvider);
@@ -103,9 +112,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             _events
               ..clear()
               ..addAll(items.map(_itemToEvent));
+            _turnActive = _itemsContainActiveTurn(items);
             _loading = false;
           });
-          if (shouldAutoScroll || items.length <= 1) {
+          if (!_didInitialBottomScroll && items.isNotEmpty) {
+            _didInitialBottomScroll = true;
+            if (_openAtBottom) {
+              _jumpToBottom();
+            }
+          } else if (shouldAutoScroll || items.length <= 1) {
             _scrollToBottom();
           }
         });
@@ -135,6 +150,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         'type': SessionEventTypes.normalize(eventType),
         'data': event['data'],
       };
+      _applyTurnRuntimeState(normalized['type'] as String);
       final shouldAutoScroll = _isNearBottom();
       if (!_isActive) return;
       setState(() => _events.add(normalized));
@@ -189,6 +205,27 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return merged;
   }
 
+  void _applyTurnRuntimeState(String type) {
+    if (!_isActive) return;
+    switch (type) {
+      case SessionEventTypes.turnStarted:
+        setState(() {
+          _turnActive = true;
+          if (_queuedInputCount > 0) _queuedInputCount--;
+        });
+        break;
+      case SessionEventTypes.turnCompleted:
+      case SessionEventTypes.turnFailed:
+      case SessionEventTypes.error:
+      case SessionEventTypes.exited:
+        final hasActiveItems = _itemsContainActiveTurn(_events);
+        if (_turnActive && !hasActiveItems) {
+          setState(() => _turnActive = false);
+        }
+        break;
+    }
+  }
+
   Future<void> _loadItems() async {
     if (_repo == null) return;
     try {
@@ -201,10 +238,35 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
+  bool _itemsContainActiveTurn(List<Map<String, dynamic>> items) {
+    for (final item in items) {
+      final status = item['status']?.toString();
+      if (status == 'in_progress' || status == 'inProgress') {
+        return true;
+      }
+    }
+    return false;
+  }
+
   Future<void> _sendInput() async {
     final input = _inputController.text.trim();
     if (input.isEmpty || _api == null) return;
+    final wasTurnActive = _turnActive;
+    final mode = wasTurnActive
+        ? await _chooseRunningSendMode()
+        : _queuedInputCount > 0
+        ? _sendModeQueue
+        : null;
+    if (mode == null && wasTurnActive) return;
+    await _sendInputWithMode(mode);
+  }
 
+  Future<void> _sendInputWithMode(String? mode) async {
+    final input = _inputController.text.trim();
+    if (input.isEmpty || _api == null) return;
+    final previousInput = _inputController.text;
+    final previousItems = List<Map<String, dynamic>>.from(_inputItems);
+    final previousSkills = List<Map<String, dynamic>>.from(_selectedSkills);
     final items = List<Map<String, dynamic>>.from(_inputItems);
     setState(() {
       _inputController.clear();
@@ -219,24 +281,99 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _templateService.addRecent(input);
 
     try {
-      await _api!.session.sendInput(widget.sessionId, input, items: items);
+      await _api!.session.sendInput(
+        widget.sessionId,
+        input,
+        items: items,
+        mode: mode,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (mode == _sendModeQueue ||
+            mode == _sendModeInterruptThenSend ||
+            _queuedInputCount > 0) {
+          _queuedInputCount++;
+        }
+        if (mode == _sendModeInterruptThenSend) {
+          _turnActive = false;
+        } else if (mode == null) {
+          _turnActive = true;
+        }
+      });
     } on DioException catch (e) {
       if (!mounted) return;
       final errCode = e.response?.data?['error']?['code'] as String?;
       if (errCode == 'SESSION_NOT_FOUND') {
+        _restoreInputDraft(previousInput, previousItems, previousSkills);
         _showSessionLostDialog();
       } else {
+        _restoreInputDraft(previousInput, previousItems, previousSkills);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(userFriendlyErrorMessage(e, action: '发送失败'))),
         );
       }
     } catch (e) {
       if (mounted) {
+        _restoreInputDraft(previousInput, previousItems, previousSkills);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text(userFriendlyErrorMessage(e, action: '发送失败'))),
         );
       }
     }
+  }
+
+  void _restoreInputDraft(
+    String text,
+    List<Map<String, dynamic>> items,
+    List<Map<String, dynamic>> skills,
+  ) {
+    if (!mounted) return;
+    setState(() {
+      _inputController.text = text;
+      _inputItems
+        ..clear()
+        ..addAll(items);
+      _selectedSkills
+        ..clear()
+        ..addAll(skills);
+    });
+  }
+
+  Future<String?> _chooseRunningSendMode() {
+    return showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const ListTile(
+              leading: Icon(Icons.bolt_outlined),
+              title: Text('当前正在处理'),
+              subtitle: Text('选择这条新消息的处理方式'),
+            ),
+            ListTile(
+              leading: const Icon(Icons.playlist_add),
+              title: const Text('加入等待队列'),
+              subtitle: const Text('当前回复完成后自动发送，适合追加新任务'),
+              onTap: () => Navigator.pop(ctx, _sendModeQueue),
+            ),
+            ListTile(
+              leading: const Icon(Icons.stop_circle_outlined),
+              title: const Text('打断并发送'),
+              subtitle: const Text('停止当前回复，再立刻处理这条消息'),
+              onTap: () => Navigator.pop(ctx, _sendModeInterruptThenSend),
+            ),
+            ListTile(
+              leading: const Icon(Icons.close),
+              title: const Text('取消'),
+              onTap: () => Navigator.pop(ctx),
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
   }
 
   void _showSessionLostDialog() {
@@ -295,6 +432,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     try {
       await _api!.session.interrupt(widget.sessionId);
       if (mounted) {
+        setState(() => _turnActive = false);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(const SnackBar(content: Text('已发送中断请求')));
@@ -377,6 +515,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
+      }
+    });
+  }
+
+  void _jumpToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_isActive) return;
+      if (_scrollController.hasClients) {
+        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
       }
     });
   }
@@ -841,12 +988,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
+          if (_turnActive) ...[
+            _RunningTurnBar(
+              queuedCount: _queuedInputCount,
+              onInterrupt: _interrupt,
+            ),
+            const SizedBox(height: 8),
+          ] else if (_queuedInputCount > 0) ...[
+            _QueuedInputBar(count: _queuedInputCount),
+            const SizedBox(height: 8),
+          ],
           _InputToolbar(
             selectedSkills: _selectedSkills,
             onTemplates: _openTemplates,
             onSkill: _openSkillPicker,
             onFile: _openFilePicker,
-            onInterrupt: _interrupt,
             onRemoveSkill: (name) {
               setState(() {
                 _selectedSkills.removeWhere((s) => s['name'] == name);
@@ -1183,12 +1339,98 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
 // --- Sub-widgets ---
 
+class _RunningTurnBar extends StatelessWidget {
+  final int queuedCount;
+  final VoidCallback onInterrupt;
+
+  const _RunningTurnBar({required this.queuedCount, required this.onInterrupt});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      height: 36,
+      padding: const EdgeInsets.only(left: 12, right: 4),
+      decoration: BoxDecoration(
+        color: scheme.primaryContainer.withValues(alpha: 0.42),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.primary.withValues(alpha: 0.12)),
+      ),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 14,
+            height: 14,
+            child: CircularProgressIndicator(
+              strokeWidth: 2,
+              color: scheme.primary,
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              queuedCount > 0
+                  ? '正在生成回复，队列中还有 $queuedCount 条消息'
+                  : '正在生成回复，继续发送可选择排队或打断后发送',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+            ),
+          ),
+          TextButton.icon(
+            onPressed: onInterrupt,
+            icon: const Icon(Icons.stop_circle_outlined, size: 16),
+            label: const Text('打断'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _QueuedInputBar extends StatelessWidget {
+  final int count;
+
+  const _QueuedInputBar({required this.count});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHighest.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: scheme.outlineVariant),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.playlist_add_check, size: 16, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '已加入等待队列：$count 条',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _InputToolbar extends StatelessWidget {
   final List<Map<String, dynamic>> selectedSkills;
   final VoidCallback onTemplates;
   final VoidCallback onSkill;
   final VoidCallback onFile;
-  final VoidCallback onInterrupt;
   final ValueChanged<String> onRemoveSkill;
 
   const _InputToolbar({
@@ -1196,7 +1438,6 @@ class _InputToolbar extends StatelessWidget {
     required this.onTemplates,
     required this.onSkill,
     required this.onFile,
-    required this.onInterrupt,
     required this.onRemoveSkill,
   });
 
@@ -1218,11 +1459,6 @@ class _InputToolbar extends StatelessWidget {
           icon: Icons.attach_file,
           tooltip: '引用工作区文件',
           onPressed: onFile,
-        ),
-        _ToolbarIconButton(
-          icon: Icons.stop_outlined,
-          tooltip: '中断当前操作',
-          onPressed: onInterrupt,
         ),
         const SizedBox(width: 6),
         Expanded(

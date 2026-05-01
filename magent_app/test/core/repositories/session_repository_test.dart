@@ -147,6 +147,7 @@ class _FakeSessionApi implements SessionApiLike {
     String sessionId,
     String input, {
     List<Map<String, dynamic>> items = const [],
+    String? mode,
   }) async {}
 
   @override

@@ -61,6 +61,7 @@ type InputItem map[string]any
 type SendInputRequest struct {
 	Input string      `json:"input"`
 	Items []InputItem `json:"items,omitempty"`
+	Mode  string      `json:"mode,omitempty"`
 }
 
 func (r *CreateSessionRequest) ApplyDefaults(cfg ProviderConfig) {

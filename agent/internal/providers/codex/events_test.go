@@ -166,6 +166,64 @@ func TestHandleNotificationMapsCodexEventsToCanonicalEvents(t *testing.T) {
 	}
 }
 
+func TestHandleNotificationClearsActiveTurnOnTerminalTurnEvents(t *testing.T) {
+	for _, method := range []string{"turn/completed", "turn/failed"} {
+		t.Run(method, func(t *testing.T) {
+			client := &AppServerClient{
+				events:        make(chan provider.ProviderEvent, 1),
+				activeTurnIDs: map[string]string{"thr_1": "turn_1"},
+			}
+			client.handleNotification(jsonRPCNotification(t, method, map[string]any{
+				"threadId": "thr_1",
+				"turn":     map[string]any{"id": "turn_1"},
+			}))
+
+			client.activeTurnMu.Lock()
+			_, ok := client.activeTurnIDs["thr_1"]
+			client.activeTurnMu.Unlock()
+			if ok {
+				t.Fatalf("active turn was not cleared for %s", method)
+			}
+		})
+	}
+}
+
+func TestQueuedInputPreservesOrderWhenDrainFindsActiveTurn(t *testing.T) {
+	p := &CodexProvider{queuedInputs: make(map[string][]queuedInput)}
+	p.enqueueInput("session_1", "thread_1", provider.SendInputRequest{Input: "first"})
+	p.enqueueInput("session_1", "thread_1", provider.SendInputRequest{Input: "second"})
+
+	p.queueMu.Lock()
+	next := p.queuedInputs["session_1"][0]
+	p.queuedInputs["session_1"] = p.queuedInputs["session_1"][1:]
+	p.queueMu.Unlock()
+	p.prependQueuedInput(next)
+
+	p.queueMu.Lock()
+	queue := p.queuedInputs["session_1"]
+	p.queueMu.Unlock()
+	if len(queue) != 2 {
+		t.Fatalf("queue length = %d, want 2", len(queue))
+	}
+	if queue[0].input.Input != "first" || queue[1].input.Input != "second" {
+		t.Fatalf("queue order = %#v", queue)
+	}
+}
+
+func TestQueueDrainAllowsOnlyOneActiveDrainer(t *testing.T) {
+	p := &CodexProvider{}
+	if !p.beginQueueDrain("session_1") {
+		t.Fatal("first drain should start")
+	}
+	if p.beginQueueDrain("session_1") {
+		t.Fatal("second drain should be rejected while first is active")
+	}
+	p.endQueueDrain("session_1")
+	if !p.beginQueueDrain("session_1") {
+		t.Fatal("drain should start again after previous drain ended")
+	}
+}
+
 func jsonRPCNotification(t *testing.T, method string, params map[string]any) *protocol.JSONRPCResponse {
 	t.Helper()
 	data, err := json.Marshal(params)

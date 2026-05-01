@@ -316,6 +316,15 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsDefaultCliSub => '新建会话时的默认 AI 提供者';
 
   @override
+  String get settingsSession => '会话';
+
+  @override
+  String get settingsSessionOpenAtBottom => '进入会话默认定位到底部';
+
+  @override
+  String get settingsSessionOpenAtBottomSub => '打开会话时自动显示最后一条对话';
+
+  @override
   String get settingsGit => 'Git 操作';
 
   @override

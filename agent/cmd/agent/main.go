@@ -27,6 +27,7 @@ func main() {
 		Short: "Start the agent server",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logLevel, _ := cmd.Flags().GetString("log-level")
+			logLevels, _ := cmd.Flags().GetString("log-levels")
 
 			log.Info("main", "loading config from %q", cfgFile)
 			cfg, err := config.Load(cfgFile)
@@ -35,13 +36,17 @@ func main() {
 			}
 
 			// CLI flag > config file > env > default
-			if logLevel == "info" && cfg.LogLevel != "" {
-				logLevel = cfg.LogLevel
+			effectiveLogLevel := cfg.LogLevel
+			if logLevel != "" {
+				effectiveLogLevel = logLevel
 			}
-			log.Init(logLevel)
+			log.InitWithLevels(effectiveLogLevel, cfg.LogLevels)
+			if logLevels != "" {
+				log.ApplyComponentLevels(logLevels)
+			}
 
-			log.Debug("main", "config loaded: host=%s port=%d rate_limit=%d log_level=%s",
-				cfg.Server.Host, cfg.Server.Port, cfg.Server.RateLimitPerMin, logLevel)
+			log.Debug("main", "config loaded: host=%s port=%d rate_limit=%d log_level=%s log_levels=%v",
+				cfg.Server.Host, cfg.Server.Port, cfg.Server.RateLimitPerMin, effectiveLogLevel, cfg.LogLevels)
 
 			log.Info("main", "opening database magent.db")
 			store, err := storage.Open("magent.db")
@@ -82,7 +87,8 @@ func main() {
 	}
 
 	serveCmd.Flags().StringVarP(&cfgFile, "config", "c", "", "config file path")
-	serveCmd.Flags().String("log-level", "info", "log level: debug, info, warn, error")
+	serveCmd.Flags().String("log-level", "", "global log level: debug, info, warn, error, off")
+	serveCmd.Flags().String("log-levels", "", "component log levels, e.g. gitwatcher=off,codex=debug")
 	rootCmd.AddCommand(serveCmd, initCmd)
 
 	if err := rootCmd.Execute(); err != nil {

@@ -42,32 +42,40 @@ void main() {
 
   test('sendInput includes structured input items when provided', () async {
     late Map<String, dynamic> requestBody;
-    final dio = Dio(
-      BaseOptions(
-        baseUrl: 'http://example.test',
-        validateStatus: (_) => true,
-      ),
-    )..httpClientAdapter = _CaptureAdapter((options) {
-      requestBody = Map<String, dynamic>.from(options.data as Map);
-      return ResponseBody.fromString(
-        jsonEncode({'data': null}),
-        200,
-        headers: {
-          Headers.contentTypeHeader: [Headers.jsonContentType],
-        },
-      );
-    });
+    final dio =
+        Dio(
+            BaseOptions(
+              baseUrl: 'http://example.test',
+              validateStatus: (_) => true,
+            ),
+          )
+          ..httpClientAdapter = _CaptureAdapter((options) {
+            requestBody = Map<String, dynamic>.from(options.data as Map);
+            return ResponseBody.fromString(
+              jsonEncode({'data': null}),
+              200,
+              headers: {
+                Headers.contentTypeHeader: [Headers.jsonContentType],
+              },
+            );
+          });
 
     final api = SessionApi(dio);
-    await api.sendInput('s1', r'$skill-creator hello', items: [
-      {
-        'type': 'skill',
-        'name': 'skill-creator',
-        'path': '/tmp/skill/SKILL.md',
-      },
-    ]);
+    await api.sendInput(
+      's1',
+      r'$skill-creator hello',
+      items: [
+        {
+          'type': 'skill',
+          'name': 'skill-creator',
+          'path': '/tmp/skill/SKILL.md',
+        },
+      ],
+      mode: 'queue',
+    );
 
     expect(requestBody['input'], r'$skill-creator hello');
+    expect(requestBody['mode'], 'queue');
     expect(requestBody['items'], isA<List>());
     expect((requestBody['items'] as List).single['type'], 'skill');
   });

@@ -28,28 +28,39 @@ type sessionMeta struct {
 	Effort         string
 }
 
+type queuedInput struct {
+	sessionID string
+	threadID  string
+	input     provider.SendInputRequest
+}
+
 type CodexProvider struct {
-	client       *AppServerClient
-	clientMu     sync.Mutex
-	threadIDs    map[string]string
-	threadIDsMu  sync.RWMutex
-	sessions     map[string]chan provider.ProviderEvent
-	sessionsMu   sync.RWMutex
-	meta         map[string]*sessionMeta
-	metaMu       sync.RWMutex
-	approval     *ApprovalProxy
-	cfg          CodexConfig
-	cachedConfig *provider.ProviderConfig
-	configMu     sync.RWMutex
+	client        *AppServerClient
+	clientMu      sync.Mutex
+	threadIDs     map[string]string
+	threadIDsMu   sync.RWMutex
+	sessions      map[string]chan provider.ProviderEvent
+	sessionsMu    sync.RWMutex
+	meta          map[string]*sessionMeta
+	metaMu        sync.RWMutex
+	approval      *ApprovalProxy
+	cfg           CodexConfig
+	cachedConfig  *provider.ProviderConfig
+	configMu      sync.RWMutex
+	queuedInputs  map[string][]queuedInput
+	queueDraining map[string]bool
+	queueMu       sync.Mutex
 }
 
 func New(cfg CodexConfig, hub *ws.Hub, store *storage.SQLite) *CodexProvider {
 	return &CodexProvider{
-		threadIDs: make(map[string]string),
-		sessions:  make(map[string]chan provider.ProviderEvent),
-		meta:      make(map[string]*sessionMeta),
-		approval:  NewApprovalProxy(hub, store),
-		cfg:       cfg,
+		threadIDs:     make(map[string]string),
+		sessions:      make(map[string]chan provider.ProviderEvent),
+		meta:          make(map[string]*sessionMeta),
+		queuedInputs:  make(map[string][]queuedInput),
+		queueDraining: make(map[string]bool),
+		approval:      NewApprovalProxy(hub, store),
+		cfg:           cfg,
 	}
 }
 
@@ -192,6 +203,10 @@ func (p *CodexProvider) forwardClientEvents(client *AppServerClient) {
 		}
 		event.SessionID = sessionID
 		p.emit(sessionID, event)
+		switch event.Type {
+		case string(provider.EventTurnCompleted), string(provider.EventTurnFailed):
+			go p.drainQueuedInput(context.Background(), sessionID)
+		}
 	}
 }
 
@@ -908,18 +923,169 @@ func (p *CodexProvider) SendInput(ctx context.Context, sessionID string, input p
 	if threadID == "" {
 		return fmt.Errorf("session %s not found", sessionID)
 	}
+	input.Mode = provider.NormalizeSendInputMode(input.Mode)
 
-	// Check if there's an active turn — steer if yes, start new turn if no
 	client.activeTurnMu.Lock()
 	activeTurnID := client.activeTurnIDs[threadID]
 	client.activeTurnMu.Unlock()
 
-	if activeTurnID != "" {
-		log.Debug("codex", "SendInput: steering active turn=%s thread=%s", activeTurnID, threadID)
-		return client.SteerTurn(ctx, threadID, codexTextInput(input.Input, input.Items))
+	switch input.Mode {
+	case string(provider.SendInputModeQueue):
+		if activeTurnID != "" || p.hasQueuedInput(sessionID) {
+			log.Debug("codex", "SendInput: queueing input thread=%s active_turn=%s", threadID, activeTurnID)
+			p.enqueueInput(sessionID, threadID, input)
+			if activeTurnID == "" {
+				go p.drainQueuedInput(context.Background(), sessionID)
+			}
+			return nil
+		}
+	case string(provider.SendInputModeInterruptThenSend):
+		if activeTurnID != "" {
+			log.Debug("codex", "SendInput: interrupting and queueing input thread=%s active_turn=%s", threadID, activeTurnID)
+			p.enqueueInput(sessionID, threadID, input)
+			if err := client.InterruptTurn(ctx, threadID); err != nil {
+				p.dropLastQueuedInput(sessionID)
+				return err
+			}
+			return nil
+		}
+		if p.hasQueuedInput(sessionID) {
+			p.enqueueInput(sessionID, threadID, input)
+			go p.drainQueuedInput(context.Background(), sessionID)
+			return nil
+		}
+	case string(provider.SendInputModeAuto), string(provider.SendInputModeSteer):
+		if activeTurnID != "" {
+			log.Debug("codex", "SendInput: steering active turn=%s thread=%s", activeTurnID, threadID)
+			return client.SteerTurn(ctx, threadID, codexTextInput(input.Input, input.Items))
+		}
+	default:
+		return fmt.Errorf("unsupported send input mode %q", input.Mode)
 	}
 
-	// No active turn — start a new one
+	return p.startInputTurn(ctx, client, sessionID, threadID, input)
+}
+
+func (p *CodexProvider) hasQueuedInput(sessionID string) bool {
+	p.queueMu.Lock()
+	defer p.queueMu.Unlock()
+	return len(p.queuedInputs[sessionID]) > 0
+}
+
+func (p *CodexProvider) enqueueInput(sessionID, threadID string, input provider.SendInputRequest) {
+	p.queueMu.Lock()
+	defer p.queueMu.Unlock()
+	if p.queuedInputs == nil {
+		p.queuedInputs = make(map[string][]queuedInput)
+	}
+	p.queuedInputs[sessionID] = append(p.queuedInputs[sessionID], queuedInput{
+		sessionID: sessionID,
+		threadID:  threadID,
+		input:     input,
+	})
+}
+
+func (p *CodexProvider) dropLastQueuedInput(sessionID string) {
+	p.queueMu.Lock()
+	defer p.queueMu.Unlock()
+	queue := p.queuedInputs[sessionID]
+	if len(queue) == 0 {
+		return
+	}
+	if len(queue) == 1 {
+		delete(p.queuedInputs, sessionID)
+		return
+	}
+	p.queuedInputs[sessionID] = queue[:len(queue)-1]
+}
+
+func (p *CodexProvider) prependQueuedInput(item queuedInput) {
+	p.queueMu.Lock()
+	defer p.queueMu.Unlock()
+	if p.queuedInputs == nil {
+		p.queuedInputs = make(map[string][]queuedInput)
+	}
+	p.queuedInputs[item.sessionID] = append([]queuedInput{item}, p.queuedInputs[item.sessionID]...)
+}
+
+func (p *CodexProvider) drainQueuedInput(ctx context.Context, sessionID string) {
+	if !p.beginQueueDrain(sessionID) {
+		return
+	}
+	defer p.endQueueDrain(sessionID)
+
+	p.queueMu.Lock()
+	queue := p.queuedInputs[sessionID]
+	if len(queue) == 0 {
+		p.queueMu.Unlock()
+		return
+	}
+	next := queue[0]
+	p.queuedInputs[sessionID] = queue[1:]
+	p.queueMu.Unlock()
+
+	client, err := p.appServerClient(ctx)
+	if err != nil {
+		log.Error("codex", "drain queued input: appserver client failed session=%s: %v", sessionID, err)
+		return
+	}
+
+	threadID := next.threadID
+	if threadID == "" {
+		threadID = p.threadIDForSession(sessionID)
+	}
+	if threadID == "" {
+		log.Warn("codex", "drain queued input: session %s not found", sessionID)
+		return
+	}
+
+	client.activeTurnMu.Lock()
+	activeTurnID := client.activeTurnIDs[threadID]
+	client.activeTurnMu.Unlock()
+	if activeTurnID != "" {
+		next.threadID = threadID
+		p.prependQueuedInput(next)
+		return
+	}
+
+	if err := p.startInputTurn(ctx, client, next.sessionID, threadID, next.input); err != nil {
+		log.Error("codex", "drain queued input: start turn failed session=%s: %v", sessionID, err)
+	}
+}
+
+func (p *CodexProvider) beginQueueDrain(sessionID string) bool {
+	p.queueMu.Lock()
+	defer p.queueMu.Unlock()
+	if p.queueDraining == nil {
+		p.queueDraining = make(map[string]bool)
+	}
+	if p.queueDraining[sessionID] {
+		return false
+	}
+	p.queueDraining[sessionID] = true
+	return true
+}
+
+func (p *CodexProvider) endQueueDrain(sessionID string) {
+	p.queueMu.Lock()
+	defer p.queueMu.Unlock()
+	delete(p.queueDraining, sessionID)
+}
+
+func (p *CodexProvider) startInputTurn(ctx context.Context, client *AppServerClient, sessionID, threadID string, input provider.SendInputRequest) error {
+	if threadID == "" {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	client.activeTurnMu.Lock()
+	activeTurnID := client.activeTurnIDs[threadID]
+	client.activeTurnMu.Unlock()
+	if activeTurnID != "" {
+		log.Debug("codex", "SendInput: active turn appeared while starting; queueing thread=%s active_turn=%s", threadID, activeTurnID)
+		p.enqueueInput(sessionID, threadID, input)
+		return nil
+	}
+
+	// No active turn — start a new one.
 	log.Debug("codex", "SendInput: starting new turn thread=%s", threadID)
 	p.metaMu.RLock()
 	m := p.meta[sessionID]
@@ -1011,6 +1177,10 @@ func (p *CodexProvider) StopSession(ctx context.Context, sessionID string) error
 	p.metaMu.Lock()
 	delete(p.meta, sessionID)
 	p.metaMu.Unlock()
+	p.queueMu.Lock()
+	delete(p.queuedInputs, sessionID)
+	delete(p.queueDraining, sessionID)
+	p.queueMu.Unlock()
 
 	if err := client.UnsubscribeThread(ctx, threadID); err != nil {
 		log.Warn("codex", "unsubscribe thread %s failed: %v", threadID, err)
@@ -1095,20 +1265,7 @@ func (p *CodexProvider) ListThreads(ctx context.Context, cwd string, limit int) 
 
 	var sessions []provider.Session
 	for _, t := range threads {
-		// Map codex thread status to our status:
-		// notLoaded → "stopped" (needs resume)
-		// idle → "running" (loaded, ready for turns)
-		// active → "running" (has active turn)
-		// systemError → "failed"
-		status := provider.NormalizeSessionStatus(t.Status.Type)
-		if status == "" {
-			status = string(provider.SessionStatusStopped)
-		}
-
-		// Check if we have an active client for this thread
-		if p.HasSession(t.ID) {
-			status = string(provider.SessionStatusRunning)
-		}
+		status := codexListedThreadStatus(t.Status, p.HasSession(t.ID))
 
 		title := t.Name
 		if title == "" {
@@ -1131,6 +1288,27 @@ func (p *CodexProvider) ListThreads(ctx context.Context, cwd string, limit int) 
 	}
 
 	return sessions, nil
+}
+
+func codexListedThreadStatus(status ThreadStatus, active bool) string {
+	// Codex thread/list can report historical, unsubscribed threads as "idle".
+	// In Magent, "running" means this agent process owns an active provider
+	// session for the thread. Otherwise list status should match GetSession,
+	// which treats unloaded provider threads as stopped.
+	if !active {
+		return string(provider.SessionStatusStopped)
+	}
+
+	normalized := provider.NormalizeSessionStatus(status.Type)
+	switch normalized {
+	case string(provider.SessionStatusFailed),
+		string(provider.SessionStatusLost),
+		string(provider.SessionStatusCompleted),
+		string(provider.SessionStatusStopped):
+		return normalized
+	default:
+		return string(provider.SessionStatusRunning)
+	}
 }
 
 func (p *CodexProvider) Close() error {
