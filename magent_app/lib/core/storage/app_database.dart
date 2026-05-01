@@ -553,8 +553,8 @@ class AppDatabase extends _$AppDatabase {
     return select(sessionItemEntries)
       ..where((t) => t.agentId.equals(agentId) & t.sessionId.equals(sessionId))
       ..orderBy([
-        (t) => OrderingTerm.desc(t.createdAt),
         (t) => OrderingTerm.desc(t.itemIndex),
+        (t) => OrderingTerm.desc(t.createdAt),
         (t) => OrderingTerm.desc(t.itemId),
       ]);
   }
@@ -608,6 +608,16 @@ class AppDatabase extends _$AppDatabase {
 
   Future<void> insertOrUpdateItem(SessionItemEntriesCompanion entry) {
     return into(sessionItemEntries).insertOnConflictUpdate(entry);
+  }
+
+  Future<void> deleteItem(String agentId, String sessionId, String itemId) {
+    return (delete(sessionItemEntries)..where(
+          (t) =>
+              t.agentId.equals(agentId) &
+              t.sessionId.equals(sessionId) &
+              t.itemId.equals(itemId),
+        ))
+        .go();
   }
 
   Future<void> insertOrUpdateItems(

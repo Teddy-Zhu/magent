@@ -1,3 +1,4 @@
+import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:magent_app/core/repositories/session_repository.dart';
@@ -29,6 +30,57 @@ void main() {
     expect(items.single.role, 'user');
     expect(items.single.content, contains('hello'));
   });
+
+  test('real user message removes matching local pending item', () async {
+    await repo.addPendingUserMessage('s1', 'hello');
+
+    await repo.applyRealtimeEvent({
+      'type': 'session.user_message',
+      'session_id': 's1',
+      'item_id': 'real-user-1',
+      'created_at': DateTime(2026, 5, 1).toIso8601String(),
+      'data': {'id': 'real-user-1', 'type': 'userMessage', 'content': 'hello'},
+    });
+
+    final items = await db.getItemsBySession('agent-a', 's1');
+
+    expect(items, hasLength(1));
+    expect(items.single.itemId, 'real-user-1');
+    expect(items.single.type, 'user_message');
+    expect(items.single.status, 'completed');
+  });
+
+  test(
+    'session items are ordered by provider item index before timestamp',
+    () async {
+      await db.insertOrUpdateItems([
+        SessionItemEntriesCompanion.insert(
+          agentId: 'agent-a',
+          sessionId: 's1',
+          itemId: 'assistant',
+          type: 'agent_message',
+          content: const Value('{"text":"reply"}'),
+          itemIndex: const Value(2),
+          createdAt: DateTime(2026, 5, 1),
+          updatedAt: DateTime(2026, 5, 1),
+        ),
+        SessionItemEntriesCompanion.insert(
+          agentId: 'agent-a',
+          sessionId: 's1',
+          itemId: 'user',
+          type: 'user_message',
+          content: const Value('{"text":"hello"}'),
+          itemIndex: const Value(1),
+          createdAt: DateTime(2026, 5, 1, 0, 0, 5),
+          updatedAt: DateTime(2026, 5, 1, 0, 0, 5),
+        ),
+      ]);
+
+      final items = await db.getItemsBySession('agent-a', 's1');
+
+      expect(items.map((item) => item.itemId), ['user', 'assistant']);
+    },
+  );
 
   test('realtime deltas update item projection and ws cursor', () async {
     await repo.applyRealtimeEvent({

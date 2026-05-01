@@ -405,10 +405,14 @@ class SessionRepository implements SessionSyncStore {
     Map<String, dynamic> event,
   ) async {
     final data = _eventData(event);
+    final itemData = _eventItemData(data);
     final itemId =
         event['item_id']?.toString() ??
         data['item_id']?.toString() ??
         data['itemId']?.toString() ??
+        itemData['item_id']?.toString() ??
+        itemData['itemId']?.toString() ??
+        itemData['id']?.toString() ??
         data['id']?.toString();
     if (itemId == null || itemId.isEmpty) return;
 
@@ -426,7 +430,7 @@ class SessionRepository implements SessionSyncStore {
     var summary = existing?.summary;
     var createdAt = existing?.createdAt ?? now;
     var itemIndex =
-        _parseInt(event['index']) ??
+        _parseInt(itemData['index']) ??
         _parseInt(data['index']) ??
         existing?.itemIndex ??
         now.microsecondsSinceEpoch;
@@ -487,9 +491,9 @@ class SessionRepository implements SessionSyncStore {
         nextContent.addAll(data);
         summary = 'Diff updated';
       case SessionEventTypes.itemStarted:
-        type = _itemTypeFromEvent(eventType, data);
-        status = data['status']?.toString() ?? 'in_progress';
-        nextContent.addAll(data);
+        type = _itemTypeFromEvent(eventType, itemData);
+        status = itemData['status']?.toString() ?? 'in_progress';
+        nextContent.addAll(itemData);
         summary = _contentSummary(type, nextContent);
       default:
         final completed = _completedItemFromEvent(eventType, data);
@@ -527,6 +531,9 @@ class SessionRepository implements SessionSyncStore {
         updatedAt: Value(now),
       ),
     );
+    if (type == SessionItemTypes.userMessage && !itemId.startsWith('local-')) {
+      await _removeMatchingPendingUserMessage(sessionId, nextContent);
+    }
   }
 
   // --- Items ---
@@ -558,19 +565,23 @@ class SessionRepository implements SessionSyncStore {
     final page = await _api.getItemsPage(sessionId, cursor: cursor);
     final newItems = page['items'] as List<dynamic>? ?? [];
     final companions = <SessionItemEntriesCompanion>[];
+    final realUserMessageContents = <dynamic>[];
     for (final item in newItems) {
       final map = Map<String, dynamic>.from(item as Map);
       final itemId = map['item_id']?.toString() ?? map['id']?.toString() ?? '';
       if (itemId.isEmpty) continue;
+      final type = SessionItemTypes.normalize(map['type']?.toString() ?? '');
+      if (type == SessionItemTypes.userMessage &&
+          !itemId.startsWith('local-')) {
+        realUserMessageContents.add(map['content']);
+      }
       companions.add(
         SessionItemEntriesCompanion(
           agentId: Value(agentId),
           sessionId: Value(sessionId),
           itemId: Value(itemId),
           turnId: Value(map['turn_id']?.toString()),
-          type: Value(
-            SessionItemTypes.normalize(map['type']?.toString() ?? ''),
-          ),
+          type: Value(type),
           status: Value(map['status']?.toString()),
           role: Value(map['role']?.toString()),
           summary: Value(map['summary']?.toString()),
@@ -589,6 +600,9 @@ class SessionRepository implements SessionSyncStore {
     if (companions.isNotEmpty) {
       await _db.insertOrUpdateItems(companions);
     }
+    for (final content in realUserMessageContents) {
+      await _removeMatchingPendingUserMessage(sessionId, content);
+    }
     final nextCursor = page['cursor']?.toString();
     if (nextCursor != null && nextCursor.isNotEmpty) {
       await _db.setSyncCursor(agentId, 'session_items', sessionId, nextCursor);
@@ -596,6 +610,27 @@ class SessionRepository implements SessionSyncStore {
 
     final allItems = await _db.getItemsBySession(agentId, sessionId);
     return allItems.map(_itemToMap).toList();
+  }
+
+  Future<void> _removeMatchingPendingUserMessage(
+    String sessionId,
+    dynamic realContent,
+  ) async {
+    final text = _messageContentText(realContent).trim();
+    if (text.isEmpty) return;
+    final items = await _db.getItemsBySession(agentId, sessionId);
+    for (final item in items) {
+      if (!item.itemId.startsWith('local-') ||
+          item.type != SessionItemTypes.userMessage ||
+          item.status != 'pending') {
+        continue;
+      }
+      final pendingText = _messageContentText(_decodeJson(item.content)).trim();
+      if (pendingText == text) {
+        await _db.deleteItem(agentId, sessionId, item.itemId);
+        return;
+      }
+    }
   }
 
   Future<void> saveApprovalRequest(Map<String, dynamic> request) async {
@@ -706,10 +741,22 @@ class SessionRepository implements SessionSyncStore {
       case SessionEventTypes.mcpToolCompleted:
       case SessionEventTypes.itemCompleted:
       case SessionEventTypes.userMessage:
-        return data;
+        return _eventItemData(data);
       default:
         return null;
     }
+  }
+
+  Map<String, dynamic> _eventItemData(Map<String, dynamic> data) {
+    final item = data['item'];
+    if (item is Map) {
+      final map = Map<String, dynamic>.from(item);
+      for (final key in ['threadId', 'thread_id', 'turnId', 'turn_id']) {
+        map.putIfAbsent(key, () => data[key]);
+      }
+      return map;
+    }
+    return data;
   }
 
   String _itemTypeFromEvent(String eventType, Map<String, dynamic> data) {
@@ -801,6 +848,22 @@ class SessionRepository implements SessionSyncStore {
     final plan = data['plan'];
     if (plan is List && plan.isNotEmpty) return 'Plan updated';
     return 'Plan';
+  }
+
+  String _messageContentText(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value;
+    if (value is List) {
+      return value.map(_messageContentText).join();
+    }
+    if (value is Map) {
+      for (final key in ['text', 'content', 'message', 'value', 'delta']) {
+        final text = _messageContentText(value[key]);
+        if (text.isNotEmpty) return text;
+      }
+      return '';
+    }
+    return value.toString();
   }
 
   String _truncate(String value, int max) {

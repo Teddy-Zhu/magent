@@ -151,13 +151,263 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         'type': SessionEventTypes.normalize(eventType),
         'data': event['data'],
       };
-      _applyTurnRuntimeState(normalized['type'] as String);
+      final normalizedType = normalized['type'] as String;
+      _applyTurnRuntimeState(normalizedType, normalized['data']);
+      if (_isItemProjectionEvent(normalizedType)) {
+        _upsertRealtimeItemEvent(normalizedType, event);
+        return;
+      }
       final shouldAutoScroll = _isNearBottom();
       if (!_isActive) return;
       setState(() => _events.add(normalized));
       if (shouldAutoScroll) _scrollToBottom();
     });
     await engine.subscribeSession(widget.sessionId);
+  }
+
+  bool _isItemProjectionEvent(String type) {
+    switch (type) {
+      case SessionEventTypes.userMessage:
+      case SessionEventTypes.message:
+      case SessionEventTypes.messageDelta:
+      case SessionEventTypes.plan:
+      case SessionEventTypes.planDelta:
+      case SessionEventTypes.planUpdated:
+      case SessionEventTypes.reasoning:
+      case SessionEventTypes.reasoningSummaryDelta:
+      case SessionEventTypes.reasoningTextDelta:
+      case SessionEventTypes.reasoningSummaryPart:
+      case SessionEventTypes.diffUpdated:
+      case SessionEventTypes.commandCompleted:
+      case SessionEventTypes.commandOutputDelta:
+      case SessionEventTypes.fileWrite:
+      case SessionEventTypes.fileRead:
+      case SessionEventTypes.fileChangeOutputDelta:
+      case SessionEventTypes.mcpToolCompleted:
+      case SessionEventTypes.itemStarted:
+      case SessionEventTypes.itemCompleted:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  void _upsertRealtimeItemEvent(String type, Map<String, dynamic> event) {
+    final rawData = event['data'];
+    final data = rawData is Map
+        ? Map<String, dynamic>.from(rawData)
+        : <String, dynamic>{};
+    final itemKey = _eventItemKey(event, data);
+    if (itemKey.isEmpty) return;
+
+    final existingIndex = _events.indexWhere(
+      (item) => item['_item_key'] == itemKey,
+    );
+    final existing = existingIndex >= 0 ? _events[existingIndex] : null;
+    final existingData = existing?['data'] is Map
+        ? Map<String, dynamic>.from(existing!['data'] as Map)
+        : <String, dynamic>{};
+    final next = _mergedRealtimeItemEvent(
+      type: type,
+      itemKey: itemKey,
+      data: data,
+      existingData: existingData,
+    );
+    if (next == null) return;
+
+    final shouldAutoScroll = _isNearBottom();
+    if (!_isActive) return;
+    setState(() {
+      _removeMatchingPendingUserEvent(next);
+      final updatedIndex = _events.indexWhere(
+        (item) => item['_item_key'] == itemKey,
+      );
+      if (updatedIndex >= 0) {
+        _events[updatedIndex] = next;
+      } else {
+        _events.add(next);
+      }
+    });
+    if (shouldAutoScroll) _scrollToBottom();
+  }
+
+  void _removeMatchingPendingUserEvent(Map<String, dynamic> next) {
+    if (next['type'] != SessionEventTypes.userMessage) return;
+    final itemKey = next['_item_key']?.toString() ?? '';
+    if (itemKey.isEmpty || itemKey.startsWith('local-')) return;
+    final text = _messageText(next['data'], ['content', 'text']).trim();
+    if (text.isEmpty) return;
+    _events.removeWhere((event) {
+      if (event['type'] != SessionEventTypes.userMessage) return false;
+      final pendingKey = event['_item_key']?.toString() ?? '';
+      if (!pendingKey.startsWith('local-')) return false;
+      if (event['status']?.toString() != 'pending') return false;
+      final pendingText = _messageText(event['data'], [
+        'content',
+        'text',
+      ]).trim();
+      return pendingText == text;
+    });
+  }
+
+  Map<String, dynamic>? _mergedRealtimeItemEvent({
+    required String type,
+    required String itemKey,
+    required Map<String, dynamic> data,
+    required Map<String, dynamic> existingData,
+  }) {
+    final nextData = Map<String, dynamic>.from(existingData);
+    var renderType = type;
+    var status = 'in_progress';
+
+    switch (type) {
+      case SessionEventTypes.messageDelta:
+        renderType = SessionEventTypes.message;
+        nextData['text'] = '${nextData['text'] ?? ''}${_deltaText(data)}';
+      case SessionEventTypes.planDelta:
+        renderType = SessionEventTypes.plan;
+        nextData['text'] = '${nextData['text'] ?? ''}${_deltaText(data)}';
+      case SessionEventTypes.reasoningSummaryDelta:
+        renderType = SessionEventTypes.reasoning;
+        nextData['summary'] = '${nextData['summary'] ?? ''}${_deltaText(data)}';
+      case SessionEventTypes.reasoningTextDelta:
+        renderType = SessionEventTypes.reasoning;
+        nextData['content'] = '${nextData['content'] ?? ''}${_deltaText(data)}';
+      case SessionEventTypes.commandOutputDelta:
+        renderType = SessionEventTypes.commandOutputDelta;
+        nextData.addAll(_withoutDelta(data));
+        nextData['output'] = '${nextData['output'] ?? ''}${_deltaText(data)}';
+      case SessionEventTypes.fileChangeOutputDelta:
+        renderType = SessionEventTypes.fileChangeOutputDelta;
+        nextData.addAll(_withoutDelta(data));
+        nextData['output'] = '${nextData['output'] ?? ''}${_deltaText(data)}';
+      case SessionEventTypes.reasoningSummaryPart:
+        renderType = SessionEventTypes.reasoning;
+        final parts = List<dynamic>.from(
+          nextData['summary_parts'] as List? ?? [],
+        );
+        parts.add(data);
+        nextData['summary_parts'] = parts;
+      case SessionEventTypes.planUpdated:
+      case SessionEventTypes.diffUpdated:
+        nextData.addAll(data);
+      case SessionEventTypes.itemStarted:
+        final item = _eventItemPayload(data);
+        renderType = _eventTypeForItem(item, fallback: type);
+        nextData.addAll(item);
+        status = item['status']?.toString() ?? status;
+        if (!_hasVisibleItemContent(renderType, nextData)) return null;
+      case SessionEventTypes.itemCompleted:
+        final item = _eventItemPayload(data);
+        renderType = _eventTypeForItem(item, fallback: type);
+        nextData
+          ..clear()
+          ..addAll(item);
+        status = item['status']?.toString() ?? 'completed';
+      case SessionEventTypes.message:
+      case SessionEventTypes.userMessage:
+      case SessionEventTypes.commandCompleted:
+      case SessionEventTypes.fileWrite:
+      case SessionEventTypes.fileRead:
+      case SessionEventTypes.mcpToolCompleted:
+        nextData
+          ..clear()
+          ..addAll(data);
+        status = data['status']?.toString() ?? 'completed';
+      default:
+        return null;
+    }
+
+    return {
+      '_item_key': itemKey,
+      'type': renderType,
+      'status': status,
+      'data': nextData,
+    };
+  }
+
+  String _eventItemKey(Map<String, dynamic> event, Map<String, dynamic> data) {
+    for (final source in [event, data, _eventItemPayload(data)]) {
+      for (final key in ['item_id', 'itemId', 'id']) {
+        final value = source[key]?.toString();
+        if (value != null && value.isNotEmpty) return value;
+      }
+    }
+    return '';
+  }
+
+  Map<String, dynamic> _eventItemPayload(Map<String, dynamic> data) {
+    final item = data['item'];
+    if (item is Map) {
+      final map = Map<String, dynamic>.from(item);
+      for (final key in ['threadId', 'thread_id', 'turnId', 'turn_id']) {
+        map.putIfAbsent(key, () => data[key]);
+      }
+      return map;
+    }
+    return data;
+  }
+
+  String _eventTypeForItem(
+    Map<String, dynamic> item, {
+    required String fallback,
+  }) {
+    switch (SessionItemTypes.normalize(item['type']?.toString() ?? '')) {
+      case SessionItemTypes.userMessage:
+        return SessionEventTypes.userMessage;
+      case SessionItemTypes.agentMessage:
+        return SessionEventTypes.message;
+      case SessionItemTypes.commandExecution:
+        return SessionEventTypes.commandCompleted;
+      case SessionItemTypes.fileChange:
+        return SessionEventTypes.fileWrite;
+      case SessionItemTypes.fileRead:
+        return SessionEventTypes.fileRead;
+      case SessionItemTypes.mcpToolCall:
+        return SessionEventTypes.mcpToolCompleted;
+      case SessionItemTypes.plan:
+        return SessionEventTypes.plan;
+      case SessionItemTypes.reasoning:
+        return SessionEventTypes.reasoning;
+      case SessionItemTypes.diff:
+        return SessionEventTypes.diffUpdated;
+      default:
+        return fallback;
+    }
+  }
+
+  Map<String, dynamic> _withoutDelta(Map<String, dynamic> data) {
+    final copy = Map<String, dynamic>.from(data);
+    copy.remove('delta');
+    return copy;
+  }
+
+  String _deltaText(Map<String, dynamic> data) {
+    for (final key in ['delta', 'text', 'content', 'output']) {
+      final value = data[key];
+      if (value != null) return value.toString();
+    }
+    return '';
+  }
+
+  bool _hasVisibleItemContent(String type, Map<String, dynamic> data) {
+    switch (type) {
+      case SessionEventTypes.message:
+      case SessionEventTypes.userMessage:
+        return (data['text']?.toString().isNotEmpty ?? false) ||
+            (data['content']?.toString().isNotEmpty ?? false);
+      case SessionEventTypes.commandCompleted:
+      case SessionEventTypes.commandOutputDelta:
+        return data['command'] != null || data['output'] != null;
+      case SessionEventTypes.fileWrite:
+      case SessionEventTypes.fileChangeOutputDelta:
+      case SessionEventTypes.fileRead:
+        return data['path'] != null ||
+            data['changes'] != null ||
+            data['output'] != null;
+      default:
+        return data.isNotEmpty;
+    }
   }
 
   Future<void> _loadSession() async {
@@ -206,7 +456,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return merged;
   }
 
-  void _applyTurnRuntimeState(String type) {
+  void _applyTurnRuntimeState(String type, Object? data) {
     if (!_isActive) return;
     switch (type) {
       case SessionEventTypes.turnStarted:
@@ -216,15 +466,47 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         });
         break;
       case SessionEventTypes.turnCompleted:
+        setState(() => _turnActive = false);
+        break;
       case SessionEventTypes.turnFailed:
       case SessionEventTypes.error:
       case SessionEventTypes.exited:
-        final hasActiveItems = _itemsContainActiveTurn(_events);
-        if (_turnActive && !hasActiveItems) {
-          setState(() => _turnActive = false);
+        setState(() {
+          _turnActive = false;
+          _queuedInputCount = 0;
+        });
+        break;
+      case SessionEventTypes.statusChanged:
+        final status = _runtimeStatusType(data);
+        if (status == 'active' ||
+            status == 'inProgress' ||
+            status == 'running') {
+          setState(() => _turnActive = true);
+        } else if (status == 'idle' ||
+            status == 'notLoaded' ||
+            status == 'not_loaded' ||
+            status == 'stopped' ||
+            status == 'closed' ||
+            status == 'completed' ||
+            status == 'systemError' ||
+            status == 'failed' ||
+            status == 'error') {
+          setState(() {
+            _turnActive = false;
+            if (status != 'idle') _queuedInputCount = 0;
+          });
         }
         break;
     }
+  }
+
+  String? _runtimeStatusType(Object? data) {
+    if (data is! Map) return null;
+    final status = data['status'];
+    if (status is Map) {
+      return status['type']?.toString() ?? status['status']?.toString();
+    }
+    return status?.toString();
   }
 
   Future<void> _loadItems() async {
@@ -834,30 +1116,37 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final data = content is Map<String, dynamic>
         ? content
         : <String, dynamic>{'value': content};
+    Map<String, dynamic> buildEvent(String eventType) {
+      final event = <String, dynamic>{'type': eventType, 'data': data};
+      final itemKey = item['item_id']?.toString();
+      if (itemKey != null && itemKey.isNotEmpty) event['_item_key'] = itemKey;
+      final status = item['status']?.toString();
+      if (status != null && status.isNotEmpty) event['status'] = status;
+      return event;
+    }
+
     switch (type) {
       case SessionItemTypes.userMessage:
-        return {'type': SessionEventTypes.userMessage, 'data': data};
+        return buildEvent(SessionEventTypes.userMessage);
       case SessionItemTypes.agentMessage:
-        return {'type': SessionEventTypes.message, 'data': data};
+        return buildEvent(SessionEventTypes.message);
       case SessionItemTypes.commandExecution:
-        return {'type': SessionEventTypes.commandCompleted, 'data': data};
+        return buildEvent(SessionEventTypes.commandCompleted);
       case SessionItemTypes.fileChange:
-        return {'type': SessionEventTypes.fileWrite, 'data': data};
+        return buildEvent(SessionEventTypes.fileWrite);
       case SessionItemTypes.fileRead:
-        return {'type': SessionEventTypes.fileRead, 'data': data};
+        return buildEvent(SessionEventTypes.fileRead);
       case SessionItemTypes.mcpToolCall:
-        return {'type': SessionEventTypes.mcpToolCompleted, 'data': data};
+        return buildEvent(SessionEventTypes.mcpToolCompleted);
       case SessionItemTypes.plan:
-        return {'type': SessionEventTypes.plan, 'data': data};
+        return buildEvent(SessionEventTypes.plan);
       case SessionItemTypes.reasoning:
-        return {'type': SessionEventTypes.reasoning, 'data': data};
+        return buildEvent(SessionEventTypes.reasoning);
       case SessionItemTypes.diff:
-        return {'type': SessionEventTypes.diffUpdated, 'data': data};
+        return buildEvent(SessionEventTypes.diffUpdated);
       default:
-        return {
-          'type': SessionEventTypes.itemCompleted,
-          'data': {...data, 'item_type': type},
-        };
+        return buildEvent(SessionEventTypes.itemCompleted)
+          ..['data'] = {...data, 'item_type': type};
     }
   }
 
@@ -1138,15 +1427,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     switch (type) {
       case 'user.input':
-        return _UserBubble(content: data?['content'] ?? '');
+        return _UserBubble(content: _messageText(data, ['content', 'text']));
       case SessionEventTypes.userMessage:
-        return _UserBubble(content: data?['text'] ?? data?['content'] ?? '');
+        return _UserBubble(content: _messageText(data, ['text', 'content']));
       case SessionEventTypes.message:
-        return _MessageBubble(content: data?['text'] ?? '');
+        return _MessageBubble(content: _messageText(data, ['text', 'content']));
       case SessionEventTypes.messageDelta:
-        return _MessageBubble(content: data?['delta'] ?? data?['text'] ?? '');
+        return _MessageBubble(
+          content: _messageText(data, ['delta', 'text', 'content']),
+        );
       case SessionEventTypes.output:
-        return _MessageBubble(content: data?['content'] ?? '');
+        return _MessageBubble(content: _messageText(data, ['content', 'text']));
       case SessionEventTypes.plan:
       case SessionEventTypes.planDelta:
       case SessionEventTypes.planUpdated:
@@ -1301,6 +1592,28 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       return lines.join('\n');
     }
     return explanation ?? AppLocalizations.of(context)!.chatPlanUpdated;
+  }
+
+  String _messageText(dynamic data, List<String> preferredKeys) {
+    if (data == null) return '';
+    if (data is String) return data;
+    if (data is List) {
+      return data.map((item) => _messageText(item, preferredKeys)).join();
+    }
+    if (data is Map) {
+      for (final key in preferredKeys) {
+        final value = data[key];
+        final text = _messageText(value, preferredKeys);
+        if (text.isNotEmpty) return text;
+      }
+      for (final key in ['text', 'content', 'delta', 'message', 'value']) {
+        if (preferredKeys.contains(key)) continue;
+        final text = _messageText(data[key], preferredKeys);
+        if (text.isNotEmpty) return text;
+      }
+      return '';
+    }
+    return data.toString();
   }
 
   String _reasoningText(dynamic data) {
