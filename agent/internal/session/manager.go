@@ -108,6 +108,7 @@ func (m *Manager) forwardEvents(sessionID string, p provider.Provider) {
 	defer p.Unsubscribe(sessionID)
 
 	log.Debug("session", "forwardEvents started id=%s", sessionID)
+	index := 0
 	for event := range events {
 		m.wsHub.Broadcast(map[string]any{
 			"type":       "session.event",
@@ -116,9 +117,11 @@ func (m *Manager) forwardEvents(sessionID string, p provider.Provider) {
 			"event_type": event.Type,
 			"item_id":    event.ItemID,
 			"turn_id":    event.TurnID,
+			"index":      index,
 			"created_at": event.Timestamp.Unix(),
 			"data":       event.Payload,
 		})
+		index++
 	}
 	log.Debug("session", "forwardEvents ended id=%s", sessionID)
 }
@@ -305,11 +308,34 @@ func (m *Manager) InterruptSession(ctx context.Context, sessionID string) error 
 func (m *Manager) StopSession(ctx context.Context, sessionID string) error {
 	for _, p := range m.registry.ListProviders() {
 		if p.HasSession(sessionID) {
-			return p.StopSession(ctx, sessionID)
+			if err := p.StopSession(ctx, sessionID); err != nil {
+				return err
+			}
+			m.markSessionStopped(sessionID)
+			return nil
 		}
 	}
 	// Not in provider — nothing to stop
+	m.markSessionStopped(sessionID)
 	return nil
+}
+
+func (m *Manager) markSessionStopped(sessionID string) {
+	sess, err := m.store.Get(sessionID)
+	if err == nil && sess != nil {
+		sess.Status = string(provider.SessionStatusStopped)
+		if updateErr := m.store.Update(sess); updateErr != nil {
+			log.Warn("session", "mark stopped failed id=%s: %v", sessionID, updateErr)
+		}
+	}
+	m.wsHub.Broadcast(map[string]any{
+		"type":       "session.status_changed",
+		"session_id": sessionID,
+		"data": map[string]any{
+			"id":     sessionID,
+			"status": string(provider.SessionStatusStopped),
+		},
+	})
 }
 
 // ForkSession forks a session.

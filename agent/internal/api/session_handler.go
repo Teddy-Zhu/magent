@@ -262,6 +262,7 @@ func itemsToAPIItems(items []provider.SessionItem) []gin.H {
 			"cursor":     item.Cursor,
 			"item_id":    item.ItemID,
 			"turn_id":    item.TurnID,
+			"index":      item.Index,
 			"type":       item.Type,
 			"status":     item.Status,
 			"role":       item.Role,

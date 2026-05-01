@@ -105,10 +105,16 @@ class SessionRepository implements SessionSyncStore {
         role: const Value('user'),
         summary: Value(_truncate(content, 160)),
         content: Value(_encodeJson({'content': content, 'text': content})),
+        itemIndex: Value(now.microsecondsSinceEpoch),
         createdAt: Value(now),
         updatedAt: Value(now),
       ),
     );
+  }
+
+  Future<Map<String, dynamic>?> getCachedSession(String sessionId) async {
+    final row = await _db.getSession(agentId, sessionId);
+    return row == null ? null : _sessionToMap(row);
   }
 
   /// Returns sessions for a project. Loads from local DB first, then syncs from API.
@@ -415,6 +421,11 @@ class SessionRepository implements SessionSyncStore {
     var role = existing?.role ?? _roleForType(type);
     var summary = existing?.summary;
     var createdAt = existing?.createdAt ?? now;
+    var itemIndex =
+        _parseInt(event['index']) ??
+        _parseInt(data['index']) ??
+        existing?.itemIndex ??
+        now.microsecondsSinceEpoch;
 
     switch (eventType) {
       case SessionEventTypes.messageDelta:
@@ -487,6 +498,10 @@ class SessionRepository implements SessionSyncStore {
           ..addAll(completed);
         summary = _contentSummary(type, nextContent);
         createdAt = existing?.createdAt ?? now;
+        itemIndex =
+            _parseInt(completed['index']) ??
+            _parseInt(data['index']) ??
+            itemIndex;
     }
 
     await _db.insertOrUpdateItem(
@@ -503,6 +518,7 @@ class SessionRepository implements SessionSyncStore {
         summary: Value(summary),
         content: Value(_encodeJson(nextContent)),
         providerCursor: Value(cursor),
+        itemIndex: Value(itemIndex),
         createdAt: Value(createdAt),
         updatedAt: Value(now),
       ),
@@ -559,6 +575,7 @@ class SessionRepository implements SessionSyncStore {
             map['cursor']?.toString() ?? map['provider_cursor']?.toString(),
           ),
           revision: Value(_parseInt(map['revision'])),
+          itemIndex: Value(_parseInt(map['index']) ?? 0),
           createdAt: Value(_parseDateTime(map['created_at'])),
           updatedAt: Value(_parseDateTime(map['updated_at'])),
         ),
@@ -660,6 +677,7 @@ class SessionRepository implements SessionSyncStore {
       'summary': item.summary,
       'content': _decodeJson(item.content),
       'cursor': item.providerCursor,
+      'index': item.itemIndex,
       'created_at': item.createdAt.toIso8601String(),
       'updated_at': item.updatedAt.toIso8601String(),
     };

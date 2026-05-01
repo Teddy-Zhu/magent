@@ -517,18 +517,19 @@ func reverseThreadTurns(turns []ThreadTurn) {
 
 func codexTurnsToEvents(threadID string, turns []ThreadTurn) []provider.ProviderEvent {
 	var events []provider.ProviderEvent
-	for _, turn := range turns {
+	for turnIndex, turn := range turns {
 		ts := codexTurnTime(turn)
-		for _, item := range turn.Items {
-			events = append(events, codexItemToEvent(threadID, turn.ID, item, ts))
+		for itemIndex, item := range turn.Items {
+			events = append(events, codexItemToEvent(threadID, turn.ID, item, ts, codexItemIndex(turnIndex, itemIndex)))
 		}
 	}
 	return events
 }
 
-func codexItemToEvent(threadID, turnID string, item TurnItem, ts time.Time) provider.ProviderEvent {
+func codexItemToEvent(threadID, turnID string, item TurnItem, ts time.Time, index int) provider.ProviderEvent {
 	itemType := normalizeCodexItemType(item.Type)
 	payload := codexItemPayload(item)
+	payload["index"] = index
 	eventType := string(provider.EventItemCompleted)
 	switch itemType {
 	case string(provider.ItemTypeUserMessage):
@@ -551,10 +552,7 @@ func codexItemToEvent(threadID, turnID string, item TurnItem, ts time.Time) prov
 		}
 	case string(provider.ItemTypeFileChange):
 		eventType = string(provider.EventFileWrite)
-		if len(item.Changes) > 0 {
-			payload["path"] = item.Changes[0].Path
-			payload["kind"] = item.Changes[0].Kind
-		}
+		applyCodexFileChangeDetails(payload, item.Changes)
 	case string(provider.ItemTypeFileRead):
 		eventType = string(provider.EventFileRead)
 	case string(provider.ItemTypeMCPToolCall):
@@ -573,15 +571,16 @@ func codexItemToEvent(threadID, turnID string, item TurnItem, ts time.Time) prov
 
 func codexTurnsToItems(turns []ThreadTurn) []provider.SessionItem {
 	var items []provider.SessionItem
-	for _, turn := range turns {
+	for turnIndex, turn := range turns {
 		createdAt := codexTurnTime(turn)
 		updatedAt := codexTurnUpdatedTime(turn)
-		for _, item := range turn.Items {
+		for itemIndex, item := range turn.Items {
 			itemType := normalizeCodexItemType(item.Type)
 			items = append(items, provider.SessionItem{
 				Cursor:    codexItemCursor(turn.ID, item.ID),
 				ItemID:    item.ID,
 				TurnID:    turn.ID,
+				Index:     codexItemIndex(turnIndex, itemIndex),
 				Type:      itemType,
 				Status:    codexItemStatus(item, turn),
 				Role:      codexItemRole(itemType),
@@ -593,6 +592,10 @@ func codexTurnsToItems(turns []ThreadTurn) []provider.SessionItem {
 		}
 	}
 	return items
+}
+
+func codexItemIndex(turnIndex, itemIndex int) int {
+	return turnIndex*100000 + itemIndex
 }
 
 func codexTurnTime(turn ThreadTurn) time.Time {
@@ -695,7 +698,130 @@ func codexItemContent(item TurnItem) any {
 	if item.ExitCode != nil {
 		content["exit_code"] = *item.ExitCode
 	}
+	if normalizeCodexItemType(item.Type) == string(provider.ItemTypeFileChange) {
+		applyCodexFileChangeDetails(content, item.Changes)
+	}
 	return content
+}
+
+func applyCodexFileChangeDetails(payload map[string]any, changes []TurnItemChange) {
+	if len(changes) == 0 {
+		return
+	}
+	if payload["path"] == nil && changes[0].Path != "" {
+		payload["path"] = changes[0].Path
+	}
+	if payload["kind"] == nil {
+		if kind := changes[0].Kind.Type; kind != "" {
+			payload["kind"] = kind
+		} else if changes[0].Kind.Raw != nil {
+			payload["kind"] = changes[0].Kind.Raw
+		}
+	}
+	additions, deletions, hasStats := countCodexFileChanges(changes)
+	if hasStats {
+		payload["additions"] = additions
+		payload["deletions"] = deletions
+	}
+	payload["change_count"] = len(changes)
+	if payload["diff"] == nil {
+		if diff := combinedCodexDiff(changes); diff != "" {
+			payload["diff"] = diff
+		}
+	}
+}
+
+func applyCodexFileChangePayloadDetails(payload map[string]any) {
+	applyCodexFileChangeDetails(payload, codexPayloadChanges(payload["changes"]))
+}
+
+func codexPayloadChanges(value any) []TurnItemChange {
+	rawChanges, ok := value.([]any)
+	if !ok {
+		return nil
+	}
+	changes := make([]TurnItemChange, 0, len(rawChanges))
+	for _, rawChange := range rawChanges {
+		changeMap, ok := rawChange.(map[string]any)
+		if !ok {
+			continue
+		}
+		changes = append(changes, TurnItemChange{
+			Path: stringFromAny(changeMap["path"]),
+			Kind: changeKindFromAny(changeMap["kind"]),
+			Diff: stringFromAny(changeMap["diff"]),
+		})
+	}
+	return changes
+}
+
+func changeKindFromAny(value any) ChangeKind {
+	switch kind := value.(type) {
+	case string:
+		return ChangeKind{Type: kind, Raw: kind}
+	case map[string]any:
+		result := ChangeKind{
+			Type: stringFromAny(kind["type"]),
+			Raw:  kind,
+		}
+		if movePath := stringFromAny(kind["move_path"]); movePath != "" {
+			result.MovePath = &movePath
+		}
+		return result
+	default:
+		return ChangeKind{}
+	}
+}
+
+func countCodexFileChanges(changes []TurnItemChange) (int, int, bool) {
+	var additions, deletions int
+	hasDiff := false
+	for _, change := range changes {
+		if change.Diff == "" {
+			continue
+		}
+		hasDiff = true
+		add, del := countUnifiedDiffLines(change.Diff)
+		additions += add
+		deletions += del
+	}
+	return additions, deletions, hasDiff && (additions > 0 || deletions > 0)
+}
+
+func countUnifiedDiffLines(diff string) (int, int) {
+	var additions, deletions int
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---"):
+			continue
+		case strings.HasPrefix(line, "+"):
+			additions++
+		case strings.HasPrefix(line, "-"):
+			deletions++
+		}
+	}
+	return additions, deletions
+}
+
+func combinedCodexDiff(changes []TurnItemChange) string {
+	var parts []string
+	for _, change := range changes {
+		if change.Diff != "" {
+			parts = append(parts, change.Diff)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
+func stringFromAny(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	default:
+		return fmt.Sprint(v)
+	}
 }
 
 func codexItemPayload(item TurnItem) map[string]any {

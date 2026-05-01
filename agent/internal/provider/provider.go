@@ -112,6 +112,7 @@ type SessionItem struct {
 	Cursor    string    `json:"cursor,omitempty"`
 	ItemID    string    `json:"item_id"`
 	TurnID    string    `json:"turn_id,omitempty"`
+	Index     int       `json:"index"`
 	Type      string    `json:"type"`
 	Status    string    `json:"status,omitempty"`
 	Role      string    `json:"role,omitempty"`

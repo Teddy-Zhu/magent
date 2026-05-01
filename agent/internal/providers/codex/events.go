@@ -139,12 +139,7 @@ func (c *AppServerClient) handleNotification(msg *protocol.JSONRPCResponse) {
 				Timestamp: time.Now(),
 			})
 		case string(provider.ItemTypeFileChange):
-			if changes, ok := item["changes"].([]any); ok && len(changes) > 0 {
-				if ch, ok := changes[0].(map[string]any); ok {
-					item["path"] = ch["path"]
-					item["kind"] = ch["kind"]
-				}
-			}
+			applyCodexFileChangePayloadDetails(item)
 			c.emitEvent(provider.ProviderEvent{
 				Type:      string(provider.EventFileWrite),
 				SessionID: sessionIDFromPayload(item),

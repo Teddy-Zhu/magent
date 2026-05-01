@@ -14,16 +14,19 @@ func (p *CodexProvider) Config() provider.ProviderConfig {
 	if p.cachedConfig != nil {
 		cfg := *p.cachedConfig
 		p.configMu.RUnlock()
+		cfg.Skills = p.fetchSkills()
 		return cfg
 	}
 	p.configMu.RUnlock()
 
 	cfg := p.fetchConfig()
 	if cfg != nil {
+		result := *cfg
+		result.Skills = p.fetchSkills()
 		p.configMu.Lock()
 		p.cachedConfig = cfg
 		p.configMu.Unlock()
-		return *cfg
+		return result
 	}
 
 	return provider.ProviderConfig{
@@ -60,7 +63,6 @@ func (p *CodexProvider) fetchConfig() *provider.ProviderConfig {
 		return nil
 	}
 	requirements := readConfigRequirements(ctx, client)
-	skills := readSkills(ctx, client)
 	mcpServers := readMCPServers(ctx, client)
 
 	var providerModels []provider.ModelInfo
@@ -100,9 +102,20 @@ func (p *CodexProvider) fetchConfig() *provider.ProviderConfig {
 		ApprovalPolicies: approvalPolicies,
 		SandboxModes:     sandboxModes,
 		Requirements:     requirements,
-		Skills:           skills,
 		MCPServers:       mcpServers,
 	}
+}
+
+func (p *CodexProvider) fetchSkills() any {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := p.appServerClient(ctx)
+	if err != nil {
+		log.Warn("codex", "config: skills unavailable: %v", err)
+		return nil
+	}
+	return readSkills(ctx, client)
 }
 
 func readConfigRequirements(ctx context.Context, client *AppServerClient) any {

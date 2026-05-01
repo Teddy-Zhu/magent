@@ -33,6 +33,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final _templateService = MessageTemplateService();
   final List<Map<String, dynamic>> _inputItems = [];
   final List<Map<String, dynamic>> _selectedSkills = [];
+  final List<Map<String, dynamic>> _skills = [];
   var _disposed = false;
   bool _loading = true;
   bool _resuming = false;
@@ -85,6 +86,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final engine = ref.read(syncEngineProvider);
     engine?.start();
     await _loadSession();
+    await _refreshSkills();
     await _loadItems();
     _connectSessionEvents();
   }
@@ -144,10 +146,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Future<void> _loadSession() async {
     if (_api == null) return;
     try {
+      final cached = await _repo?.getCachedSession(widget.sessionId);
       final session = await _api!.session.getSession(widget.sessionId);
       if (mounted) {
         setState(() {
-          _session = session;
+          _session = _mergeSession(cached, session);
         });
         debugPrint('ChatPage: loaded session status=${_session?['status']}');
       }
@@ -157,17 +160,33 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       );
       // If 404, session might only exist in provider — set as idle
       if (e.response?.statusCode == 404 && mounted) {
+        final cached = await _repo?.getCachedSession(widget.sessionId);
         setState(() {
           _session = {
+            ...?cached,
             'id': widget.sessionId,
             'status': 'stopped',
-            'provider_id': 'codex',
+            'provider_id': cached?['provider_id'] ?? 'codex',
           };
         });
       }
     } catch (e) {
       debugPrint('ChatPage: loadSession error: $e');
     }
+  }
+
+  Map<String, dynamic> _mergeSession(
+    Map<String, dynamic>? cached,
+    Map<String, dynamic> remote,
+  ) {
+    final merged = <String, dynamic>{...?cached, ...remote};
+    for (final key in ['project_id', 'provider_id', 'thread_id', 'workdir']) {
+      final value = merged[key]?.toString();
+      if ((value == null || value.isEmpty) && cached?[key] != null) {
+        merged[key] = cached![key];
+      }
+    }
+    return merged;
   }
 
   Future<void> _loadItems() async {
@@ -400,26 +419,47 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _openSkillPicker() async {
     if (_bootstrap == null) return;
-    final providerId = _session == null
-        ? 'codex'
-        : canonicalProviderId(Map<String, dynamic>.from(_session!)) ?? 'codex';
-    final provider = await _bootstrap!.getProvider(providerId);
+    if (_skills.isEmpty) {
+      await _refreshSkills(showError: true);
+    }
     if (!mounted) return;
-    final skills = _skillsFromProvider(provider);
-    if (skills.isEmpty) {
+    if (_skills.isEmpty) {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(const SnackBar(content: Text('当前没有可用技能')));
       return;
     }
-    final selected = await _SkillPickerSheet.show(context, skills);
+    final selected = await _SkillPickerSheet.show(context, _skills);
     if (selected == null) return;
     _insertSkill(selected);
   }
 
+  Future<void> _refreshSkills({bool showError = false}) async {
+    if (_bootstrap == null) return;
+    final providerId = _session == null
+        ? 'codex'
+        : canonicalProviderId(Map<String, dynamic>.from(_session!)) ?? 'codex';
+    try {
+      final config = await _bootstrap!.fetchProviderConfig(providerId);
+      final skills = _skillsFromConfig(config);
+      if (!mounted) return;
+      setState(() {
+        _skills
+          ..clear()
+          ..addAll(skills);
+      });
+    } catch (e) {
+      if (!mounted || !showError) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(userFriendlyErrorMessage(e, action: '加载技能失败'))),
+      );
+    }
+  }
+
   Future<void> _openFilePicker() async {
     if (_files == null || _session == null) return;
-    final projectId = _session!['project_id']?.toString();
+    final projectId = await _resolveProjectId();
+    if (!mounted) return;
     if (projectId == null || projectId.isEmpty) {
       ScaffoldMessenger.of(
         context,
@@ -435,11 +475,66 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _insertTextToken('@$selected');
   }
 
-  List<Map<String, dynamic>> _skillsFromProvider(
-    Map<String, dynamic>? provider,
+  Future<String?> _resolveProjectId() async {
+    final current = _session?['project_id']?.toString();
+    if (current != null && current.isNotEmpty) return current;
+
+    final cached = await _repo?.getCachedSession(widget.sessionId);
+    final cachedProjectId = cached?['project_id']?.toString();
+    if (cachedProjectId != null && cachedProjectId.isNotEmpty) {
+      if (mounted) {
+        setState(() => _session = _mergeSession(_session, cached!));
+      }
+      return cachedProjectId;
+    }
+
+    if (_bootstrap == null) return null;
+    final workdir =
+        _session?['workdir']?.toString() ?? cached?['workdir']?.toString();
+    var projects = await _bootstrap!.getProjects();
+    if (projects.isEmpty) {
+      projects = await _bootstrap!.refreshProjects();
+    }
+    final matched = _projectForWorkdir(projects, workdir);
+    final id = matched?['id']?.toString();
+    if (id != null && id.isNotEmpty && mounted) {
+      setState(() {
+        _session = {
+          ...?_session,
+          ...?cached,
+          'project_id': id,
+          if (matched?['path'] != null) 'workdir': matched!['path'],
+        };
+      });
+    }
+    return id;
+  }
+
+  Map<String, dynamic>? _projectForWorkdir(
+    List<Map<String, dynamic>> projects,
+    String? workdir,
   ) {
-    final config = provider?['config'];
-    if (config is! Map) return const [];
+    if (projects.length == 1) return projects.first;
+    final normalizedWorkdir = _normalizePath(workdir);
+    if (normalizedWorkdir.isEmpty) return null;
+    for (final project in projects) {
+      if (_normalizePath(project['path']?.toString()) == normalizedWorkdir) {
+        return project;
+      }
+    }
+    return null;
+  }
+
+  String _normalizePath(String? path) {
+    if (path == null) return '';
+    var value = path.trim();
+    while (value.length > 1 && value.endsWith('/')) {
+      value = value.substring(0, value.length - 1);
+    }
+    return value;
+  }
+
+  List<Map<String, dynamic>> _skillsFromConfig(Map<String, dynamic> config) {
     final rawSkills = config['skills'];
     final result = <Map<String, dynamic>>[];
 
@@ -857,7 +952,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         return _ToolCallCard(
           icon: Icons.edit_note,
           title: _toolText(data?['path'], fallback: '文件变更'),
-          output: '+${data?['additions'] ?? 0} -${data?['deletions'] ?? 0}',
+          output: _fileChangeSummary(data),
           success: true,
         );
       case SessionEventTypes.fileRead:
@@ -1017,6 +1112,43 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
     final text = value.toString().trim();
     return text.isEmpty ? fallback : text;
+  }
+
+  String _fileChangeSummary(dynamic data) {
+    if (data is! Map) return '文件已更新';
+    final additions = _intValue(data['additions']);
+    final deletions = _intValue(data['deletions']);
+    final kind = _changeKindText(data['kind']);
+    final parts = <String>[];
+    if (kind.isNotEmpty) parts.add(kind);
+    if ((additions ?? 0) > 0 || (deletions ?? 0) > 0) {
+      parts.add('+${additions ?? 0} -${deletions ?? 0}');
+    }
+    final count = _intValue(data['change_count']);
+    if (count != null && count > 1) parts.add('$count 个文件');
+    if (parts.isNotEmpty) return parts.join(' · ');
+    final diff = data['diff']?.toString().trim();
+    if (diff != null && diff.isNotEmpty) return diff;
+    return '文件已更新';
+  }
+
+  int? _intValue(dynamic value) {
+    if (value == null) return null;
+    if (value is int) return value;
+    if (value is num) return value.toInt();
+    return int.tryParse(value.toString());
+  }
+
+  String _changeKindText(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value.trim();
+    if (value is Map) {
+      final type = value['type']?.toString().trim() ?? '';
+      final movePath = value['move_path']?.toString().trim() ?? '';
+      if (type.isNotEmpty && movePath.isNotEmpty) return '$type -> $movePath';
+      return type;
+    }
+    return value.toString().trim();
   }
 
   Color _statusColor(String status) {

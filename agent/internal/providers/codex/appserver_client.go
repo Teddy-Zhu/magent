@@ -545,12 +545,43 @@ type TurnItem struct {
 		Type string `json:"type"`
 		Text string `json:"text"`
 	} `json:"content,omitempty"`
-	Changes []struct {
-		Path string `json:"path"`
-		Kind string `json:"kind"`
-		Diff string `json:"diff"`
-	} `json:"changes,omitempty"`
-	Raw map[string]any `json:"-"`
+	Changes []TurnItemChange `json:"changes,omitempty"`
+	Raw     map[string]any   `json:"-"`
+}
+
+type TurnItemChange struct {
+	Path string     `json:"path"`
+	Kind ChangeKind `json:"kind"`
+	Diff string     `json:"diff"`
+}
+
+type ChangeKind struct {
+	Type     string  `json:"type,omitempty"`
+	MovePath *string `json:"move_path,omitempty"`
+	Raw      any     `json:"-"`
+}
+
+func (k *ChangeKind) UnmarshalJSON(data []byte) error {
+	var asString string
+	if err := json.Unmarshal(data, &asString); err == nil {
+		k.Type = asString
+		k.Raw = asString
+		return nil
+	}
+	var asObject struct {
+		Type     string  `json:"type"`
+		MovePath *string `json:"move_path"`
+	}
+	if err := json.Unmarshal(data, &asObject); err != nil {
+		return err
+	}
+	k.Type = asObject.Type
+	k.MovePath = asObject.MovePath
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err == nil {
+		k.Raw = raw
+	}
+	return nil
 }
 
 func (i *TurnItem) UnmarshalJSON(data []byte) error {

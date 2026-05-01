@@ -2977,6 +2977,18 @@ class $SessionItemEntriesTable extends SessionItemEntries
     type: DriftSqlType.int,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _itemIndexMeta = const VerificationMeta(
+    'itemIndex',
+  );
+  @override
+  late final GeneratedColumn<int> itemIndex = GeneratedColumn<int>(
+    'item_index',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -3012,6 +3024,7 @@ class $SessionItemEntriesTable extends SessionItemEntries
     content,
     providerCursor,
     revision,
+    itemIndex,
     createdAt,
     updatedAt,
   ];
@@ -3104,6 +3117,12 @@ class $SessionItemEntriesTable extends SessionItemEntries
         revision.isAcceptableOrUnknown(data['revision']!, _revisionMeta),
       );
     }
+    if (data.containsKey('item_index')) {
+      context.handle(
+        _itemIndexMeta,
+        itemIndex.isAcceptableOrUnknown(data['item_index']!, _itemIndexMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -3173,6 +3192,10 @@ class $SessionItemEntriesTable extends SessionItemEntries
         DriftSqlType.int,
         data['${effectivePrefix}revision'],
       ),
+      itemIndex: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}item_index'],
+      )!,
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -3203,6 +3226,7 @@ class SessionItemEntry extends DataClass
   final String content;
   final String? providerCursor;
   final int? revision;
+  final int itemIndex;
   final DateTime createdAt;
   final DateTime updatedAt;
   const SessionItemEntry({
@@ -3217,6 +3241,7 @@ class SessionItemEntry extends DataClass
     required this.content,
     this.providerCursor,
     this.revision,
+    required this.itemIndex,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -3246,6 +3271,7 @@ class SessionItemEntry extends DataClass
     if (!nullToAbsent || revision != null) {
       map['revision'] = Variable<int>(revision);
     }
+    map['item_index'] = Variable<int>(itemIndex);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     return map;
@@ -3274,6 +3300,7 @@ class SessionItemEntry extends DataClass
       revision: revision == null && nullToAbsent
           ? const Value.absent()
           : Value(revision),
+      itemIndex: Value(itemIndex),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -3296,6 +3323,7 @@ class SessionItemEntry extends DataClass
       content: serializer.fromJson<String>(json['content']),
       providerCursor: serializer.fromJson<String?>(json['providerCursor']),
       revision: serializer.fromJson<int?>(json['revision']),
+      itemIndex: serializer.fromJson<int>(json['itemIndex']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -3315,6 +3343,7 @@ class SessionItemEntry extends DataClass
       'content': serializer.toJson<String>(content),
       'providerCursor': serializer.toJson<String?>(providerCursor),
       'revision': serializer.toJson<int?>(revision),
+      'itemIndex': serializer.toJson<int>(itemIndex),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -3332,6 +3361,7 @@ class SessionItemEntry extends DataClass
     String? content,
     Value<String?> providerCursor = const Value.absent(),
     Value<int?> revision = const Value.absent(),
+    int? itemIndex,
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => SessionItemEntry(
@@ -3348,6 +3378,7 @@ class SessionItemEntry extends DataClass
         ? providerCursor.value
         : this.providerCursor,
     revision: revision.present ? revision.value : this.revision,
+    itemIndex: itemIndex ?? this.itemIndex,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -3366,6 +3397,7 @@ class SessionItemEntry extends DataClass
           ? data.providerCursor.value
           : this.providerCursor,
       revision: data.revision.present ? data.revision.value : this.revision,
+      itemIndex: data.itemIndex.present ? data.itemIndex.value : this.itemIndex,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -3385,6 +3417,7 @@ class SessionItemEntry extends DataClass
           ..write('content: $content, ')
           ..write('providerCursor: $providerCursor, ')
           ..write('revision: $revision, ')
+          ..write('itemIndex: $itemIndex, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -3404,6 +3437,7 @@ class SessionItemEntry extends DataClass
     content,
     providerCursor,
     revision,
+    itemIndex,
     createdAt,
     updatedAt,
   );
@@ -3422,6 +3456,7 @@ class SessionItemEntry extends DataClass
           other.content == this.content &&
           other.providerCursor == this.providerCursor &&
           other.revision == this.revision &&
+          other.itemIndex == this.itemIndex &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -3438,6 +3473,7 @@ class SessionItemEntriesCompanion extends UpdateCompanion<SessionItemEntry> {
   final Value<String> content;
   final Value<String?> providerCursor;
   final Value<int?> revision;
+  final Value<int> itemIndex;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<int> rowid;
@@ -3453,6 +3489,7 @@ class SessionItemEntriesCompanion extends UpdateCompanion<SessionItemEntry> {
     this.content = const Value.absent(),
     this.providerCursor = const Value.absent(),
     this.revision = const Value.absent(),
+    this.itemIndex = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -3469,6 +3506,7 @@ class SessionItemEntriesCompanion extends UpdateCompanion<SessionItemEntry> {
     this.content = const Value.absent(),
     this.providerCursor = const Value.absent(),
     this.revision = const Value.absent(),
+    this.itemIndex = const Value.absent(),
     required DateTime createdAt,
     required DateTime updatedAt,
     this.rowid = const Value.absent(),
@@ -3490,6 +3528,7 @@ class SessionItemEntriesCompanion extends UpdateCompanion<SessionItemEntry> {
     Expression<String>? content,
     Expression<String>? providerCursor,
     Expression<int>? revision,
+    Expression<int>? itemIndex,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<int>? rowid,
@@ -3506,6 +3545,7 @@ class SessionItemEntriesCompanion extends UpdateCompanion<SessionItemEntry> {
       if (content != null) 'content': content,
       if (providerCursor != null) 'provider_cursor': providerCursor,
       if (revision != null) 'revision': revision,
+      if (itemIndex != null) 'item_index': itemIndex,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
@@ -3524,6 +3564,7 @@ class SessionItemEntriesCompanion extends UpdateCompanion<SessionItemEntry> {
     Value<String>? content,
     Value<String?>? providerCursor,
     Value<int?>? revision,
+    Value<int>? itemIndex,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<int>? rowid,
@@ -3540,6 +3581,7 @@ class SessionItemEntriesCompanion extends UpdateCompanion<SessionItemEntry> {
       content: content ?? this.content,
       providerCursor: providerCursor ?? this.providerCursor,
       revision: revision ?? this.revision,
+      itemIndex: itemIndex ?? this.itemIndex,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
@@ -3582,6 +3624,9 @@ class SessionItemEntriesCompanion extends UpdateCompanion<SessionItemEntry> {
     if (revision.present) {
       map['revision'] = Variable<int>(revision.value);
     }
+    if (itemIndex.present) {
+      map['item_index'] = Variable<int>(itemIndex.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -3608,6 +3653,7 @@ class SessionItemEntriesCompanion extends UpdateCompanion<SessionItemEntry> {
           ..write('content: $content, ')
           ..write('providerCursor: $providerCursor, ')
           ..write('revision: $revision, ')
+          ..write('itemIndex: $itemIndex, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -7921,6 +7967,7 @@ typedef $$SessionItemEntriesTableCreateCompanionBuilder =
       Value<String> content,
       Value<String?> providerCursor,
       Value<int?> revision,
+      Value<int> itemIndex,
       required DateTime createdAt,
       required DateTime updatedAt,
       Value<int> rowid,
@@ -7938,6 +7985,7 @@ typedef $$SessionItemEntriesTableUpdateCompanionBuilder =
       Value<String> content,
       Value<String?> providerCursor,
       Value<int?> revision,
+      Value<int> itemIndex,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<int> rowid,
@@ -8004,6 +8052,11 @@ class $$SessionItemEntriesTableFilterComposer
 
   ColumnFilters<int> get revision => $composableBuilder(
     column: $table.revision,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get itemIndex => $composableBuilder(
+    column: $table.itemIndex,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -8082,6 +8135,11 @@ class $$SessionItemEntriesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get itemIndex => $composableBuilder(
+    column: $table.itemIndex,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -8136,6 +8194,9 @@ class $$SessionItemEntriesTableAnnotationComposer
 
   GeneratedColumn<int> get revision =>
       $composableBuilder(column: $table.revision, builder: (column) => column);
+
+  GeneratedColumn<int> get itemIndex =>
+      $composableBuilder(column: $table.itemIndex, builder: (column) => column);
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -8195,6 +8256,7 @@ class $$SessionItemEntriesTableTableManager
                 Value<String> content = const Value.absent(),
                 Value<String?> providerCursor = const Value.absent(),
                 Value<int?> revision = const Value.absent(),
+                Value<int> itemIndex = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -8210,6 +8272,7 @@ class $$SessionItemEntriesTableTableManager
                 content: content,
                 providerCursor: providerCursor,
                 revision: revision,
+                itemIndex: itemIndex,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -8227,6 +8290,7 @@ class $$SessionItemEntriesTableTableManager
                 Value<String> content = const Value.absent(),
                 Value<String?> providerCursor = const Value.absent(),
                 Value<int?> revision = const Value.absent(),
+                Value<int> itemIndex = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime updatedAt,
                 Value<int> rowid = const Value.absent(),
@@ -8242,6 +8306,7 @@ class $$SessionItemEntriesTableTableManager
                 content: content,
                 providerCursor: providerCursor,
                 revision: revision,
+                itemIndex: itemIndex,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,

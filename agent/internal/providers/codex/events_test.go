@@ -2,6 +2,7 @@ package codex
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,9 @@ func TestHandleNotificationMapsCodexEventsToCanonicalEvents(t *testing.T) {
 		wantItemID string
 		wantOutput string
 		wantPath   string
+		wantAdd    int
+		wantDel    int
+		noStats    bool
 	}{
 		{
 			name:     "agent message delta",
@@ -56,13 +60,44 @@ func TestHandleNotificationMapsCodexEventsToCanonicalEvents(t *testing.T) {
 					"id":   "file_1",
 					"type": "fileChange",
 					"changes": []any{
-						map[string]any{"path": "main.go", "kind": "modify"},
+						map[string]any{
+							"path": "main.go",
+							"kind": map[string]any{"type": "update"},
+							"diff": strings.Join([]string{
+								"--- a/main.go",
+								"+++ b/main.go",
+								"@@ -1 +1,2 @@",
+								"-old",
+								"+new",
+								"+extra",
+							}, "\n"),
+						},
 					},
 				},
 			},
 			wantType:   provider.EventFileWrite,
 			wantItemID: "file_1",
 			wantPath:   "main.go",
+			wantAdd:    2,
+			wantDel:    1,
+		},
+		{
+			name:   "file change completed without diff",
+			method: "item/completed",
+			params: map[string]any{
+				"threadId": "thr_1",
+				"item": map[string]any{
+					"id":   "file_2",
+					"type": "fileChange",
+					"changes": []any{
+						map[string]any{"path": "empty.go", "kind": "update"},
+					},
+				},
+			},
+			wantType:   provider.EventFileWrite,
+			wantItemID: "file_2",
+			wantPath:   "empty.go",
+			noStats:    true,
 		},
 		{
 			name:     "approval request without item",
@@ -100,6 +135,20 @@ func TestHandleNotificationMapsCodexEventsToCanonicalEvents(t *testing.T) {
 				}
 				if tt.wantPath != "" && payload["path"] != tt.wantPath {
 					t.Fatalf("payload path = %v, want %q", payload["path"], tt.wantPath)
+				}
+				if tt.wantAdd > 0 && payload["additions"] != tt.wantAdd {
+					t.Fatalf("payload additions = %v, want %d", payload["additions"], tt.wantAdd)
+				}
+				if tt.wantDel > 0 && payload["deletions"] != tt.wantDel {
+					t.Fatalf("payload deletions = %v, want %d", payload["deletions"], tt.wantDel)
+				}
+				if tt.noStats {
+					if _, ok := payload["additions"]; ok {
+						t.Fatalf("payload additions should be omitted: %#v", payload)
+					}
+					if _, ok := payload["deletions"]; ok {
+						t.Fatalf("payload deletions should be omitted: %#v", payload)
+					}
 				}
 				if tt.method == "thread/closed" {
 					status, ok := payload["status"].(map[string]any)

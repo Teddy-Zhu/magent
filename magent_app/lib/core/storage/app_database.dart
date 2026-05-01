@@ -88,6 +88,8 @@ class SessionItemEntries extends Table {
   TextColumn get content => text().withDefault(const Constant('{}'))();
   TextColumn get providerCursor => text().named('provider_cursor').nullable()();
   IntColumn get revision => integer().nullable()();
+  IntColumn get itemIndex =>
+      integer().named('item_index').withDefault(const Constant(0))();
   DateTimeColumn get createdAt => dateTime().named('created_at')();
   DateTimeColumn get updatedAt => dateTime().named('updated_at')();
 
@@ -203,7 +205,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 6;
+  int get schemaVersion => 7;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -551,6 +553,7 @@ class AppDatabase extends _$AppDatabase {
       ..where((t) => t.agentId.equals(agentId) & t.sessionId.equals(sessionId))
       ..orderBy([
         (t) => OrderingTerm.desc(t.createdAt),
+        (t) => OrderingTerm.desc(t.itemIndex),
         (t) => OrderingTerm.desc(t.itemId),
       ]);
   }

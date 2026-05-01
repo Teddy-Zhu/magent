@@ -201,6 +201,121 @@ func TestStartTurnUsesWireEnumsAndModel(t *testing.T) {
 	}
 }
 
+func TestListThreadTurnsAcceptsObjectChangeKind(t *testing.T) {
+	client, server := newTestAppServerClient(t)
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := server.readRequest(t)
+		if req.Method != "thread/turns/list" || req.ID == nil {
+			t.Fatalf("request = %#v", req)
+		}
+		server.writeResponse(t, *req.ID, map[string]any{
+			"data": []any{
+				map[string]any{
+					"id":     "turn_1",
+					"status": "completed",
+					"items": []any{
+						map[string]any{
+							"id":   "file_1",
+							"type": "fileChange",
+							"changes": []any{
+								map[string]any{
+									"path": "main.go",
+									"kind": map[string]any{"type": "modify"},
+								},
+							},
+						},
+					},
+				},
+			},
+		})
+	}()
+
+	page, err := client.ListThreadTurns(context.Background(), "thread_1", "", 20, "desc")
+	if err != nil {
+		t.Fatalf("ListThreadTurns: %v", err)
+	}
+	if len(page.Turns) != 1 || len(page.Turns[0].Items) != 1 {
+		t.Fatalf("turns = %#v", page.Turns)
+	}
+	kind := page.Turns[0].Items[0].Changes[0].Kind
+	if kind.Type != "modify" {
+		t.Fatalf("change kind type = %q, want modify", kind.Type)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("fake server did not receive thread/turns/list")
+	}
+}
+
+func TestCodexTurnsToItemsPreservesOrderIndexAndFileStats(t *testing.T) {
+	items := codexTurnsToItems([]ThreadTurn{
+		{
+			ID:          "turn_1",
+			Status:      "completed",
+			StartedAt:   100,
+			CompletedAt: 101,
+			Items: []TurnItem{
+				{ID: "msg_1", Type: "agentMessage", Text: "done"},
+				{
+					ID:   "file_1",
+					Type: "fileChange",
+					Changes: []TurnItemChange{
+						{
+							Path: "main.go",
+							Kind: ChangeKind{Type: "update"},
+							Diff: strings.Join([]string{
+								"--- a/main.go",
+								"+++ b/main.go",
+								"@@ -1,2 +1,3 @@",
+								" package main",
+								"-old",
+								"+new",
+								"+extra",
+							}, "\n"),
+						},
+					},
+				},
+			},
+		},
+		{
+			ID:        "turn_2",
+			Status:    "completed",
+			StartedAt: 102,
+			Items: []TurnItem{
+				{ID: "msg_2", Type: "agentMessage", Text: "next"},
+			},
+		},
+	})
+
+	if len(items) != 3 {
+		t.Fatalf("items len = %d, want 3", len(items))
+	}
+	if items[0].Index != 0 || items[1].Index != 1 || items[2].Index != 100000 {
+		t.Fatalf("item indexes = [%d %d %d], want [0 1 100000]", items[0].Index, items[1].Index, items[2].Index)
+	}
+	content, ok := items[1].Content.(map[string]any)
+	if !ok {
+		t.Fatalf("file content = %#v", items[1].Content)
+	}
+	if content["path"] != "main.go" {
+		t.Fatalf("path = %v, want main.go", content["path"])
+	}
+	if content["kind"] != "update" {
+		t.Fatalf("kind = %v, want update", content["kind"])
+	}
+	if content["additions"] != 2 || content["deletions"] != 1 {
+		t.Fatalf("stats = +%v -%v, want +2 -1", content["additions"], content["deletions"])
+	}
+	if content["diff"] == "" {
+		t.Fatal("diff should be preserved")
+	}
+}
+
 func TestAppServerClientInitializeAndInitializedNotification(t *testing.T) {
 	client, server := newTestAppServerClient(t)
 	defer client.Close()

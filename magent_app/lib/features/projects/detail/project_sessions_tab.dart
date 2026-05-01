@@ -7,7 +7,7 @@ class ProjectSessionsTab extends StatefulWidget {
   final String projectId;
   final List<dynamic> sessions;
   final AppApiClient api;
-  final VoidCallback onRefresh;
+  final Future<void> Function() onRefresh;
 
   const ProjectSessionsTab({
     super.key,
@@ -39,32 +39,45 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
     final sessions = widget.sessions;
 
     if (sessions.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
+      return RefreshIndicator(
+        onRefresh: widget.onRefresh,
+        child: ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
           children: [
-            Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey[300]),
-            const SizedBox(height: 16),
-            Text(
-              'No sessions yet',
-              style: TextStyle(color: Colors.grey[500], fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Start a new AI coding session',
-              style: TextStyle(color: Colors.grey[400], fontSize: 13),
-            ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
-              onPressed: () async {
-                await context.push(
-                  '/projects/${widget.projectId}/sessions/create',
-                  extra: {'provider': 'codex'},
-                );
-                widget.onRefresh();
-              },
-              icon: const Icon(Icons.add),
-              label: const Text('New Session'),
+            SizedBox(height: MediaQuery.sizeOf(context).height * 0.18),
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.chat_bubble_outline,
+                    size: 64,
+                    color: Colors.grey[300],
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    'No sessions yet',
+                    style: TextStyle(color: Colors.grey[500], fontSize: 16),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    'Start a new AI coding session',
+                    style: TextStyle(color: Colors.grey[400], fontSize: 13),
+                  ),
+                  const SizedBox(height: 24),
+                  FilledButton.icon(
+                    onPressed: () async {
+                      await context.push(
+                        '/projects/${widget.projectId}/sessions/create',
+                        extra: {'provider': 'codex'},
+                      );
+                      if (mounted) await widget.onRefresh();
+                    },
+                    icon: const Icon(Icons.add),
+                    label: const Text('New Session'),
+                  ),
+                ],
+              ),
             ),
           ],
         ),
@@ -78,136 +91,144 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
         ? sessions.skip(hidden).toList(growable: false)
         : sessions;
 
-    return ListView.builder(
-      padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
-      cacheExtent: 720,
-      itemCount: visibleSessions.length + (hidden > 0 ? 1 : 0),
-      itemBuilder: (context, index) {
-        if (hidden > 0 && index == 0) {
-          return _LoadMoreSessionsBanner(
-            hiddenCount: hidden,
-            onTap: () {
-              setState(() => _visibleCount += _pageSize);
-            },
-          );
-        }
+    return RefreshIndicator(
+      onRefresh: widget.onRefresh,
+      child: ListView.builder(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 18),
+        cacheExtent: 720,
+        itemCount: visibleSessions.length + (hidden > 0 ? 1 : 0),
+        itemBuilder: (context, index) {
+          if (hidden > 0 && index == 0) {
+            return _LoadMoreSessionsBanner(
+              hiddenCount: hidden,
+              onTap: () {
+                setState(() => _visibleCount += _pageSize);
+              },
+            );
+          }
 
-        final sessionIndex = hidden > 0 ? index - 1 : index;
-        final s = visibleSessions[sessionIndex];
-        final id = s['id'] as String? ?? '';
-        final title =
-            s['title'] as String? ??
-            s['preview'] as String? ??
-            s['summary'] as String? ??
-            'Session';
-        final status = SessionStatuses.normalizeOrStopped(s['status']);
-        final provider = canonicalProviderId(Map<String, dynamic>.from(s));
-        final rawCreated = s['created_at'] ?? s['createdAt'];
-        final String createdAt;
-        if (rawCreated is int) {
-          createdAt = DateTime.fromMillisecondsSinceEpoch(
-            rawCreated * 1000,
-          ).toIso8601String();
-        } else {
-          createdAt = rawCreated as String? ?? '';
-        }
-        final isRunning = status == SessionStatuses.running;
-        final statusColor = _statusColor(context, status);
+          final sessionIndex = hidden > 0 ? index - 1 : index;
+          final s = visibleSessions[sessionIndex];
+          final id = s['id'] as String? ?? '';
+          final title =
+              s['title'] as String? ??
+              s['preview'] as String? ??
+              s['summary'] as String? ??
+              'Session';
+          final status = SessionStatuses.normalizeOrStopped(s['status']);
+          final provider = canonicalProviderId(Map<String, dynamic>.from(s));
+          final rawCreated = s['created_at'] ?? s['createdAt'];
+          final String createdAt;
+          if (rawCreated is int) {
+            createdAt = DateTime.fromMillisecondsSinceEpoch(
+              rawCreated * 1000,
+            ).toIso8601String();
+          } else {
+            createdAt = rawCreated as String? ?? '';
+          }
+          final isRunning = status == SessionStatuses.running;
+          final statusColor = _statusColor(context, status);
 
-        return Card(
-          margin: const EdgeInsets.only(bottom: 8),
-          color: isRunning
-              ? statusColor.withValues(alpha: 0.08)
-              : Theme.of(context).colorScheme.surface,
-          child: InkWell(
-            borderRadius: BorderRadius.circular(8),
-            onTap: () => context.push('/sessions/$id'),
-            child: IntrinsicHeight(
-              child: Row(
-                children: [
-                  Container(
-                    width: 4,
-                    decoration: BoxDecoration(
-                      color: statusColor,
-                      borderRadius: const BorderRadius.horizontal(
-                        left: Radius.circular(8),
+          return Card(
+            margin: const EdgeInsets.only(bottom: 8),
+            color: isRunning
+                ? statusColor.withValues(alpha: 0.08)
+                : Theme.of(context).colorScheme.surface,
+            child: InkWell(
+              borderRadius: BorderRadius.circular(8),
+              onTap: () async {
+                await context.push('/sessions/$id');
+                if (mounted) await widget.onRefresh();
+              },
+              child: IntrinsicHeight(
+                child: Row(
+                  children: [
+                    Container(
+                      width: 4,
+                      decoration: BoxDecoration(
+                        color: statusColor,
+                        borderRadius: const BorderRadius.horizontal(
+                          left: Radius.circular(8),
+                        ),
                       ),
                     ),
-                  ),
-                  Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      child: Row(
-                        children: [
-                          _SessionStatusIcon(status: status),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Row(
-                                  children: [
-                                    Expanded(
-                                      child: Text(
-                                        title,
-                                        maxLines: 1,
-                                        overflow: TextOverflow.ellipsis,
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .titleSmall
-                                            ?.copyWith(
-                                              fontWeight: FontWeight.w700,
-                                            ),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 10,
+                        ),
+                        child: Row(
+                          children: [
+                            _SessionStatusIcon(status: status),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          title,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: Theme.of(context)
+                                              .textTheme
+                                              .titleSmall
+                                              ?.copyWith(
+                                                fontWeight: FontWeight.w700,
+                                              ),
+                                        ),
                                       ),
-                                    ),
-                                    const SizedBox(width: 8),
-                                    _StatusPill(
-                                      label: SessionStatuses.label(status),
-                                      color: statusColor,
-                                    ),
-                                  ],
-                                ),
-                                const SizedBox(height: 5),
-                                Text(
-                                  [
-                                    if (provider != null && provider.isNotEmpty)
-                                      provider,
-                                    _formatTime(createdAt),
-                                  ].where((s) => s.isNotEmpty).join(' · '),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: Theme.of(context).textTheme.bodySmall
-                                      ?.copyWith(
-                                        color: Theme.of(
-                                          context,
-                                        ).colorScheme.onSurfaceVariant,
+                                      const SizedBox(width: 8),
+                                      _StatusPill(
+                                        label: SessionStatuses.label(status),
+                                        color: statusColor,
                                       ),
-                                ),
-                              ],
+                                    ],
+                                  ),
+                                  const SizedBox(height: 5),
+                                  Text(
+                                    [
+                                      if (provider != null &&
+                                          provider.isNotEmpty)
+                                        provider,
+                                      _formatTime(createdAt),
+                                    ].where((s) => s.isNotEmpty).join(' · '),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: Theme.of(context).textTheme.bodySmall
+                                        ?.copyWith(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.onSurfaceVariant,
+                                        ),
+                                  ),
+                                ],
+                              ),
                             ),
-                          ),
-                          const SizedBox(width: 8),
-                          Icon(
-                            Icons.chevron_right,
-                            size: 20,
-                            color: Theme.of(
-                              context,
-                            ).colorScheme.onSurfaceVariant,
-                          ),
-                        ],
+                            const SizedBox(width: 8),
+                            Icon(
+                              Icons.chevron_right,
+                              size: 20,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 

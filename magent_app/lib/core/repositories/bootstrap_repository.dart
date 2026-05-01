@@ -139,6 +139,12 @@ class BootstrapRepository implements BootstrapSyncStore {
     return fresh == null ? null : _providerToMap(fresh);
   }
 
+  Future<Map<String, dynamic>> fetchProviderConfig(String name) async {
+    if (name.isEmpty) return const {};
+    final resp = await _dio.get('/api/v1/providers/$name/config');
+    return Map<String, dynamic>.from(resp.data['data'] as Map? ?? {});
+  }
+
   Future<Map<String, dynamic>> createProject(String name, String path) async {
     final resp = await _dio.post(
       '/api/v1/projects',
