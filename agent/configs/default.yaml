@@ -1,0 +1,21 @@
+log_level: "info"  # debug, info, warn, error
+
+server:
+  host: "127.0.0.1"
+  port: 9000
+  read_timeout: 30s
+  write_timeout: 30s
+
+auth:
+  tokens:
+    - name: "default"
+      token: ""  # 首次启动自动生成
+      permissions: ["*"]
+
+workspace:
+  allowed_dirs: []
+  excluded_patterns:
+    - ".git"
+    - "node_modules"
+    - ".venv"
+    - "__pycache__"
