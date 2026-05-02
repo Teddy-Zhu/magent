@@ -1,7 +1,4 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -27,8 +24,6 @@ class _GitManagePageState extends ConsumerState<GitManagePage>
   AppApiClient? _api;
   GitRepository? _gitRepo;
   FileRepository? _fileRepo;
-  StreamSubscription<Map<String, dynamic>>? _gitInvalidationSub;
-  final _gitInvalidationSignal = ValueNotifier<int>(0);
 
   @override
   void initState() {
@@ -47,25 +42,12 @@ class _GitManagePageState extends ConsumerState<GitManagePage>
         api: _api!.file,
         db: db,
       );
-      _connectRealtime();
     }
     if (mounted) setState(() {});
   }
 
-  void _connectRealtime() {
-    final engine = ref.read(syncEngineProvider);
-    if (engine == null) return;
-    _gitInvalidationSub = engine.gitInvalidations.listen((event) {
-      if (!mounted) return;
-      if (event['project_id']?.toString() != widget.projectId) return;
-      _gitInvalidationSignal.value++;
-    });
-  }
-
   @override
   void dispose() {
-    _gitInvalidationSub?.cancel();
-    _gitInvalidationSignal.dispose();
     _tabController.dispose();
     super.dispose();
   }
@@ -100,7 +82,6 @@ class _GitManagePageState extends ConsumerState<GitManagePage>
                   git: _gitRepo!,
                   file: _fileRepo!,
                   projectId: widget.projectId,
-                  invalidationSignal: _gitInvalidationSignal,
                 ),
                 _LogTab(api: _api!, projectId: widget.projectId),
                 _BranchesTab(api: _api!, projectId: widget.projectId),
@@ -116,12 +97,10 @@ class _StatusTab extends StatefulWidget {
   final GitRepository git;
   final FileRepository file;
   final String projectId;
-  final ValueListenable<int>? invalidationSignal;
   const _StatusTab({
     required this.git,
     required this.file,
     required this.projectId,
-    this.invalidationSignal,
   });
 
   @override
@@ -145,19 +124,13 @@ class _StatusTabState extends State<_StatusTab>
     _tabController.addListener(() {
       setState(() => _selectedPaths.clear());
     });
-    widget.invalidationSignal?.addListener(_handleInvalidation);
     _load();
   }
 
   @override
   void dispose() {
-    widget.invalidationSignal?.removeListener(_handleInvalidation);
     _tabController.dispose();
     super.dispose();
-  }
-
-  void _handleInvalidation() {
-    _refreshFromInvalidation();
   }
 
   Future<void> _load() async {
@@ -182,20 +155,6 @@ class _StatusTabState extends State<_StatusTab>
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  Future<void> _refreshFromInvalidation() async {
-    if (!mounted) return;
-    try {
-      final snapshot = await widget.git.refreshSnapshot(widget.projectId);
-      if (mounted) {
-        setState(() {
-          _summary = snapshot.summary;
-          _allFiles = snapshot.files;
-          _loading = false;
-        });
-      }
-    } catch (_) {}
   }
 
   List<dynamic> get _stagedFiles =>
@@ -601,6 +560,18 @@ class _StatusTabState extends State<_StatusTab>
                 ),
               ]
             : [
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 18),
+                  tooltip: AppLocalizations.of(context)!.chatRefresh,
+                  onPressed: _operating ? null : _load,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 30,
+                    minHeight: 30,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+                const SizedBox(width: 4),
                 SizedBox(
                   height: 30,
                   child: OutlinedButton.icon(

@@ -134,6 +134,8 @@
   "settingsGit": "Git Operations",
   "settingsGitManage": "Git Management",
   "settingsGitManageSub": "Status, commit log, and branches",
+  "settingsAiCommitModel": "AI commit model",
+  "settingsAiCommitModelSub": "Provider-specific model and reasoning effort for commit message generation",
   "settingsCommitPush": "Commit & Push",
   "settingsCommitPushSub": "Commit changes and push to remote",
   "settingsCommitLog": "Commit Log",
@@ -319,6 +321,7 @@
   "chatFilesTooltip": "Reference workspace path",
   "chatChooseSkill": "Choose skill",
   "chatChooseWorkspaceFile": "Choose workspace file or folder",
+  "chatContextCompacted": "Conversation compressed",
   "chatCollapsedEvents": "{count} older messages hidden",
   "@chatCollapsedEvents": {
     "placeholders": {

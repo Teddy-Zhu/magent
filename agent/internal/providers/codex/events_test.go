@@ -36,6 +36,19 @@ func TestHandleNotificationMapsCodexEventsToCanonicalEvents(t *testing.T) {
 			wantType: provider.EventSessionStatusChanged,
 		},
 		{
+			name:   "token usage updated",
+			method: "thread/tokenUsage/updated",
+			params: map[string]any{
+				"threadId": "thr_1",
+				"turnId":   "turn_1",
+				"tokenUsage": map[string]any{
+					"last": map[string]any{"totalTokens": float64(100)},
+				},
+				"modelContextWindow": float64(258400),
+			},
+			wantType: provider.EventTokenUsageUpdated,
+		},
+		{
 			name:   "command completed",
 			method: "item/completed",
 			params: map[string]any{

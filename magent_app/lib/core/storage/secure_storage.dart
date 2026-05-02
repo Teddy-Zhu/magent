@@ -3,7 +3,12 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class AgentStorage {
   final FlutterSecureStorage _storage = const FlutterSecureStorage();
 
-  Future<void> saveAgent(String id, String url, String token, String name) async {
+  Future<void> saveAgent(
+    String id,
+    String url,
+    String token,
+    String name,
+  ) async {
     await _storage.write(key: 'agent_${id}_url', value: url);
     await _storage.write(key: 'agent_${id}_token', value: token);
     await _storage.write(key: 'agent_${id}_name', value: name);
@@ -84,5 +89,21 @@ class AgentStorage {
 
   Future<String?> getDefaultEffort(String provider) async {
     return await _storage.read(key: 'default_effort_$provider');
+  }
+
+  Future<void> setAiCommitModel(String provider, String model) async {
+    await _storage.write(key: 'ai_commit_model_$provider', value: model);
+  }
+
+  Future<String?> getAiCommitModel(String provider) async {
+    return await _storage.read(key: 'ai_commit_model_$provider');
+  }
+
+  Future<void> setAiCommitEffort(String provider, String effort) async {
+    await _storage.write(key: 'ai_commit_effort_$provider', value: effort);
+  }
+
+  Future<String?> getAiCommitEffort(String provider) async {
+    return await _storage.read(key: 'ai_commit_effort_$provider');
   }
 }

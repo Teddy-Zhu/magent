@@ -376,6 +376,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsGitManageSub => '状态、提交记录和分支';
 
   @override
+  String get settingsAiCommitModel => 'AI 提交信息模型';
+
+  @override
+  String get settingsAiCommitModelSub => '按提供者设置生成提交信息使用的模型和推理强度';
+
+  @override
   String get settingsCommitPush => '提交与推送';
 
   @override
@@ -710,6 +716,9 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get chatChooseWorkspaceFile => '选择工作区文件或目录';
+
+  @override
+  String get chatContextCompacted => '对话已压缩';
 
   @override
   String chatCollapsedEvents(int count) {

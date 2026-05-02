@@ -51,6 +51,7 @@ const (
 	EventTurnStarted           EventType = "session.turn_started"
 	EventTurnCompleted         EventType = "session.turn_completed"
 	EventTurnFailed            EventType = "session.turn_failed"
+	EventTokenUsageUpdated     EventType = "session.token_usage_updated"
 	EventUserMessage           EventType = "session.user_message"
 	EventMessage               EventType = "session.message"
 	EventMessageDelta          EventType = "session.message_delta"

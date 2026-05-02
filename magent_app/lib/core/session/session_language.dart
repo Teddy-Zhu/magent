@@ -149,6 +149,7 @@ class SessionEventTypes {
   static const turnStarted = 'session.turn_started';
   static const turnCompleted = 'session.turn_completed';
   static const turnFailed = 'session.turn_failed';
+  static const tokenUsageUpdated = 'session.token_usage_updated';
   static const userMessage = 'session.user_message';
   static const message = 'session.message';
   static const messageDelta = 'session.message_delta';
@@ -221,6 +222,7 @@ class SessionItemTypes {
   static const plan = 'plan';
   static const reasoning = 'reasoning';
   static const diff = 'diff';
+  static const contextCompaction = 'context_compaction';
 
   const SessionItemTypes._();
 
@@ -247,7 +249,7 @@ class SessionItemTypes {
       case 'imageView':
         return 'image_view';
       case 'contextCompaction':
-        return 'context_compaction';
+        return contextCompaction;
       default:
         return itemType;
     }

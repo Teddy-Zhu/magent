@@ -36,9 +36,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
   SessionRepository? _repo;
   GitRepository? _gitRepo;
   FileRepository? _fileRepo;
-  StreamSubscription<Map<String, dynamic>>? _gitInvalidationSub;
   StreamSubscription<List<Map<String, dynamic>>>? _sessionsSub;
-  final _gitInvalidationSignal = ValueNotifier<int>(0);
 
   List<dynamic> _providers = [];
   String _selectedProvider = '';
@@ -66,7 +64,6 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
     _gitRepo = GitRepository(agentId: _api!.agentId, api: _api!.git, db: db);
     _fileRepo = FileRepository(agentId: _api!.agentId, api: _api!.file, db: db);
     _subscribeSessions();
-    _connectRealtime();
     // Load saved provider first (fast, local) so UI is ready immediately
     final saved = await _storage.getDefaultProvider();
     if (saved != null && saved.isNotEmpty && mounted) {
@@ -74,16 +71,6 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
     }
     // Then load everything in parallel
     await Future.wait([_loadProject(), _loadSessions(), _loadProviders()]);
-  }
-
-  void _connectRealtime() {
-    final engine = ref.read(syncEngineProvider);
-    if (engine == null) return;
-    _gitInvalidationSub = engine.gitInvalidations.listen((event) {
-      if (!mounted) return;
-      if (event['project_id']?.toString() != widget.projectId) return;
-      _gitInvalidationSignal.value++;
-    });
   }
 
   void _subscribeSessions() {
@@ -190,9 +177,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
 
   @override
   void dispose() {
-    _gitInvalidationSub?.cancel();
     _sessionsSub?.cancel();
-    _gitInvalidationSignal.dispose();
     super.dispose();
   }
 
@@ -357,7 +342,6 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
           projectId: widget.projectId,
           git: _gitRepo!,
           file: _fileRepo!,
-          invalidationSignal: _gitInvalidationSignal,
           onViewLog: () => context.push(
             '/git/manage',
             extra: {'projectId': widget.projectId},

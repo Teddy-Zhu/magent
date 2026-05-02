@@ -455,6 +455,17 @@ func (h *GitHandler) SuggestCommitMessageForProject(c *gin.Context) {
 	if !ok {
 		return
 	}
+	var req struct {
+		ProviderID string `json:"provider_id"`
+		Model      string `json:"model"`
+		Effort     string `json:"effort"`
+	}
+	if c.Request.Body != nil && c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&req); err != nil && err != io.EOF {
+			Fail(c, 400, ErrInvalidRequest, err.Error())
+			return
+		}
+	}
 
 	// Check staged changes
 	nameStatus, _ := h.gitService.Git(c.Request.Context(), project.Path,
@@ -493,10 +504,19 @@ Requirements:
 - No longer than 72 characters
 - Output ONLY the commit message, nothing else`, nameStatus, stat, diffContent)
 
-	log.Debug("git", "suggest commit message: prompt len=%d", len(prompt))
+	providerName := strings.TrimSpace(req.ProviderID)
+	if providerName == "" {
+		providerName = "codex"
+	}
+	model := strings.TrimSpace(req.Model)
+	effort := strings.TrimSpace(req.Effort)
+	if effort == "" {
+		effort = "low"
+	}
 
-	// Get codex provider
-	p, ok := getProvider(c, h.registry, "codex")
+	log.Debug("git", "suggest commit message: provider=%s model=%s effort=%s prompt len=%d", providerName, model, effort, len(prompt))
+
+	p, ok := getProvider(c, h.registry, providerName)
 	if !ok {
 		return
 	}
@@ -511,7 +531,8 @@ Requirements:
 		ProjectID:      project.ID,
 		Purpose:        string(provider.SessionPurposeAICommit),
 		Workdir:        project.Path,
-		Effort:         "low",
+		Model:          model,
+		Effort:         effort,
 		ApprovalPolicy: string(provider.ApprovalPolicyNever),
 		SandboxMode:    string(provider.SandboxModeWorkspaceWrite),
 		Prompt:         prompt,
@@ -555,6 +576,20 @@ Requirements:
 
 	var message string
 	timeout := time.After(20 * time.Second)
+	var quietTimer *time.Timer
+	var quiet <-chan time.Time
+	defer func() {
+		if quietTimer != nil {
+			quietTimer.Stop()
+		}
+	}()
+	resetQuiet := func() {
+		if quietTimer != nil {
+			quietTimer.Stop()
+		}
+		quietTimer = time.NewTimer(1500 * time.Millisecond)
+		quiet = quietTimer.C
+	}
 
 	for {
 		select {
@@ -569,9 +604,12 @@ Requirements:
 				return
 			}
 			switch event.Type {
-			case string(provider.EventMessage), string(provider.EventMessageDelta):
+			case string(provider.EventMessage), string(provider.EventMessageDelta), string(provider.EventOutput):
 				if payload, ok := event.Payload.(map[string]any); ok {
 					message = mergeCommitMessageEvent(message, event.Type, payload)
+					if event.Type == string(provider.EventOutput) && message != "" {
+						resetQuiet()
+					}
 				}
 			case string(provider.EventTurnCompleted):
 				log.Info("git", "suggest: turn completed, message len=%d", len(message))
@@ -616,6 +654,12 @@ Requirements:
 			log.Warn("git", "suggest: timeout waiting for AI response")
 			OK(c, gin.H{"message": "", "error": "AI response timeout"})
 			return
+		case <-quiet:
+			quiet = nil
+			if message != "" {
+				OK(c, gin.H{"message": cleanCommitMessage(message)})
+				return
+			}
 		}
 	}
 }
@@ -629,6 +673,10 @@ func mergeCommitMessageEvent(current, eventType string, payload map[string]any) 
 	case string(provider.EventMessageDelta):
 		if delta, ok := payload["delta"].(string); ok {
 			return current + delta
+		}
+	case string(provider.EventOutput):
+		if output := commitMessageFromPayload(payload); output != "" {
+			return current + output
 		}
 	}
 	return current

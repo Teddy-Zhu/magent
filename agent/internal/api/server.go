@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"github.com/Teddy-Zhu/magent/agent/internal/api/middleware"
 	"github.com/Teddy-Zhu/magent/agent/internal/config"
 	"github.com/Teddy-Zhu/magent/agent/internal/fileservice"
@@ -22,6 +20,8 @@ import (
 	"github.com/Teddy-Zhu/magent/agent/internal/storage"
 	syncpkg "github.com/Teddy-Zhu/magent/agent/internal/sync"
 	"github.com/Teddy-Zhu/magent/agent/internal/ws"
+	"github.com/gin-gonic/gin"
+	"github.com/gorilla/websocket"
 )
 
 var (
@@ -134,7 +134,6 @@ func (s *Server) Start(ctx context.Context) error {
 	s.registerV1Routes(v1)
 
 	go s.wsHub.Run(ctx)
-	s.startGitWatchers(ctx)
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Server.Host, s.cfg.Server.Port)
 	srv := &http.Server{

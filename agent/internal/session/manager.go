@@ -418,7 +418,29 @@ func (m *Manager) GetItems(ctx context.Context, sessionID, cursor string, limit 
 	if err != nil {
 		return nil, err
 	}
-	return p.ReadThreadItems(ctx, threadID, cursor, limit)
+	log.Info("session", "GetItems: session=%s provider=%s thread=%s cursor=%q limit=%d", sessionID, p.Name(), threadID, cursor, limit)
+	page, err := p.ReadThreadItems(ctx, threadID, cursor, limit)
+	if err != nil {
+		log.Error("session", "GetItems: session=%s provider=%s thread=%s error=%v", sessionID, p.Name(), threadID, err)
+		return nil, err
+	}
+	log.Info("session", "GetItems: session=%s items=%d next=%q has_more=%t tail=%s", sessionID, len(page.Items), page.Cursor, page.HasMore, sessionItemTailSummary(page.Items, 8))
+	return page, nil
+}
+
+func sessionItemTailSummary(items []provider.SessionItem, limit int) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	if limit <= 0 || limit > len(items) {
+		limit = len(items)
+	}
+	start := len(items) - limit
+	parts := make([]string, 0, limit)
+	for _, item := range items[start:] {
+		parts = append(parts, fmt.Sprintf("%s:%s:%s:%d", item.ItemID, item.Type, item.Status, item.Index))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 // ResumeSession activates a session in its provider.

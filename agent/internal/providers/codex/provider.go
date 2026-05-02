@@ -352,8 +352,8 @@ func (p *CodexProvider) emit(sessionID string, event provider.ProviderEvent) {
 	if ok {
 		select {
 		case ch <- event:
-		default:
-			// Channel full, drop event
+		case <-time.After(30 * time.Second):
+			log.Warn("codex", "session event channel blocked session=%s type=%s", sessionID, event.Type)
 		}
 	}
 }
@@ -554,13 +554,28 @@ func (p *CodexProvider) ReadThreadItems(ctx context.Context, threadID, cursor st
 	}
 
 	items := codexTurnsToItems(turnsPage.Turns)
-	log.Info("codex", "ReadThreadItems: thread=%s turns=%d items=%d cursor=%s next=%s", threadID, len(turnsPage.Turns), len(items), cursor, nextCursor)
+	log.Info("codex", "ReadThreadItems: thread=%s turns=%d items=%d cursor=%q next=%q has_more=%t tail=%s", threadID, len(turnsPage.Turns), len(items), cursor, nextCursor, hasMore, codexSessionItemTailSummary(items, 8))
 	return &provider.ItemPage{
 		SessionID: threadID,
 		Cursor:    nextCursor,
 		HasMore:   hasMore,
 		Items:     items,
 	}, nil
+}
+
+func codexSessionItemTailSummary(items []provider.SessionItem, limit int) string {
+	if len(items) == 0 {
+		return "[]"
+	}
+	if limit <= 0 || limit > len(items) {
+		limit = len(items)
+	}
+	start := len(items) - limit
+	parts := make([]string, 0, limit)
+	for _, item := range items[start:] {
+		parts = append(parts, fmt.Sprintf("%s:%s:%s:%d", item.ItemID, item.Type, item.Status, item.Index))
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
 }
 
 func (p *CodexProvider) listThreadTurnsForSync(ctx context.Context, client *AppServerClient, threadID, cursor string, limit int) (*ThreadTurnsPage, string, bool, error) {
@@ -671,7 +686,7 @@ func codexTurnsToItems(turns []ThreadTurn) []provider.SessionItem {
 				Cursor:    codexItemCursor(turn.ID, item.ID),
 				ItemID:    item.ID,
 				TurnID:    turn.ID,
-				Index:     codexItemIndex(turnIndex, itemIndex),
+				Index:     codexStableItemIndex(turn, turnIndex, itemIndex),
 				Type:      itemType,
 				Status:    codexItemStatus(item, turn),
 				Role:      codexItemRole(itemType),
@@ -687,6 +702,13 @@ func codexTurnsToItems(turns []ThreadTurn) []provider.SessionItem {
 
 func codexItemIndex(turnIndex, itemIndex int) int {
 	return turnIndex*100000 + itemIndex
+}
+
+func codexStableItemIndex(turn ThreadTurn, fallbackTurnIndex, itemIndex int) int {
+	if turn.StartedAt > 0 {
+		return int(turn.StartedAt)*100000 + itemIndex
+	}
+	return codexItemIndex(fallbackTurnIndex, itemIndex)
 }
 
 func codexTurnTime(turn ThreadTurn) time.Time {

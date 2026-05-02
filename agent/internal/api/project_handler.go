@@ -28,7 +28,6 @@ func (s *Server) handleCreateProject(c *gin.Context) {
 		Fail(c, 400, ErrInvalidRequest, err.Error())
 		return
 	}
-	s.startGitWatcher(*project)
 	s.syncHandler.configService.MarkDirty()
 	OK(c, project)
 }
@@ -71,7 +70,6 @@ func (s *Server) handleUpdateProject(c *gin.Context) {
 		Fail(c, 500, ErrInternalError, err.Error())
 		return
 	}
-	s.restartGitWatcher(*project)
 	s.syncHandler.configService.MarkDirty()
 	OK(c, project)
 }
@@ -85,7 +83,6 @@ func (s *Server) handleDeleteProject(c *gin.Context) {
 		Fail(c, 500, ErrInternalError, err.Error())
 		return
 	}
-	s.stopGitWatcher(project.ID)
 	s.syncHandler.configService.MarkDirty()
 	OK(c, nil)
 }

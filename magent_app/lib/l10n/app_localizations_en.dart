@@ -382,6 +382,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsGitManageSub => 'Status, commit log, and branches';
 
   @override
+  String get settingsAiCommitModel => 'AI commit model';
+
+  @override
+  String get settingsAiCommitModelSub =>
+      'Provider-specific model and reasoning effort for commit message generation';
+
+  @override
   String get settingsCommitPush => 'Commit & Push';
 
   @override
@@ -723,6 +730,9 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get chatChooseWorkspaceFile => 'Choose workspace file or folder';
+
+  @override
+  String get chatContextCompacted => 'Conversation compressed';
 
   @override
   String chatCollapsedEvents(int count) {

@@ -57,9 +57,11 @@ abstract class SessionApiLike {
 }
 
 abstract class SessionSyncStore {
-  Future<void> applyRealtimeEvent(Map<String, dynamic> event);
+  Future<bool> applyRealtimeEvent(Map<String, dynamic> event);
 
   Future<String?> getRealtimeCursor(String sessionId);
+
+  Future<String?> getRealtimeEpoch(String sessionId);
 
   Future<List<Map<String, dynamic>>> refreshItems(
     String sessionId, {
@@ -70,6 +72,25 @@ abstract class SessionSyncStore {
     String projectId, {
     bool archived = false,
   });
+}
+
+class _ItemSyncPage {
+  final List<Map<String, dynamic>> items;
+  final String? cursor;
+  final bool hasMore;
+
+  const _ItemSyncPage({
+    required this.items,
+    required this.cursor,
+    required this.hasMore,
+  });
+}
+
+class _WsCursor {
+  final String? epoch;
+  final int? seq;
+
+  const _WsCursor({this.epoch, this.seq});
 }
 
 class SessionRepository implements SessionSyncStore {
@@ -308,9 +329,10 @@ class SessionRepository implements SessionSyncStore {
   }
 
   @override
-  Future<void> applyRealtimeEvent(Map<String, dynamic> event) async {
+  Future<bool> applyRealtimeEvent(Map<String, dynamic> event) async {
     final sessionId = event['session_id']?.toString();
-    if (sessionId == null || sessionId.isEmpty) return;
+    if (sessionId == null || sessionId.isEmpty) return false;
+    if (await _isStaleRealtimeEvent(sessionId, event)) return false;
 
     final eventType = SessionEventTypes.normalize(
       event['event_type']?.toString() ?? event['type']?.toString() ?? '',
@@ -318,14 +340,32 @@ class SessionRepository implements SessionSyncStore {
     final data = _eventData(event);
     if (eventType == 'session.created') {
       await _upsertRealtimeSession(sessionId, data);
+      await _advanceRealtimeCursor(sessionId, event);
+      return true;
     }
-    await _applyRealtimeSessionStatus(sessionId, eventType, event);
+    final statusChanged = await _applyRealtimeSessionStatus(
+      sessionId,
+      eventType,
+      event,
+    );
     if (eventType == SessionEventTypes.approvalRequest) {
       await saveApprovalRequest(event);
+      await _advanceRealtimeCursor(sessionId, event);
+      return true;
     }
-    await _applyRealtimeItemProjection(sessionId, eventType, event);
+    final projectsItem = _isRealtimeItemProjectionEvent(eventType);
+    final itemChanged = await _applyRealtimeItemProjection(
+      sessionId,
+      eventType,
+      event,
+    );
+    if (projectsItem && !itemChanged) {
+      await _advanceRealtimeCursor(sessionId, event);
+      return false;
+    }
     if (!_shouldPersistRealtimeEvent(eventType)) {
-      return;
+      await _advanceRealtimeCursor(sessionId, event);
+      return statusChanged;
     }
 
     final cursor =
@@ -344,11 +384,83 @@ class SessionRepository implements SessionSyncStore {
         createdAt: Value(_parseDateTime(event['created_at'])),
       ),
     ]);
-    final wsCursor =
-        event['ws_cursor']?.toString() ?? event['ws_seq']?.toString();
+    await _advanceRealtimeCursor(sessionId, event);
+    return true;
+  }
+
+  Future<bool> _isStaleRealtimeEvent(
+    String sessionId,
+    Map<String, dynamic> event,
+  ) async {
+    final incoming = _wsCursor(event);
+    if (incoming == null || incoming.isEmpty) return false;
+    final incomingEpoch = _wsEpoch(event);
+    final currentEpoch = await getRealtimeEpoch(sessionId);
+    if (incomingEpoch != null &&
+        incomingEpoch.isNotEmpty &&
+        currentEpoch != null &&
+        currentEpoch.isNotEmpty &&
+        incomingEpoch != currentEpoch) {
+      return false;
+    }
+
+    final current = await getRealtimeCursor(sessionId);
+    if (current == null || current.isEmpty) return false;
+    final incomingCursor = _parseWsCursor(incoming);
+    final currentCursor = _parseWsCursor(current);
+    if (incomingCursor.epoch != null &&
+        incomingCursor.epoch!.isNotEmpty &&
+        currentCursor.epoch != null &&
+        currentCursor.epoch!.isNotEmpty &&
+        incomingCursor.epoch != currentCursor.epoch) {
+      return false;
+    }
+    final incomingSeq = incomingCursor.seq;
+    final currentSeq = currentCursor.seq;
+    if (incomingSeq != null && currentSeq != null) {
+      if ((incomingEpoch != null &&
+              incomingEpoch.isNotEmpty &&
+              currentEpoch != null &&
+              currentEpoch.isNotEmpty) ||
+          (incomingCursor.epoch != null && currentCursor.epoch != null)) {
+        return incomingSeq <= currentSeq;
+      }
+      return incomingSeq == currentSeq;
+    }
+    return incoming == current;
+  }
+
+  Future<void> _advanceRealtimeCursor(
+    String sessionId,
+    Map<String, dynamic> event,
+  ) async {
+    final wsCursor = _wsCursor(event);
     if (wsCursor != null && wsCursor.isNotEmpty) {
       await _db.setSyncCursor(agentId, 'session_ws', sessionId, wsCursor);
     }
+    final wsEpoch = _wsEpoch(event);
+    if (wsEpoch != null && wsEpoch.isNotEmpty) {
+      await _db.setSyncCursor(agentId, 'session_ws_epoch', sessionId, wsEpoch);
+    }
+  }
+
+  String? _wsCursor(Map<String, dynamic> event) {
+    return event['ws_cursor']?.toString() ?? event['ws_seq']?.toString();
+  }
+
+  String? _wsEpoch(Map<String, dynamic> event) {
+    return event['ws_epoch']?.toString();
+  }
+
+  _WsCursor _parseWsCursor(String cursor) {
+    final separator = cursor.lastIndexOf(':');
+    if (separator > 0 && separator < cursor.length - 1) {
+      return _WsCursor(
+        epoch: cursor.substring(0, separator),
+        seq: int.tryParse(cursor.substring(separator + 1)),
+      );
+    }
+    return _WsCursor(seq: int.tryParse(cursor));
   }
 
   bool _shouldPersistRealtimeEvent(String eventType) {
@@ -361,14 +473,42 @@ class SessionRepository implements SessionSyncStore {
     }
   }
 
-  Future<void> _upsertRealtimeSession(
+  bool _isRealtimeItemProjectionEvent(String eventType) {
+    switch (eventType) {
+      case SessionEventTypes.userMessage:
+      case SessionEventTypes.message:
+      case SessionEventTypes.messageDelta:
+      case SessionEventTypes.output:
+      case SessionEventTypes.plan:
+      case SessionEventTypes.planDelta:
+      case SessionEventTypes.planUpdated:
+      case SessionEventTypes.reasoning:
+      case SessionEventTypes.reasoningSummaryDelta:
+      case SessionEventTypes.reasoningTextDelta:
+      case SessionEventTypes.reasoningSummaryPart:
+      case SessionEventTypes.diffUpdated:
+      case SessionEventTypes.commandCompleted:
+      case SessionEventTypes.commandOutputDelta:
+      case SessionEventTypes.fileWrite:
+      case SessionEventTypes.fileRead:
+      case SessionEventTypes.fileChangeOutputDelta:
+      case SessionEventTypes.mcpToolCompleted:
+      case SessionEventTypes.itemStarted:
+      case SessionEventTypes.itemCompleted:
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  Future<bool> _upsertRealtimeSession(
     String fallbackSessionId,
     Map<String, dynamic> rawData,
   ) async {
     final data = _canonicalSessionMap(rawData);
     final id = data['id']?.toString() ?? fallbackSessionId;
     final projectId = data['project_id']?.toString();
-    if (id.isEmpty || projectId == null || projectId.isEmpty) return;
+    if (id.isEmpty || projectId == null || projectId.isEmpty) return false;
 
     final existing = await _db.getSession(agentId, id);
     final now = DateTime.now();
@@ -431,18 +571,20 @@ class SessionRepository implements SessionSyncStore {
         deletedAt: Value(existing?.deletedAt),
       ),
     );
+    return true;
   }
 
-  Future<void> _applyRealtimeSessionStatus(
+  Future<bool> _applyRealtimeSessionStatus(
     String sessionId,
     String eventType,
     Map<String, dynamic> event,
   ) async {
     final nextStatus = _sessionStatusFromEvent(eventType, _eventData(event));
-    if (nextStatus == null) return;
+    if (nextStatus == null) return false;
 
     final existing = await _db.getSession(agentId, sessionId);
-    if (existing == null) return;
+    if (existing == null) return false;
+    if (existing.status == nextStatus) return false;
 
     await _db.insertOrUpdateSession(
       SessionEntriesCompanion(
@@ -467,6 +609,7 @@ class SessionRepository implements SessionSyncStore {
         deletedAt: Value(existing.deletedAt),
       ),
     );
+    return true;
   }
 
   @override
@@ -474,24 +617,25 @@ class SessionRepository implements SessionSyncStore {
     return _db.getSyncCursor(agentId, 'session_ws', sessionId);
   }
 
-  Future<void> _applyRealtimeItemProjection(
+  @override
+  Future<String?> getRealtimeEpoch(String sessionId) {
+    return _db.getSyncCursor(agentId, 'session_ws_epoch', sessionId);
+  }
+
+  Future<bool> _applyRealtimeItemProjection(
     String sessionId,
     String eventType,
     Map<String, dynamic> event,
   ) async {
     final data = _eventData(event);
     final itemData = _eventItemData(data);
-    final itemId =
-        event['item_id']?.toString() ??
-        data['item_id']?.toString() ??
-        data['itemId']?.toString() ??
-        itemData['item_id']?.toString() ??
-        itemData['itemId']?.toString() ??
-        itemData['id']?.toString() ??
-        data['id']?.toString();
-    if (itemId == null || itemId.isEmpty) return;
+    final itemId = _realtimeItemId(eventType, event, data, itemData);
+    if (itemId == null || itemId.isEmpty) return false;
 
     final existing = await _db.getItem(agentId, sessionId, itemId);
+    if (existing?.status == 'completed' && _isRealtimeDeltaEvent(eventType)) {
+      return false;
+    }
     final currentContent = _storedItemContent(existing);
     final nextContent = Map<String, dynamic>.from(currentContent);
     final now = _parseDateTime(event['created_at']);
@@ -510,6 +654,7 @@ class SessionRepository implements SessionSyncStore {
 
     switch (eventType) {
       case SessionEventTypes.messageDelta:
+      case SessionEventTypes.output:
         type = 'agent_message';
         role = 'assistant';
         status = 'in_progress';
@@ -554,10 +699,16 @@ class SessionRepository implements SessionSyncStore {
             '${nextContent['output'] ?? ''}${_deltaText(data)}';
         summary = _contentSummary(type, nextContent);
       case SessionEventTypes.planUpdated:
+      case SessionEventTypes.plan:
         type = 'plan';
         status = 'in_progress';
         nextContent.addAll(data);
         summary = _planSummary(data);
+      case SessionEventTypes.reasoning:
+        type = 'reasoning';
+        status = data['status']?.toString() ?? 'completed';
+        nextContent.addAll(data);
+        summary = _contentSummary(type, nextContent);
       case SessionEventTypes.diffUpdated:
         type = 'diff';
         status = 'in_progress';
@@ -568,9 +719,14 @@ class SessionRepository implements SessionSyncStore {
         status = itemData['status']?.toString() ?? 'in_progress';
         nextContent.addAll(itemData);
         summary = _contentSummary(type, nextContent);
+      case SessionEventTypes.approvalRequest:
+        type = _itemTypeFromEvent(eventType, itemData);
+        status = itemData['status']?.toString() ?? 'pending';
+        nextContent.addAll(itemData);
+        summary = _contentSummary(type, nextContent);
       default:
         final completed = _completedItemFromEvent(eventType, data);
-        if (completed == null) return;
+        if (completed == null) return false;
         type = _normalizeItemType(completed['type']?.toString() ?? type);
         status = completed['status']?.toString() ?? 'completed';
         role = _roleForType(type);
@@ -588,31 +744,89 @@ class SessionRepository implements SessionSyncStore {
         !_hasVisibleReasoningContent(nextContent)) {
       if (existing != null) {
         await _db.deleteItem(agentId, sessionId, itemId);
+        return true;
       }
-      return;
+      return false;
     }
 
-    await _db.insertOrUpdateItem(
-      SessionItemEntriesCompanion(
-        agentId: Value(agentId),
-        sessionId: Value(sessionId),
-        itemId: Value(itemId),
-        turnId: Value(
-          event['turn_id']?.toString() ?? data['turnId']?.toString(),
-        ),
-        type: Value(type),
-        status: Value(status),
-        role: Value(role),
-        summary: Value(summary),
-        content: Value(_encodeJson(nextContent)),
-        providerCursor: Value(cursor),
-        itemIndex: Value(itemIndex),
-        createdAt: Value(createdAt),
-        updatedAt: Value(now),
+    final next = SessionItemEntriesCompanion(
+      agentId: Value(agentId),
+      sessionId: Value(sessionId),
+      itemId: Value(itemId),
+      turnId: Value(
+        event['turn_id']?.toString() ??
+            event['turnId']?.toString() ??
+            data['turn_id']?.toString() ??
+            data['turnId']?.toString(),
       ),
+      type: Value(type),
+      status: Value(status),
+      role: Value(role),
+      summary: Value(summary),
+      content: Value(_encodeJson(nextContent)),
+      providerCursor: Value(cursor),
+      itemIndex: Value(itemIndex),
+      createdAt: Value(createdAt),
+      updatedAt: Value(now),
     );
+    if (_sessionItemMatchesExisting(existing, next)) return false;
+
+    await _db.insertOrUpdateItem(next);
     if (type == SessionItemTypes.userMessage && !itemId.startsWith('local-')) {
       await _removeMatchingPendingUserMessage(sessionId, nextContent);
+    }
+    return true;
+  }
+
+  String? _realtimeItemId(
+    String eventType,
+    Map<String, dynamic> event,
+    Map<String, dynamic> data,
+    Map<String, dynamic> itemData,
+  ) {
+    for (final source in [event, data, itemData]) {
+      for (final key in ['item_id', 'itemId', 'id']) {
+        final value = source[key]?.toString();
+        if (value != null && value.isNotEmpty) return value;
+      }
+    }
+
+    final turnId =
+        event['turn_id']?.toString() ??
+        event['turnId']?.toString() ??
+        data['turn_id']?.toString() ??
+        data['turnId']?.toString() ??
+        itemData['turn_id']?.toString() ??
+        itemData['turnId']?.toString();
+    if (turnId == null || turnId.isEmpty) return null;
+
+    switch (eventType) {
+      case SessionEventTypes.plan:
+      case SessionEventTypes.planDelta:
+      case SessionEventTypes.planUpdated:
+        return 'plan:$turnId';
+      case SessionEventTypes.diffUpdated:
+        return 'diff:$turnId';
+      case SessionEventTypes.output:
+        return 'output:$turnId';
+      default:
+        return null;
+    }
+  }
+
+  bool _isRealtimeDeltaEvent(String eventType) {
+    switch (eventType) {
+      case SessionEventTypes.messageDelta:
+      case SessionEventTypes.planDelta:
+      case SessionEventTypes.reasoningSummaryDelta:
+      case SessionEventTypes.reasoningTextDelta:
+      case SessionEventTypes.reasoningSummaryPart:
+      case SessionEventTypes.commandOutputDelta:
+      case SessionEventTypes.fileChangeOutputDelta:
+      case SessionEventTypes.output:
+        return true;
+      default:
+        return false;
     }
   }
 
@@ -627,7 +841,7 @@ class SessionRepository implements SessionSyncStore {
         : await _db.getRecentItemsBySession(agentId, sessionId, limit);
     final localList = localItems.map(_itemToMap).toList();
 
-    _syncItemsFromApi(sessionId).catchError((e) {
+    refreshItems(sessionId).catchError((e) {
       debugPrint('SessionRepository: sync items error: $e');
       return <Map<String, dynamic>>[];
     });
@@ -639,19 +853,72 @@ class SessionRepository implements SessionSyncStore {
   Future<List<Map<String, dynamic>>> refreshItems(
     String sessionId, {
     bool forceFull = false,
-  }) {
-    return _syncItemsFromApi(sessionId, useStoredCursor: !forceFull);
+  }) async {
+    if (forceFull) {
+      return (await _syncItemsPageFromApi(
+        sessionId,
+        cursor: null,
+        replaceSnapshot: true,
+      )).items;
+    }
+
+    final cursor = await _db.getSyncCursor(agentId, 'session_items', sessionId);
+    if (cursor == null || cursor.isEmpty) {
+      return (await _syncItemsPageFromApi(
+        sessionId,
+        cursor: null,
+        replaceSnapshot: true,
+      )).items;
+    }
+
+    final synced = <Map<String, dynamic>>[];
+    try {
+      synced.addAll(await _syncItemPagesFromCursor(sessionId, cursor));
+    } catch (error) {
+      debugPrint(
+        'SessionRepository: incremental item sync failed, falling back to latest page: $error',
+      );
+      return (await _syncItemsPageFromApi(
+        sessionId,
+        cursor: null,
+        replaceSnapshot: true,
+      )).items;
+    }
+    synced.addAll(
+      (await _syncItemsPageFromApi(
+        sessionId,
+        cursor: null,
+        replaceSnapshot: false,
+      )).items,
+    );
+    return synced;
   }
 
-  Future<List<Map<String, dynamic>>> _syncItemsFromApi(
+  Future<List<Map<String, dynamic>>> _syncItemPagesFromCursor(
+    String sessionId,
+    String initialCursor,
+  ) async {
+    final synced = <Map<String, dynamic>>[];
+    var cursor = initialCursor;
+    while (cursor.isNotEmpty) {
+      final page = await _syncItemsPageFromApi(sessionId, cursor: cursor);
+      synced.addAll(page.items);
+      final nextCursor = page.cursor;
+      if (!page.hasMore || nextCursor == null || nextCursor.isEmpty) break;
+      if (nextCursor == cursor) break;
+      cursor = nextCursor;
+    }
+    return synced;
+  }
+
+  Future<_ItemSyncPage> _syncItemsPageFromApi(
     String sessionId, {
-    bool useStoredCursor = true,
+    required String? cursor,
+    bool replaceSnapshot = false,
   }) async {
-    final cursor = useStoredCursor
-        ? await _db.getSyncCursor(agentId, 'session_items', sessionId)
-        : null;
     final page = await _api.getItemsPage(sessionId, cursor: cursor);
     final newItems = page['items'] as List<dynamic>? ?? [];
+    final snapshotItemIds = <String>{};
     final realUserMessageContents = <dynamic>[];
     final entries = <SessionItemEntriesCompanion>[];
     for (final item in newItems) {
@@ -670,6 +937,7 @@ class SessionRepository implements SessionSyncStore {
         }
         continue;
       }
+      snapshotItemIds.add(itemId);
       if (type == SessionItemTypes.userMessage &&
           !itemId.startsWith('local-')) {
         realUserMessageContents.add(content);
@@ -693,11 +961,35 @@ class SessionRepository implements SessionSyncStore {
       await _removeMatchingPendingUserMessage(sessionId, content);
     }
     final nextCursor = page['cursor']?.toString();
+    final hasMore = page['has_more'] == true || page['hasMore'] == true;
+    if (replaceSnapshot && !hasMore) {
+      await _pruneItemsMissingFromSnapshot(sessionId, snapshotItemIds);
+    }
     if (nextCursor != null && nextCursor.isNotEmpty) {
       await _db.setSyncCursor(agentId, 'session_items', sessionId, nextCursor);
     }
 
-    return entries.map(_itemCompanionToMap).toList(growable: false);
+    return _ItemSyncPage(
+      items: entries.map(_itemCompanionToMap).toList(growable: false),
+      cursor: nextCursor,
+      hasMore: hasMore,
+    );
+  }
+
+  Future<void> _pruneItemsMissingFromSnapshot(
+    String sessionId,
+    Set<String> snapshotItemIds,
+  ) async {
+    final cachedItems = await _db.getItemsBySession(agentId, sessionId);
+    for (final item in cachedItems) {
+      if (snapshotItemIds.contains(item.itemId)) continue;
+      if (item.itemId.startsWith('local-') &&
+          item.type == SessionItemTypes.userMessage &&
+          item.status == 'pending') {
+        continue;
+      }
+      await _db.deleteItem(agentId, sessionId, item.itemId);
+    }
   }
 
   SessionItemEntriesCompanion _sessionItemCompanion({
@@ -976,6 +1268,7 @@ class SessionRepository implements SessionSyncStore {
     switch (eventType) {
       case SessionEventTypes.message:
       case SessionEventTypes.messageDelta:
+      case SessionEventTypes.output:
         return 'agent_message';
       case SessionEventTypes.userMessage:
         return 'user_message';
@@ -988,7 +1281,10 @@ class SessionRepository implements SessionSyncStore {
       case SessionEventTypes.fileRead:
         return 'file_read';
       case SessionEventTypes.mcpToolCompleted:
+      case SessionEventTypes.approvalRequest:
         return 'mcp_tool_call';
+      case SessionEventTypes.plan:
+      case SessionEventTypes.planDelta:
       case SessionEventTypes.planUpdated:
         return 'plan';
       case SessionEventTypes.diffUpdated:

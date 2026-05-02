@@ -95,6 +95,15 @@ func (c *AppServerClient) handleNotification(msg *protocol.JSONRPCResponse) {
 			Timestamp: time.Now(),
 		})
 
+	case "thread/tokenUsage/updated":
+		payload := parsePayload(msg.Params)
+		c.emitEvent(provider.ProviderEvent{
+			Type:      string(provider.EventTokenUsageUpdated),
+			SessionID: sessionIDFromPayload(payload),
+			Payload:   payload,
+			Timestamp: time.Now(),
+		})
+
 	case "item/started":
 		payload := parsePayload(msg.Params)
 		c.emitEvent(provider.ProviderEvent{
@@ -318,8 +327,7 @@ func (c *AppServerClient) handleNotification(msg *protocol.JSONRPCResponse) {
 func (c *AppServerClient) emitEvent(event provider.ProviderEvent) {
 	select {
 	case c.events <- event:
-	default:
-		log.Warn("codex", "events channel full, dropping %s", event.Type)
+	case <-c.done:
 	}
 }
 

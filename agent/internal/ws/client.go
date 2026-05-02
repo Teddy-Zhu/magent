@@ -5,8 +5,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/gorilla/websocket"
 	"github.com/Teddy-Zhu/magent/agent/internal/log"
+	"github.com/gorilla/websocket"
 )
 
 const (
@@ -41,7 +41,10 @@ func (c *Client) Send(msg []byte) {
 	select {
 	case c.send <- msg:
 	default:
-		// channel full, drop message
+		log.Warn("ws", "send queue full token=%s, unregistering client", c.tokenName)
+		go func() {
+			c.hub.unregister <- c
+		}()
 	}
 }
 

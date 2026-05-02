@@ -83,7 +83,7 @@ void main() {
   );
 
   test('realtime deltas update item projection and ws cursor', () async {
-    await repo.applyRealtimeEvent({
+    final firstApplied = await repo.applyRealtimeEvent({
       'type': 'session.message_delta',
       'session_id': 's1',
       'item_id': 'i1',
@@ -93,7 +93,7 @@ void main() {
       'created_at': DateTime(2026, 5, 1).toIso8601String(),
       'data': {'delta': 'hel'},
     });
-    await repo.applyRealtimeEvent({
+    final secondApplied = await repo.applyRealtimeEvent({
       'type': 'session.message_delta',
       'session_id': 's1',
       'item_id': 'i1',
@@ -107,12 +107,185 @@ void main() {
     final item = await db.getItem('agent-a', 's1', 'i1');
     final cursor = await repo.getRealtimeCursor('s1');
 
+    expect(firstApplied, isTrue);
+    expect(secondApplied, isTrue);
     expect(item, isNotNull);
     expect(item!.type, 'agent_message');
     expect(item.role, 'assistant');
     expect(item.content, contains('hello'));
     expect(cursor, 'ws:2');
   });
+
+  test('realtime duplicate events at stored ws cursor are ignored', () async {
+    final event = {
+      'type': 'session.message_delta',
+      'session_id': 's1',
+      'item_id': 'i1',
+      'turn_id': 't1',
+      'ws_cursor': '1',
+      'created_at': DateTime(2026, 5, 1).toIso8601String(),
+      'data': {'delta': 'hel'},
+    };
+
+    final firstApplied = await repo.applyRealtimeEvent(event);
+    final duplicateApplied = await repo.applyRealtimeEvent(event);
+
+    final item = await db.getItem('agent-a', 's1', 'i1');
+    expect(firstApplied, isTrue);
+    expect(duplicateApplied, isFalse);
+    expect(item?.content, contains('hel'));
+    expect(item?.content, isNot(contains('helhel')));
+  });
+
+  test('lower ws cursor after agent restart is still applied', () async {
+    await db.setSyncCursor('agent-a', 'session_ws', 's1', '24');
+    await db.setSyncCursor('agent-a', 'session_ws_epoch', 's1', 'old');
+
+    final applied = await repo.applyRealtimeEvent({
+      'type': 'session.message_delta',
+      'session_id': 's1',
+      'item_id': 'i1',
+      'turn_id': 't1',
+      'ws_cursor': '1',
+      'ws_epoch': 'new',
+      'created_at': DateTime(2026, 5, 1).toIso8601String(),
+      'data': {'delta': 'new'},
+    });
+
+    final item = await db.getItem('agent-a', 's1', 'i1');
+    final cursor = await repo.getRealtimeCursor('s1');
+    final epoch = await repo.getRealtimeEpoch('s1');
+
+    expect(applied, isTrue);
+    expect(item?.content, contains('new'));
+    expect(cursor, '1');
+    expect(epoch, 'new');
+  });
+
+  test('lower ws cursor in same epoch is ignored', () async {
+    await db.setSyncCursor('agent-a', 'session_ws', 's1', '24');
+    await db.setSyncCursor('agent-a', 'session_ws_epoch', 's1', 'same');
+
+    final applied = await repo.applyRealtimeEvent({
+      'type': 'session.message_delta',
+      'session_id': 's1',
+      'item_id': 'i1',
+      'turn_id': 't1',
+      'ws_cursor': '1',
+      'ws_epoch': 'same',
+      'created_at': DateTime(2026, 5, 1).toIso8601String(),
+      'data': {'delta': 'old'},
+    });
+
+    final item = await db.getItem('agent-a', 's1', 'i1');
+
+    expect(applied, isFalse);
+    expect(item, isNull);
+  });
+
+  test('epoch-prefixed ws cursor is deduplicated within same epoch', () async {
+    await db.setSyncCursor('agent-a', 'session_ws', 's1', 'same:24');
+
+    final applied = await repo.applyRealtimeEvent({
+      'type': 'session.message_delta',
+      'session_id': 's1',
+      'item_id': 'i1',
+      'turn_id': 't1',
+      'ws_cursor': 'same:1',
+      'created_at': DateTime(2026, 5, 1).toIso8601String(),
+      'data': {'delta': 'old'},
+    });
+
+    final item = await db.getItem('agent-a', 's1', 'i1');
+
+    expect(applied, isFalse);
+    expect(item, isNull);
+  });
+
+  test('epoch-prefixed ws cursor with new epoch is applied', () async {
+    await db.setSyncCursor('agent-a', 'session_ws', 's1', 'old:24');
+
+    final applied = await repo.applyRealtimeEvent({
+      'type': 'session.message_delta',
+      'session_id': 's1',
+      'item_id': 'i1',
+      'turn_id': 't1',
+      'ws_cursor': 'new:1',
+      'created_at': DateTime(2026, 5, 1).toIso8601String(),
+      'data': {'delta': 'new'},
+    });
+
+    final item = await db.getItem('agent-a', 's1', 'i1');
+
+    expect(applied, isTrue);
+    expect(item?.content, contains('new'));
+  });
+
+  test('delta after completed item from catch-up is dropped', () async {
+    fakeApi.items = [
+      {
+        'item_id': 'msg-1',
+        'turn_id': 'turn-1',
+        'index': 1,
+        'type': 'agent_message',
+        'status': 'completed',
+        'content': {'id': 'msg-1', 'type': 'agentMessage', 'text': 'hello'},
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+      },
+    ];
+    await repo.refreshItems('s1');
+
+    final applied = await repo.applyRealtimeEvent({
+      'type': 'session.message_delta',
+      'session_id': 's1',
+      'item_id': 'msg-1',
+      'turn_id': 'turn-1',
+      'ws_cursor': '2',
+      'created_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+      'data': {'delta': 'hello'},
+    });
+
+    final item = await db.getItem('agent-a', 's1', 'msg-1');
+    final cursor = await repo.getRealtimeCursor('s1');
+
+    expect(applied, isFalse);
+    expect(item?.content, contains('"text":"hello"'));
+    expect(item?.content, isNot(contains('hellohello')));
+    expect(cursor, '2');
+  });
+
+  test(
+    'plan and diff realtime updates use stable synthetic item ids',
+    () async {
+      final planApplied = await repo.applyRealtimeEvent({
+        'type': 'session.plan_updated',
+        'session_id': 's1',
+        'turn_id': 'turn-1',
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'data': {
+          'explanation': 'plan',
+          'plan': [
+            {'step': 'one', 'status': 'inProgress'},
+          ],
+        },
+      });
+      final diffApplied = await repo.applyRealtimeEvent({
+        'type': 'session.diff_updated',
+        'session_id': 's1',
+        'turn_id': 'turn-1',
+        'created_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+        'data': {'summary': 'diff'},
+      });
+
+      final items = await db.getItemsBySession('agent-a', 's1');
+
+      expect(planApplied, isTrue);
+      expect(diffApplied, isTrue);
+      expect(items.map((item) => item.itemId), ['plan:turn-1', 'diff:turn-1']);
+      expect(items.map((item) => item.type), ['plan', 'diff']);
+    },
+  );
 
   test('empty reasoning items are ignored', () async {
     await repo.applyRealtimeEvent({
@@ -288,13 +461,203 @@ void main() {
     },
   );
 
-  test('refresh items uses stored cursor by default', () async {
-    await db.setSyncCursor('agent-a', 'session_items', 's1', 'newer:old');
+  test(
+    'refresh items reconciles stored cursor and latest page by default',
+    () async {
+      await db.setSyncCursor('agent-a', 'session_items', 's1', 'newer:old');
+      fakeApi.itemsByCursor['newer:old'] = [
+        {
+          'item_id': 'msg-old',
+          'turn_id': 'turn-1',
+          'index': 1,
+          'type': 'agent_message',
+          'status': 'completed',
+          'content': {'id': 'msg-old', 'type': 'agentMessage', 'text': 'old'},
+          'created_at': DateTime(2026, 5, 1).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+        },
+      ];
+      fakeApi.pageCursors['newer:old'] = 'newer:next';
+      fakeApi.pageHasMore['newer:old'] = true;
+      fakeApi.itemsByCursor['newer:next'] = [
+        {
+          'item_id': 'msg-next',
+          'turn_id': 'turn-2',
+          'index': 2,
+          'type': 'agent_message',
+          'status': 'completed',
+          'content': {'id': 'msg-next', 'type': 'agentMessage', 'text': 'next'},
+          'created_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+        },
+      ];
+      fakeApi.itemsByCursor[null] = [
+        {
+          'item_id': 'msg-latest',
+          'turn_id': 'turn-2',
+          'index': 3,
+          'type': 'agent_message',
+          'status': 'completed',
+          'content': {
+            'id': 'msg-latest',
+            'type': 'agentMessage',
+            'text': 'latest',
+          },
+          'created_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+        },
+      ];
 
-    await repo.refreshItems('s1');
+      await repo.refreshItems('s1');
 
-    expect(fakeApi.itemRequestCursors, ['newer:old']);
+      expect(fakeApi.itemRequestCursors, ['newer:old', 'newer:next', isNull]);
+      final items = await db.getItemsBySession('agent-a', 's1');
+      expect(items.map((item) => item.itemId), [
+        'msg-old',
+        'msg-next',
+        'msg-latest',
+      ]);
+    },
+  );
+
+  test('refresh items stores codex app-server tool call projections', () async {
+    fakeApi.items = [
+      {
+        'item_id': 'call_9aeFf1ciI8rUGMFPARv8L5PM',
+        'turn_id': '019de8f9-e',
+        'index': 177773014500022,
+        'type': 'command_execution',
+        'status': 'completed',
+        'summary': 'nl -ba docs/dev/prepare/enginev4综合优化实施计划.md',
+        'content': {
+          'id': 'call_9aeFf1ciI8rUGMFPARv8L5PM',
+          'type': 'commandExecution',
+          'command':
+              '/usr/bin/zsh -lc "nl -ba docs/dev/prepare/enginev4综合优化实施计划.md | sed -n \'990,1040p\'"',
+          'cwd': '/home/teddyhp/code/python_web_template',
+          'aggregatedOutput': '   990\tDivergenceIndex int\n',
+          'exitCode': 0,
+        },
+        'created_at': DateTime(2026, 5, 2, 14, 4, 45).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 2, 14, 5, 7).toIso8601String(),
+      },
+      {
+        'item_id': 'call_FcpXP8t6AwbUOO6obYCuhMbB',
+        'turn_id': '019de8f9-e',
+        'index': 177773014500023,
+        'type': 'command_execution',
+        'status': 'completed',
+        'content': {
+          'id': 'call_FcpXP8t6AwbUOO6obYCuhMbB',
+          'type': 'commandExecution',
+          'command':
+              '/usr/bin/zsh -lc "nl -ba docs/dev/prepare/enginev4综合优化实施计划.md | sed -n \'1065,1118p\'"',
+          'cwd': '/home/teddyhp/code/python_web_template',
+          'aggregatedOutput': '  1065\tmetrics.go\n',
+          'exitCode': 0,
+        },
+        'created_at': DateTime(2026, 5, 2, 14, 4, 45).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 2, 14, 5, 7).toIso8601String(),
+      },
+      {
+        'item_id': 'call_50BanriSB8wfP52Zwql6mnbN',
+        'turn_id': '019de8f9-e',
+        'index': 177773014500021,
+        'type': 'file_change',
+        'status': 'completed',
+        'content': {
+          'id': 'call_50BanriSB8wfP52Zwql6mnbN',
+          'type': 'fileChange',
+          'changes': [
+            {
+              'path':
+                  '/home/teddyhp/code/python_web_template/docs/dev/prepare/enginev4综合优化实施计划.md',
+              'kind': {'type': 'update', 'move_path': null},
+              'diff': '@@ -271,2 +271,3 @@\n+类型落位：\n',
+            },
+          ],
+        },
+        'created_at': DateTime(2026, 5, 2, 14, 4, 45).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 2, 14, 5, 7).toIso8601String(),
+      },
+    ];
+
+    await repo.refreshItems('s1', forceFull: true);
+
+    final commandA = await db.getItem(
+      'agent-a',
+      's1',
+      'call_9aeFf1ciI8rUGMFPARv8L5PM',
+    );
+    final commandB = await db.getItem(
+      'agent-a',
+      's1',
+      'call_FcpXP8t6AwbUOO6obYCuhMbB',
+    );
+    final fileChange = await db.getItem(
+      'agent-a',
+      's1',
+      'call_50BanriSB8wfP52Zwql6mnbN',
+    );
+
+    expect(commandA, isNotNull);
+    expect(commandA!.type, 'command_execution');
+    expect(commandA.content, contains('"output":"   990'));
+    expect(commandA.content, contains('"exit_code":0'));
+    expect(commandB, isNotNull);
+    expect(commandB!.content, contains('1065'));
+    expect(fileChange, isNotNull);
+    expect(fileChange!.type, 'file_change');
+    expect(fileChange.content, contains('"diff":"@@ -271'));
   });
+
+  test(
+    'force refresh replaces stale realtime items with provider snapshot',
+    () async {
+      await db.insertOrUpdateItem(
+        SessionItemEntriesCompanion.insert(
+          agentId: 'agent-a',
+          sessionId: 's1',
+          itemId: 'stale-realtime',
+          type: 'command_execution',
+          status: const Value('in_progress'),
+          content: const Value('{"output":"old"}'),
+          itemIndex: const Value(999999999),
+          createdAt: DateTime(2026, 5, 2, 14, 0),
+          updatedAt: DateTime(2026, 5, 2, 14, 0),
+        ),
+      );
+      await repo.addPendingUserMessage('s1', 'pending input');
+      fakeApi.items = [
+        {
+          'item_id': 'call_FcpXP8t6AwbUOO6obYCuhMbB',
+          'turn_id': '019de8f9-e',
+          'index': 177773014500036,
+          'type': 'command_execution',
+          'status': 'completed',
+          'content': {
+            'id': 'call_FcpXP8t6AwbUOO6obYCuhMbB',
+            'type': 'commandExecution',
+            'command': 'nl -ba docs/dev/prepare/enginev4综合优化实施计划.md',
+            'aggregatedOutput': '  1065\tmetrics.go\n',
+            'exitCode': 0,
+          },
+          'created_at': DateTime(2026, 5, 2, 14, 4, 45).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 2, 14, 5, 7).toIso8601String(),
+        },
+      ];
+
+      await repo.refreshItems('s1', forceFull: true);
+
+      expect(await db.getItem('agent-a', 's1', 'stale-realtime'), isNull);
+      expect(
+        await db.getItem('agent-a', 's1', 'call_FcpXP8t6AwbUOO6obYCuhMbB'),
+        isNotNull,
+      );
+      final items = await db.getItemsBySession('agent-a', 's1');
+      expect(items.any((item) => item.itemId.startsWith('local-')), isTrue);
+    },
+  );
 
   test('refresh items skips unchanged cached rows', () async {
     final createdAt = DateTime(2026, 5, 1);
@@ -434,6 +797,9 @@ void main() {
 class _FakeSessionApi implements SessionApiLike {
   List<dynamic> sessions = [];
   List<dynamic> items = [];
+  final Map<String?, List<dynamic>> itemsByCursor = {};
+  final Map<String?, String?> pageCursors = {};
+  final Map<String?, bool> pageHasMore = {};
   final List<String?> itemRequestCursors = [];
 
   @override
@@ -474,7 +840,11 @@ class _FakeSessionApi implements SessionApiLike {
     int limit = 200,
   }) async {
     itemRequestCursors.add(cursor);
-    return {'items': items, 'cursor': cursor};
+    return {
+      'items': itemsByCursor[cursor] ?? items,
+      'cursor': pageCursors.containsKey(cursor) ? pageCursors[cursor] : cursor,
+      'has_more': pageHasMore[cursor] ?? false,
+    };
   }
 
   @override

@@ -460,8 +460,8 @@ func TestCodexTurnsToItemsPreservesOrderIndexAndFileStats(t *testing.T) {
 	if len(items) != 4 {
 		t.Fatalf("items len = %d, want 4", len(items))
 	}
-	if items[0].Index != 0 || items[1].Index != 1 || items[2].Index != 100000 || items[3].Index != 100001 {
-		t.Fatalf("item indexes = [%d %d %d %d], want [0 1 100000 100001]", items[0].Index, items[1].Index, items[2].Index, items[3].Index)
+	if items[0].Index != 10000000 || items[1].Index != 10000001 || items[2].Index != 10200000 || items[3].Index != 10200001 {
+		t.Fatalf("item indexes = [%d %d %d %d], want [10000000 10000001 10200000 10200001]", items[0].Index, items[1].Index, items[2].Index, items[3].Index)
 	}
 	content, ok := items[1].Content.(map[string]any)
 	if !ok {
@@ -500,6 +500,74 @@ func TestCodexTurnsToItemsPreservesOrderIndexAndFileStats(t *testing.T) {
 	}
 	if _, ok := cmdContent["commandActions"].([]any); !ok {
 		t.Fatalf("commandActions = %#v, want preserved list", cmdContent["commandActions"])
+	}
+}
+
+func TestCodexTurnsToItemsPreservesAppServerToolCallIDs(t *testing.T) {
+	exitCode := 0
+	items := codexTurnsToItems([]ThreadTurn{
+		{
+			ID:          "019de8f9-4c06-71b1-9e71-d7580f935ef3",
+			Status:      "failed",
+			StartedAt:   1777730145,
+			CompletedAt: 1777730707,
+			Items: []TurnItem{
+				{
+					ID:     "call_50BanriSB8wfP52Zwql6mnbN",
+					Type:   "fileChange",
+					Status: "completed",
+					Changes: []TurnItemChange{
+						{
+							Path: "/home/teddyhp/code/python_web_template/docs/dev/prepare/enginev4综合优化实施计划.md",
+							Kind: ChangeKind{Type: "update"},
+							Diff: "@@ -271,2 +271,3 @@\n+类型落位：\n",
+						},
+					},
+				},
+				{
+					ID:               "call_9aeFf1ciI8rUGMFPARv8L5PM",
+					Type:             "commandExecution",
+					Status:           "completed",
+					Command:          `/usr/bin/zsh -lc "nl -ba docs/dev/prepare/enginev4综合优化实施计划.md | sed -n '990,1040p'"`,
+					CWD:              "/home/teddyhp/code/python_web_template",
+					AggregatedOutput: "   990\tDivergenceIndex int\n",
+					ExitCode:         &exitCode,
+				},
+				{
+					ID:               "call_FcpXP8t6AwbUOO6obYCuhMbB",
+					Type:             "commandExecution",
+					Status:           "completed",
+					Command:          `/usr/bin/zsh -lc "nl -ba docs/dev/prepare/enginev4综合优化实施计划.md | sed -n '1065,1118p'"`,
+					CWD:              "/home/teddyhp/code/python_web_template",
+					AggregatedOutput: "  1065\tmetrics.go\n",
+					ExitCode:         &exitCode,
+				},
+			},
+		},
+	})
+
+	if len(items) != 3 {
+		t.Fatalf("items len = %d, want 3", len(items))
+	}
+	if items[1].ItemID != "call_9aeFf1ciI8rUGMFPARv8L5PM" || items[1].Type != string(provider.ItemTypeCommandExecution) {
+		t.Fatalf("command item = %#v", items[1])
+	}
+	if items[2].ItemID != "call_FcpXP8t6AwbUOO6obYCuhMbB" || items[2].Type != string(provider.ItemTypeCommandExecution) {
+		t.Fatalf("command item = %#v", items[2])
+	}
+	content, ok := items[2].Content.(map[string]any)
+	if !ok {
+		t.Fatalf("content = %#v", items[2].Content)
+	}
+	if content["output"] != "  1065\tmetrics.go\n" {
+		t.Fatalf("output = %#v", content["output"])
+	}
+	fileContent, ok := items[0].Content.(map[string]any)
+	if !ok {
+		t.Fatalf("file content = %#v", items[0].Content)
+	}
+	if fileContent["diff"] == "" {
+		t.Fatal("file diff should be preserved")
 	}
 }
 

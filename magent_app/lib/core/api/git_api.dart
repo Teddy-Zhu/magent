@@ -95,9 +95,20 @@ class GitApi {
     );
   }
 
-  Future<String> suggestCommitMessage(String projectId) async {
+  Future<String> suggestCommitMessage(
+    String projectId, {
+    String? providerId,
+    String? model,
+    String? effort,
+  }) async {
     final resp = await _dio.post(
       '$_apiPrefix/projects/$projectId/git/commit/suggest',
+      data: {
+        if (providerId != null && providerId.isNotEmpty)
+          'provider_id': providerId,
+        if (model != null && model.isNotEmpty) 'model': model,
+        if (effort != null && effort.isNotEmpty) 'effort': effort,
+      },
     );
     final data = resp.data['data'] as Map<String, dynamic>? ?? {};
     final error = data['error'] as String?;

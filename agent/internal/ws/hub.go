@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"sync"
+	"time"
 
 	"github.com/Teddy-Zhu/magent/agent/internal/log"
 )
@@ -20,6 +22,7 @@ type Hub struct {
 	maxPerToken int
 
 	replayMu  sync.RWMutex
+	replayID  string
 	replaySeq uint64
 	replayCap int
 	replay    map[string][]replayMessage
@@ -37,6 +40,7 @@ func NewHub() *Hub {
 		unregister:  make(chan *Client),
 		broadcast:   make(chan []byte, 256),
 		maxPerToken: 5,
+		replayID:    strconv.FormatInt(time.Now().UnixNano(), 36),
 		replayCap:   defaultReplayCap,
 		replay:      make(map[string][]replayMessage),
 	}
@@ -107,8 +111,9 @@ func (h *Hub) prepareBroadcast(event any) []byte {
 
 	h.replaySeq++
 	seq := h.replaySeq
+	envelope["ws_epoch"] = h.replayID
 	envelope["ws_seq"] = seq
-	envelope["ws_cursor"] = strconv.FormatUint(seq, 10)
+	envelope["ws_cursor"] = h.replayCursor(seq)
 
 	data, _ = json.Marshal(envelope)
 	messages := append(h.replay[sessionID], replayMessage{seq: seq, data: data})
@@ -136,9 +141,13 @@ func (h *Hub) ReplaySession(client *Client, sessionID, cursor string) {
 		return
 	}
 
-	seq, err := strconv.ParseUint(cursor, 10, 64)
+	epoch, seq, err := h.parseReplayCursor(cursor)
 	if err != nil {
 		h.sendSyncRequired(client, sessionID, cursor, "invalid_cursor", 0, h.latestReplaySeq())
+		return
+	}
+	if epoch != "" && epoch != h.replayID {
+		h.sendSyncRequired(client, sessionID, cursor, "replay_epoch_changed", 0, h.latestReplaySeq())
 		return
 	}
 
@@ -178,10 +187,24 @@ func (h *Hub) ReplaySession(client *Client, sessionID, cursor string) {
 	client.sendJSON(map[string]any{
 		"type":          "session.replay_complete",
 		"session_id":    sessionID,
+		"ws_epoch":      h.replayID,
 		"from_ws_seq":   seq,
 		"latest_ws_seq": newest,
 		"replayed":      len(replay),
 	})
+}
+
+func (h *Hub) replayCursor(seq uint64) string {
+	return h.replayID + ":" + strconv.FormatUint(seq, 10)
+}
+
+func (h *Hub) parseReplayCursor(cursor string) (string, uint64, error) {
+	if before, after, ok := strings.Cut(cursor, ":"); ok {
+		seq, err := strconv.ParseUint(after, 10, 64)
+		return before, seq, err
+	}
+	seq, err := strconv.ParseUint(cursor, 10, 64)
+	return "", seq, err
 }
 
 func (h *Hub) latestReplaySeq() uint64 {
@@ -194,6 +217,7 @@ func (h *Hub) sendSyncRequired(client *Client, sessionID, cursor, reason string,
 	client.sendJSON(map[string]any{
 		"type":          "session.sync_required",
 		"session_id":    sessionID,
+		"ws_epoch":      h.replayID,
 		"cursor":        cursor,
 		"reason":        reason,
 		"oldest_ws_seq": oldest,

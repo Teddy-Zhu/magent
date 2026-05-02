@@ -27,7 +27,6 @@ class WsClient {
     _channel!.stream.listen(
       (data) {
         final event = jsonDecode(data as String);
-        _trackRealtimeCursor(event);
         _eventController.add(event);
       },
       onDone: () {
@@ -70,6 +69,11 @@ class WsClient {
     send({'type': 'session.unsubscribe', 'session_id': sessionId});
   }
 
+  void updateSessionCursor(String sessionId, String cursor) {
+    if (!_subscriptions.containsKey(sessionId) || cursor.isEmpty) return;
+    _subscriptions[sessionId] = cursor;
+  }
+
   void _resendState() {
     if (!_helloSent && _subscriptions.isEmpty) return;
     if (_helloSent) {
@@ -98,22 +102,6 @@ class WsClient {
           },
       ],
     });
-  }
-
-  void _trackRealtimeCursor(dynamic event) {
-    if (event is! Map) return;
-    final sessionId = event['session_id']?.toString();
-    final cursor =
-        event['ws_cursor']?.toString() ?? event['ws_seq']?.toString();
-    if (sessionId == null ||
-        sessionId.isEmpty ||
-        cursor == null ||
-        cursor.isEmpty) {
-      return;
-    }
-    if (_subscriptions.containsKey(sessionId)) {
-      _subscriptions[sessionId] = cursor;
-    }
   }
 
   void send(Map<String, dynamic> message) {

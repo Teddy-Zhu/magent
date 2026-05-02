@@ -11,6 +11,8 @@ abstract class RealtimeTransport {
 
   void unsubscribeSession(String sessionId);
 
+  void updateSessionCursor(String sessionId, String cursor);
+
   void pause();
 
   void resume();
@@ -45,6 +47,11 @@ class RealtimeService implements RealtimeTransport {
   @override
   void unsubscribeSession(String sessionId) {
     _client.unsubscribeSession(sessionId);
+  }
+
+  @override
+  void updateSessionCursor(String sessionId, String cursor) {
+    _client.updateSessionCursor(sessionId, cursor);
   }
 
   StreamSubscription<Map<String, dynamic>> listen(

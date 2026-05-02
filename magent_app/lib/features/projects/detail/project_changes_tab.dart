@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/foundation.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
@@ -11,7 +10,6 @@ class ProjectChangesTab extends StatefulWidget {
   final String projectId;
   final GitRepository git;
   final FileRepository file;
-  final ValueListenable<int>? invalidationSignal;
   final VoidCallback? onViewLog;
   final VoidCallback? onViewBranches;
 
@@ -20,7 +18,6 @@ class ProjectChangesTab extends StatefulWidget {
     required this.projectId,
     required this.git,
     required this.file,
-    this.invalidationSignal,
     this.onViewLog,
     this.onViewBranches,
   });
@@ -46,19 +43,13 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     _tabController.addListener(() {
       setState(() => _selectedPaths.clear());
     });
-    widget.invalidationSignal?.addListener(_handleInvalidation);
     _load();
   }
 
   @override
   void dispose() {
-    widget.invalidationSignal?.removeListener(_handleInvalidation);
     _tabController.dispose();
     super.dispose();
-  }
-
-  void _handleInvalidation() {
-    _refreshFromInvalidation();
   }
 
   Future<void> _load() async {
@@ -83,20 +74,6 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
-  }
-
-  Future<void> _refreshFromInvalidation() async {
-    if (!mounted) return;
-    try {
-      final snapshot = await widget.git.refreshSnapshot(widget.projectId);
-      if (mounted) {
-        setState(() {
-          _summary = snapshot.summary;
-          _allFiles = snapshot.files;
-          _loading = false;
-        });
-      }
-    } catch (_) {}
   }
 
   List<dynamic> get _stagedFiles =>
@@ -506,6 +483,18 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                 ),
               ]
             : [
+                IconButton(
+                  icon: const Icon(Icons.refresh, size: 18),
+                  tooltip: AppLocalizations.of(context)!.chatRefresh,
+                  onPressed: _operating ? null : _load,
+                  padding: EdgeInsets.zero,
+                  constraints: const BoxConstraints(
+                    minWidth: 30,
+                    minHeight: 30,
+                  ),
+                  visualDensity: VisualDensity.compact,
+                ),
+                const SizedBox(width: 4),
                 SizedBox(
                   height: 30,
                   child: OutlinedButton.icon(

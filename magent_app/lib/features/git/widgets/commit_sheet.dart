@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
+import 'package:magent_app/core/storage/secure_storage.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
 
 /// Shared bottom sheet for commit operations.
@@ -68,7 +69,15 @@ class _CommitSheetState extends State<CommitSheet> {
     final l10n = AppLocalizations.of(context)!;
     setState(() => _suggesting = true);
     try {
-      final message = await widget.git.suggestCommitMessage(widget.projectId);
+      final storage = AgentStorage();
+      final provider = await storage.getDefaultProvider() ?? 'codex';
+      final providerId = provider.isEmpty ? 'codex' : provider;
+      final message = await widget.git.suggestCommitMessage(
+        widget.projectId,
+        providerId: providerId,
+        model: await storage.getAiCommitModel(providerId),
+        effort: await storage.getAiCommitEffort(providerId),
+      );
       if (mounted && message.isNotEmpty) {
         _messageController.text = message;
         _showSuccess(l10n.gitAiMessageGenerated);

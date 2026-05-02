@@ -134,6 +134,8 @@
   "settingsGit": "Git 操作",
   "settingsGitManage": "Git 管理",
   "settingsGitManageSub": "状态、提交记录和分支",
+  "settingsAiCommitModel": "AI 提交信息模型",
+  "settingsAiCommitModelSub": "按提供者设置生成提交信息使用的模型和推理强度",
   "settingsCommitPush": "提交与推送",
   "settingsCommitPushSub": "提交更改并推送到远程",
   "settingsCommitLog": "提交记录",
@@ -319,6 +321,7 @@
   "chatFilesTooltip": "引用工作区路径",
   "chatChooseSkill": "选择技能",
   "chatChooseWorkspaceFile": "选择工作区文件或目录",
+  "chatContextCompacted": "对话已压缩",
   "chatCollapsedEvents": "已折叠 {count} 条更早消息",
   "@chatCollapsedEvents": {
     "placeholders": {

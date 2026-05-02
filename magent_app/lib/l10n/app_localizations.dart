@@ -824,6 +824,18 @@ abstract class AppLocalizations {
   /// **'Status, commit log, and branches'**
   String get settingsGitManageSub;
 
+  /// No description provided for @settingsAiCommitModel.
+  ///
+  /// In en, this message translates to:
+  /// **'AI commit model'**
+  String get settingsAiCommitModel;
+
+  /// No description provided for @settingsAiCommitModelSub.
+  ///
+  /// In en, this message translates to:
+  /// **'Provider-specific model and reasoning effort for commit message generation'**
+  String get settingsAiCommitModelSub;
+
   /// No description provided for @settingsCommitPush.
   ///
   /// In en, this message translates to:
@@ -1447,6 +1459,12 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Choose workspace file or folder'**
   String get chatChooseWorkspaceFile;
+
+  /// No description provided for @chatContextCompacted.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation compressed'**
+  String get chatContextCompacted;
 
   /// No description provided for @chatCollapsedEvents.
   ///

@@ -4,6 +4,9 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_highlight/flutter_highlight.dart';
+import 'package:flutter_highlight/themes/github.dart';
 import 'package:go_router/go_router.dart';
 import 'package:dio/dio.dart';
 import 'package:magent_app/core/api/error_messages.dart';
@@ -45,6 +48,202 @@ class _VisibleEventState {
   const _VisibleEventState({required this.events, required this.hiddenCount});
 }
 
+class ChatTokenUsageSnapshot {
+  final int totalTokens;
+  final int inputTokens;
+  final int outputTokens;
+  final int cachedInputTokens;
+  final int lastTotalTokens;
+  final int lastInputTokens;
+  final int lastOutputTokens;
+  final int lastCachedInputTokens;
+  final int contextWindow;
+
+  const ChatTokenUsageSnapshot({
+    required this.totalTokens,
+    required this.inputTokens,
+    required this.outputTokens,
+    required this.cachedInputTokens,
+    required this.lastTotalTokens,
+    required this.lastInputTokens,
+    required this.lastOutputTokens,
+    required this.lastCachedInputTokens,
+    required this.contextWindow,
+  });
+
+  int get contextTokens => lastInputTokens;
+
+  double get contextRatio {
+    if (contextWindow <= 0) return 0;
+    return contextTokens / contextWindow;
+  }
+}
+
+class ChatDiffFileSummary {
+  final String path;
+  final int additions;
+  final int deletions;
+
+  const ChatDiffFileSummary({
+    required this.path,
+    required this.additions,
+    required this.deletions,
+  });
+}
+
+@visibleForTesting
+bool chatTurnActiveFromItemSnapshot({
+  required bool currentTurnActive,
+  required bool snapshotHasActiveItem,
+  required Object? sessionStatus,
+}) {
+  if (snapshotHasActiveItem) return true;
+  if (!currentTurnActive) return false;
+  final status = SessionStatuses.normalize(sessionStatus);
+  return status == null || status == SessionStatuses.running;
+}
+
+@visibleForTesting
+ChatTokenUsageSnapshot? chatTokenUsageFromEventData(Object? data) {
+  if (data is! Map) return null;
+  final map = Map<String, dynamic>.from(data);
+  final usage = map['tokenUsage'] ?? map['token_usage'];
+  if (usage is! Map) return null;
+  final usageMap = Map<String, dynamic>.from(usage);
+  final total = _usageBucket(usageMap['total']);
+  final last = _usageBucket(usageMap['last']);
+  final contextWindow = _intValue(
+    usageMap['modelContextWindow'] ??
+        usageMap['model_context_window'] ??
+        map['modelContextWindow'] ??
+        map['model_context_window'],
+  );
+  return ChatTokenUsageSnapshot(
+    totalTokens: _intValue(total['totalTokens'] ?? total['total_tokens']),
+    inputTokens: _intValue(total['inputTokens'] ?? total['input_tokens']),
+    outputTokens: _intValue(total['outputTokens'] ?? total['output_tokens']),
+    cachedInputTokens: _intValue(
+      total['cachedInputTokens'] ?? total['cached_input_tokens'],
+    ),
+    lastTotalTokens: _intValue(
+      last['totalTokens'] ??
+          last['total_tokens'] ??
+          total['totalTokens'] ??
+          total['total_tokens'],
+    ),
+    lastInputTokens: _intValue(
+      last['inputTokens'] ??
+          last['input_tokens'] ??
+          last['totalTokens'] ??
+          last['total_tokens'],
+    ),
+    lastOutputTokens: _intValue(last['outputTokens'] ?? last['output_tokens']),
+    lastCachedInputTokens: _intValue(
+      last['cachedInputTokens'] ?? last['cached_input_tokens'],
+    ),
+    contextWindow: contextWindow,
+  );
+}
+
+@visibleForTesting
+String chatCompactTokenNumber(int value) {
+  final sign = value < 0 ? '-' : '';
+  final absValue = value.abs();
+  if (absValue >= 1000000) {
+    return '$sign${_trimFixed(absValue / 1000000, 1)}M';
+  }
+  if (absValue >= 1000) {
+    return '$sign${_trimFixed(absValue / 1000, 1)}K';
+  }
+  return value.toString();
+}
+
+Map<String, dynamic> _usageBucket(Object? value) {
+  if (value is Map) return Map<String, dynamic>.from(value);
+  return const <String, dynamic>{};
+}
+
+int _intValue(Object? value) {
+  if (value is int) return value;
+  if (value is num) return value.round();
+  return int.tryParse(value?.toString() ?? '') ?? 0;
+}
+
+String _trimFixed(double value, int fractionDigits) {
+  final text = value.toStringAsFixed(fractionDigits);
+  return text.endsWith('.0') ? text.substring(0, text.length - 2) : text;
+}
+
+@visibleForTesting
+List<ChatDiffFileSummary> chatDiffFileSummaries(String diff) {
+  final files = <ChatDiffFileSummary>[];
+  var path = '';
+  var additions = 0;
+  var deletions = 0;
+  var hasFile = false;
+
+  void finishFile() {
+    if (!hasFile) return;
+    files.add(
+      ChatDiffFileSummary(
+        path: path.isEmpty ? 'diff' : path,
+        additions: additions,
+        deletions: deletions,
+      ),
+    );
+    path = '';
+    additions = 0;
+    deletions = 0;
+    hasFile = false;
+  }
+
+  for (final line in diff.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      finishFile();
+      hasFile = true;
+      path = _pathFromDiffHeader(line);
+      continue;
+    }
+    if (line.startsWith('+++ ')) {
+      hasFile = true;
+      if (path.isEmpty) path = _pathFromDiffMarker(line.substring(4));
+      continue;
+    }
+    if (line.startsWith('--- ')) {
+      hasFile = true;
+      continue;
+    }
+    if (line.startsWith('+')) {
+      additions++;
+      hasFile = true;
+    } else if (line.startsWith('-')) {
+      deletions++;
+      hasFile = true;
+    }
+  }
+  finishFile();
+  return files;
+}
+
+String _pathFromDiffHeader(String line) {
+  final match = RegExp(r'^diff --git a/(.*?) b/(.*)$').firstMatch(line);
+  if (match != null) return _cleanDiffPath(match.group(2) ?? '');
+  return '';
+}
+
+String _pathFromDiffMarker(String marker) {
+  final trimmed = marker.trim();
+  if (trimmed == '/dev/null') return '';
+  if (trimmed.startsWith('a/') || trimmed.startsWith('b/')) {
+    return _cleanDiffPath(trimmed.substring(2));
+  }
+  return _cleanDiffPath(trimmed);
+}
+
+String _cleanDiffPath(String path) {
+  return path.trim().replaceAll(RegExp(r'^"|"$'), '');
+}
+
 class _ChatPageState extends ConsumerState<ChatPage> {
   static const _initialVisibleEventCount = 80;
   static const _eventPageSize = 80;
@@ -70,6 +269,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   bool _pendingJumpToBottom = false;
   bool _turnActive = false;
   bool _itemsRefreshInFlight = false;
+  bool _manualItemsRefreshInFlight = false;
   int _queuedInputCount = 0;
   AppApiClient? _api;
   SessionRepository? _repo;
@@ -80,6 +280,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   StreamSubscription<List<Map<String, dynamic>>>? _itemsSub;
   StreamSubscription<int>? _itemCountSub;
   Map<String, dynamic>? _session;
+  ChatTokenUsageSnapshot? _tokenUsage;
+  bool _tokenUsageExpanded = false;
   int _visibleEventCount = _initialVisibleEventCount;
   int _totalEventCount = 0;
 
@@ -152,7 +354,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             _visibleEventsCache,
             nextVisibleState.events,
           );
-          final nextTurnActive = _itemsContainActiveTurn(items);
+          final nextTurnActive = chatTurnActiveFromItemSnapshot(
+            currentTurnActive: _turnActive,
+            snapshotHasActiveItem: _itemsContainActiveTurn(items),
+            sessionStatus: _session?['status'],
+          );
           final turnActiveChanged = _turnActive != nextTurnActive;
           final loadingChanged = _loading;
           final shouldInitialBottomScroll =
@@ -217,6 +423,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         'data': event['data'],
       };
       final normalizedType = normalized['type'] as String;
+      if (normalizedType == SessionEventTypes.tokenUsageUpdated) {
+        _applyTokenUsage(normalized['data']);
+        return;
+      }
       _applyTurnRuntimeState(normalizedType, normalized['data']);
       if (!_isRenderableRealtimeEvent(normalizedType)) return;
       if (_isItemProjectionEvent(normalizedType)) {
@@ -237,10 +447,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     await engine.subscribeSession(widget.sessionId);
   }
 
+  void _applyTokenUsage(Object? data) {
+    final next = chatTokenUsageFromEventData(data);
+    if (next == null || !_isActive) return;
+    setState(() => _tokenUsage = next);
+  }
+
   bool _isRenderableRealtimeEvent(String type) {
     switch (type) {
       case SessionEventTypes.started:
       case SessionEventTypes.statusChanged:
+      case SessionEventTypes.tokenUsageUpdated:
         return false;
       default:
         return true;
@@ -457,8 +674,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     required String fallback,
   }) {
     switch (SessionItemTypes.normalize(item['type']?.toString() ?? '')) {
-      case 'context_compaction':
-        return '';
+      case SessionItemTypes.contextCompaction:
+        return SessionEventTypes.itemCompleted;
       case SessionItemTypes.userMessage:
         return SessionEventTypes.userMessage;
       case SessionItemTypes.agentMessage:
@@ -497,10 +714,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   bool _hasVisibleItemContent(String type, Map<String, dynamic> data) {
-    if (_isHiddenSessionItemType(data['type']?.toString()) ||
-        _isHiddenSessionItemType(data['item_type']?.toString())) {
-      return false;
-    }
     switch (type) {
       case SessionEventTypes.message:
       case SessionEventTypes.userMessage:
@@ -801,8 +1014,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Future<void> _refreshItemsFull() async {
-    if (_repo == null || _itemsRefreshInFlight) return;
-    _itemsRefreshInFlight = true;
+    if (_repo == null || _manualItemsRefreshInFlight) return;
+    _manualItemsRefreshInFlight = true;
     try {
       await _repo!.refreshItems(widget.sessionId, forceFull: true);
       if (mounted && _loading) setState(() => _loading = false);
@@ -810,7 +1023,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       debugPrint('ChatPage: refreshEvents error: $e');
       if (mounted && _loading) setState(() => _loading = false);
     } finally {
-      _itemsRefreshInFlight = false;
+      _manualItemsRefreshInFlight = false;
     }
   }
 
@@ -1774,9 +1987,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Map<String, dynamic> _itemToEvent(Map<String, dynamic> item) {
     final type = SessionItemTypes.normalize(item['type']?.toString() ?? '');
-    if (_isHiddenSessionItemType(type)) {
-      return {'type': '', 'data': const <String, dynamic>{}};
-    }
     final content = item['content'];
     final data = content is Map<String, dynamic>
         ? content
@@ -1822,11 +2032,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
-  bool _isHiddenSessionItemType(String? type) {
-    if (type == null || type.isEmpty) return false;
-    return SessionItemTypes.normalize(type) == 'context_compaction';
-  }
-
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -1843,6 +2048,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
           children: [
             Text(title, style: const TextStyle(fontSize: 16)),
             Row(
@@ -1889,6 +2095,14 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       ),
       body: Column(
         children: [
+          if (_tokenUsage != null)
+            _TokenUsagePanel(
+              usage: _tokenUsage!,
+              expanded: _tokenUsageExpanded,
+              onTap: () {
+                setState(() => _tokenUsageExpanded = !_tokenUsageExpanded);
+              },
+            ),
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
@@ -2152,41 +2366,54 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           content: _reasoningText(data),
         );
       case SessionEventTypes.diffUpdated:
+        final diff = data?['diff']?.toString() ?? '';
         return _StructuredInfoCard(
           icon: Icons.difference_outlined,
           title: l10n.chatDiffSummary,
-          content: data?['diff']?.toString() ?? l10n.chatDiffSummary,
+          summary: _diffSummary(diff),
+          detail: diff,
           monospace: true,
         );
       case SessionEventTypes.commandOutputDelta:
+        final output = _toolText(data?['delta'] ?? _commandOutputValue(data));
         return _ToolCallCard(
           icon: Icons.terminal,
           title: _commandTitle(
             _commandValue(data),
             fallback: l10n.chatCommandOutput,
           ),
-          output: _toolText(data?['delta'] ?? _commandOutputValue(data)),
+          output: output,
+          summary: _singleLineSummary(output, fallback: l10n.chatCommandOutput),
           success: true,
         );
       case SessionEventTypes.fileChangeOutputDelta:
+        final output = _toolText(data?['delta'] ?? data?['output']);
         return _ToolCallCard(
           icon: Icons.edit_note,
           title: _toolText(data?['path'], fallback: l10n.chatFileChangeOutput),
-          output: _toolText(data?['delta'] ?? data?['output']),
+          output: output,
+          summary: _singleLineSummary(
+            output,
+            fallback: l10n.chatFileChangeOutput,
+          ),
           success: true,
         );
       case SessionEventTypes.commandCompleted:
+        final output = _commandCompletedOutput(data);
         return _ToolCallCard(
           icon: Icons.terminal,
           title: _commandTitle(_commandValue(data), fallback: l10n.chatCommand),
-          output: _commandCompletedOutput(data),
+          output: output,
+          summary: _commandSummary(data, output),
           success: _commandSuccess(data),
         );
       case SessionEventTypes.fileWrite:
+        final detail = _fileChangeDetail(data);
         return _ToolCallCard(
           icon: Icons.edit_note,
           title: _toolText(data?['path'], fallback: l10n.chatFileChange),
-          output: _fileChangeSummary(data),
+          output: detail,
+          summary: _fileChangeSummary(data),
           success: true,
         );
       case SessionEventTypes.fileRead:
@@ -2206,7 +2433,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           output: _toolText(
             data?['output'] ?? data?['result'] ?? data?['error'],
           ),
+          summary: _singleLineSummary(
+            _toolText(data?['output'] ?? data?['result'] ?? data?['error']),
+            fallback: 'MCP Tool',
+          ),
           success: data?['error'] == null,
+        );
+      case SessionEventTypes.itemCompleted:
+        if (_itemType(data) == SessionItemTypes.contextCompaction) {
+          return _InfoChip(
+            label: l10n.chatContextCompacted,
+            icon: Icons.compress,
+          );
+        }
+        return _StructuredInfoCard(
+          icon: Icons.data_object,
+          title: _genericItemTitle(type, data),
+          summary: _genericItemSummary(data),
+          detail: _genericItemContent(data),
+          monospace: true,
         );
       case SessionEventTypes.turnStarted:
         return _InfoChip(
@@ -2454,6 +2699,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return type.isEmpty ? 'Item' : type;
   }
 
+  String _itemType(dynamic data) {
+    if (data is! Map) return '';
+    return SessionItemTypes.normalize(
+      data['item_type']?.toString() ?? data['type']?.toString() ?? '',
+    );
+  }
+
   String _genericItemContent(dynamic data) {
     if (data == null) return '';
     try {
@@ -2461,6 +2713,41 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     } catch (_) {
       return data.toString();
     }
+  }
+
+  String _genericItemSummary(dynamic data) {
+    if (data is! Map) return _singleLineSummary(data?.toString() ?? '');
+    for (final key in ['message', 'text', 'content', 'summary', 'status']) {
+      final text = _toolText(data[key]);
+      if (text.isNotEmpty) return _singleLineSummary(text);
+    }
+    return _singleLineSummary(_genericItemContent(data));
+  }
+
+  String _singleLineSummary(String text, {String fallback = ''}) {
+    final normalized = text
+        .split('\n')
+        .map((line) => line.trim())
+        .where((line) => line.isNotEmpty)
+        .join(' ');
+    if (normalized.isEmpty) return fallback;
+    if (normalized.length <= 160) return normalized;
+    return '${normalized.substring(0, 160).trimRight()}...';
+  }
+
+  String _commandSummary(dynamic data, String output) {
+    final details = <String>[];
+    if (data is Map) {
+      final status = _toolText(data['status']);
+      if (status.isNotEmpty) details.add(status);
+      final exitCode = data['exit_code'] ?? data['exitCode'];
+      if (exitCode != null) details.add('exit $exitCode');
+    }
+    final outputSummary = _singleLineSummary(output);
+    if (outputSummary.isNotEmpty) details.add(outputSummary);
+    return details.isEmpty
+        ? AppLocalizations.of(context)!.chatCommand
+        : details.join(' · ');
   }
 
   String _fileChangeSummary(dynamic data) {
@@ -2480,6 +2767,38 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final diff = data['diff']?.toString().trim();
     if (diff != null && diff.isNotEmpty) return diff;
     return l10n.chatFileUpdated;
+  }
+
+  String _fileChangeDetail(dynamic data) {
+    if (data is! Map) return '';
+    final diff = data['diff']?.toString().trim();
+    if (diff != null && diff.isNotEmpty) return diff;
+    final changes = data['changes'];
+    if (changes != null) return _genericItemContent(changes);
+    return _fileChangeSummary(data);
+  }
+
+  String _diffSummary(String diff) {
+    final l10n = AppLocalizations.of(context)!;
+    final files = chatDiffFileSummaries(diff);
+    if (files.isEmpty) return l10n.chatDiffSummary;
+    final totalAdditions = files.fold<int>(
+      0,
+      (sum, file) => sum + file.additions,
+    );
+    final totalDeletions = files.fold<int>(
+      0,
+      (sum, file) => sum + file.deletions,
+    );
+    final visible = files
+        .take(3)
+        .map((file) {
+          final stats = '+${file.additions} -${file.deletions}';
+          return '${file.path} $stats';
+        })
+        .join(' · ');
+    final more = files.length > 3 ? ' · +${files.length - 3}' : '';
+    return '$visible$more · total +$totalAdditions -$totalDeletions';
   }
 
   String _sessionStatusLabel(AppLocalizations l10n, dynamic status) {
@@ -3099,6 +3418,101 @@ class _StatusDot extends StatelessWidget {
   }
 }
 
+class _TokenUsagePanel extends StatelessWidget {
+  final ChatTokenUsageSnapshot usage;
+  final bool expanded;
+  final VoidCallback onTap;
+
+  const _TokenUsagePanel({
+    required this.usage,
+    required this.expanded,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final percent = (usage.contextRatio * 100).clamp(0, 999).round();
+    final usageText =
+        'Token ${chatCompactTokenNumber(usage.totalTokens)} · 上下文 ${chatCompactTokenNumber(usage.contextTokens)}/${chatCompactTokenNumber(usage.contextWindow)} $percent%';
+    final detailText =
+        '本次输入 ${chatCompactTokenNumber(usage.lastInputTokens)} · 本次输出 ${chatCompactTokenNumber(usage.lastOutputTokens)} · 缓存 ${chatCompactTokenNumber(usage.lastCachedInputTokens)} · 总窗口 ${chatCompactTokenNumber(usage.contextWindow)}';
+    final borderColor = theme.dividerColor.withValues(alpha: 0.65);
+
+    if (!expanded) {
+      return Material(
+        color: theme.colorScheme.surface,
+        child: InkWell(
+          onTap: onTap,
+          child: Container(
+            width: double.infinity,
+            height: 22,
+            decoration: BoxDecoration(
+              border: Border(bottom: BorderSide(color: borderColor)),
+            ),
+            alignment: Alignment.center,
+            child: Icon(
+              Icons.keyboard_arrow_down,
+              size: 18,
+              color: Colors.grey[500],
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Material(
+      color: theme.colorScheme.surface,
+      child: InkWell(
+        onTap: onTap,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+          decoration: BoxDecoration(
+            border: Border(bottom: BorderSide(color: borderColor)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(
+                    Icons.data_usage,
+                    size: 14,
+                    color: theme.colorScheme.primary,
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: Text(
+                      usageText,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                    ),
+                  ),
+                  Icon(
+                    Icons.keyboard_arrow_up,
+                    size: 18,
+                    color: Colors.grey[500],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 2),
+              Text(
+                detailText,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _InfoChip extends StatelessWidget {
   final String label;
   final IconData icon;
@@ -3334,12 +3748,14 @@ class _ToolCallCard extends StatefulWidget {
   final IconData icon;
   final String title;
   final String output;
+  final String? summary;
   final bool success;
 
   const _ToolCallCard({
     required this.icon,
     required this.title,
     required this.output,
+    this.summary,
     required this.success,
   });
 
@@ -3348,8 +3764,6 @@ class _ToolCallCard extends StatefulWidget {
 }
 
 class _ToolCallCardState extends State<_ToolCallCard> {
-  var _expanded = false;
-
   @override
   Widget build(BuildContext context) {
     final color = widget.success ? Colors.green : Colors.red;
@@ -3357,24 +3771,36 @@ class _ToolCallCardState extends State<_ToolCallCard> {
         ? AppLocalizations.of(context)!.approvalUnknownAction
         : widget.title.trim();
     final output = widget.output.trim();
+    final summary = (widget.summary ?? output).trim();
 
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: Card(
         child: InkWell(
           borderRadius: BorderRadius.circular(8),
-          onTap: () => setState(() => _expanded = !_expanded),
+          onTap: () => _showTextDetailSheet(
+            context,
+            title: title,
+            content: [
+              title,
+              if (output.isNotEmpty) '',
+              if (output.isNotEmpty) output,
+            ].join('\n'),
+            language: _detailLanguage(title, output),
+            monospace: true,
+          ),
           child: Padding(
-            padding: EdgeInsets.fromLTRB(10, 8, 8, _expanded ? 12 : 8),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
+            padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
+            child: Row(
               children: [
-                Row(
-                  children: [
-                    Icon(widget.icon, color: color, size: 18),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
+                Icon(widget.icon, color: color, size: 18),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Text(
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
@@ -3383,34 +3809,23 @@ class _ToolCallCardState extends State<_ToolCallCard> {
                           fontSize: 13,
                         ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    Icon(
-                      _expanded
-                          ? Icons.keyboard_arrow_up
-                          : Icons.keyboard_arrow_down,
-                      size: 18,
-                      color: Colors.grey[600],
-                    ),
-                  ],
-                ),
-                if (_expanded) ...[
-                  const SizedBox(height: 10),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: SelectableText(
-                      [
-                        title,
-                        if (output.isNotEmpty) '',
-                        if (output.isNotEmpty) output,
-                      ].join('\n'),
-                      style: const TextStyle(
-                        fontFamily: 'monospace',
-                        fontSize: 12,
-                      ),
-                    ),
+                      if (summary.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          summary,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
-                ],
+                ),
+                const SizedBox(width: 8),
+                Icon(Icons.open_in_full, size: 16, color: Colors.grey[600]),
               ],
             ),
           ),
@@ -3420,48 +3835,320 @@ class _ToolCallCardState extends State<_ToolCallCard> {
   }
 }
 
+void _showTextDetailSheet(
+  BuildContext context, {
+  required String title,
+  required String content,
+  String language = 'plaintext',
+  bool monospace = false,
+}) {
+  showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    showDragHandle: true,
+    builder: (context) => _SessionDetailSheet(
+      title: title,
+      content: content.trim().isEmpty ? title : content.trim(),
+      language: language,
+      monospace: monospace,
+    ),
+  );
+}
+
+String _detailLanguage(String title, String content) {
+  final lowerTitle = title.toLowerCase();
+  final trimmed = content.trimLeft();
+  if (trimmed.startsWith('diff --git') || lowerTitle.contains('diff')) {
+    return 'diff';
+  }
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return 'json';
+  }
+  if (lowerTitle.contains('dart')) return 'dart';
+  if (lowerTitle.contains('.go') || lowerTitle.contains(' go ')) return 'go';
+  if (lowerTitle.contains('.md') || lowerTitle.contains('markdown')) {
+    return 'markdown';
+  }
+  if (lowerTitle.contains('.yaml') || lowerTitle.contains('.yml')) {
+    return 'yaml';
+  }
+  if (lowerTitle.contains('.json')) return 'json';
+  if (lowerTitle.contains('.ts')) return 'typescript';
+  if (lowerTitle.contains('.js')) return 'javascript';
+  if (lowerTitle.contains('.py')) return 'python';
+  if (lowerTitle.contains('command') || lowerTitle.contains('命令')) {
+    return 'bash';
+  }
+  return 'plaintext';
+}
+
+class _SessionDetailSheet extends StatefulWidget {
+  final String title;
+  final String content;
+  final String language;
+  final bool monospace;
+
+  const _SessionDetailSheet({
+    required this.title,
+    required this.content,
+    required this.language,
+    required this.monospace,
+  });
+
+  @override
+  State<_SessionDetailSheet> createState() => _SessionDetailSheetState();
+}
+
+class _SessionDetailSheetState extends State<_SessionDetailSheet> {
+  bool _wrap = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return DraggableScrollableSheet(
+      initialChildSize: 0.78,
+      maxChildSize: 0.95,
+      minChildSize: 0.32,
+      expand: false,
+      builder: (context, scrollController) {
+        return Column(
+          children: [
+            _buildHeader(context),
+            Expanded(child: _buildBody(scrollController)),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildHeader(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            widget.language == 'diff' ? Icons.difference_outlined : Icons.code,
+            size: 18,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              widget.title,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w500),
+            ),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: Colors.blue[50],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              widget.language,
+              style: TextStyle(fontSize: 10, color: Colors.blue[700]),
+            ),
+          ),
+          Tooltip(
+            message: _wrap ? l10n.noWrap : l10n.wrap,
+            child: IconButton(
+              icon: Icon(
+                _wrap ? Icons.wrap_text : Icons.horizontal_rule,
+                size: 18,
+              ),
+              onPressed: () => setState(() => _wrap = !_wrap),
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.copy, size: 18),
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: widget.content));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(l10n.copied),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.close),
+            onPressed: () => Navigator.pop(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBody(ScrollController scrollController) {
+    if (widget.language == 'diff') {
+      return _buildDiffBody(scrollController);
+    }
+    final codeView = HighlightView(
+      widget.content,
+      language: widget.language == 'plaintext' ? null : widget.language,
+      theme: githubTheme,
+      padding: const EdgeInsets.all(16),
+      textStyle: TextStyle(
+        fontFamily: widget.monospace ? 'monospace' : null,
+        fontSize: 12,
+      ),
+    );
+    if (_wrap) {
+      return SingleChildScrollView(
+        controller: scrollController,
+        child: codeView,
+      );
+    }
+    return SingleChildScrollView(
+      controller: scrollController,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: codeView,
+      ),
+    );
+  }
+
+  Widget _buildDiffBody(ScrollController scrollController) {
+    final lines = _diffDetailLines(widget.content);
+    final list = ListView.builder(
+      controller: scrollController,
+      itemCount: lines.length,
+      itemBuilder: (context, index) =>
+          _DiffDetailLineView(line: lines[index], wrap: _wrap),
+    );
+    if (_wrap) return list;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: SizedBox(width: 1200, child: list),
+    );
+  }
+}
+
+class _DiffDetailLine {
+  final String type;
+  final String content;
+
+  const _DiffDetailLine({required this.type, required this.content});
+}
+
+List<_DiffDetailLine> _diffDetailLines(String diff) {
+  return diff
+      .split('\n')
+      .map((line) {
+        if (line.startsWith('+') && !line.startsWith('+++')) {
+          return _DiffDetailLine(type: 'add', content: line);
+        }
+        if (line.startsWith('-') && !line.startsWith('---')) {
+          return _DiffDetailLine(type: 'del', content: line);
+        }
+        if (line.startsWith('@@')) {
+          return _DiffDetailLine(type: 'hunk', content: line);
+        }
+        if (line.startsWith('diff --git') ||
+            line.startsWith('index ') ||
+            line.startsWith('---') ||
+            line.startsWith('+++')) {
+          return _DiffDetailLine(type: 'meta', content: line);
+        }
+        return _DiffDetailLine(type: 'context', content: line);
+      })
+      .toList(growable: false);
+}
+
+class _DiffDetailLineView extends StatelessWidget {
+  final _DiffDetailLine line;
+  final bool wrap;
+
+  const _DiffDetailLineView({required this.line, required this.wrap});
+
+  @override
+  Widget build(BuildContext context) {
+    Color bgColor;
+    Color textColor;
+    switch (line.type) {
+      case 'add':
+        bgColor = Colors.green[50]!;
+        textColor = Colors.green[900]!;
+        break;
+      case 'del':
+        bgColor = Colors.red[50]!;
+        textColor = Colors.red[900]!;
+        break;
+      case 'hunk':
+        bgColor = Colors.blue[50]!;
+        textColor = Colors.blue[900]!;
+        break;
+      case 'meta':
+        bgColor = Colors.grey[100]!;
+        textColor = Colors.grey[800]!;
+        break;
+      default:
+        bgColor = Colors.transparent;
+        textColor = Colors.grey[900]!;
+    }
+    return Container(
+      color: bgColor,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 1),
+      child: Text(
+        line.content,
+        softWrap: wrap,
+        style: TextStyle(
+          color: textColor,
+          fontFamily: 'monospace',
+          fontSize: 12,
+        ),
+      ),
+    );
+  }
+}
+
 class _StructuredInfoCard extends StatefulWidget {
   final IconData icon;
   final String title;
-  final String content;
+  final String? summary;
+  final String detail;
   final bool monospace;
 
   const _StructuredInfoCard({
     required this.icon,
     required this.title,
-    required this.content,
+    String? content,
+    this.summary,
+    String? detail,
     this.monospace = false,
-  });
+  }) : detail = detail ?? content ?? '';
 
   @override
   State<_StructuredInfoCard> createState() => _StructuredInfoCardState();
 }
 
 class _StructuredInfoCardState extends State<_StructuredInfoCard> {
-  static const _collapseChars = 220;
-  var _expanded = false;
-
-  bool get _shouldCollapse {
-    final lineCount = '\n'.allMatches(widget.content).length + 1;
-    return widget.content.length > _collapseChars || lineCount > 3;
-  }
-
   @override
   Widget build(BuildContext context) {
     final textStyle = TextStyle(
       fontFamily: widget.monospace ? 'monospace' : null,
       fontSize: 13,
     );
-    final collapsed = _shouldCollapse && !_expanded;
-    final content = collapsed ? _collapsedText(widget.content) : widget.content;
+    final summary = (widget.summary ?? _collapsedText(widget.detail)).trim();
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       child: Card(
         child: InkWell(
           borderRadius: BorderRadius.circular(8),
-          onTap: _shouldCollapse
-              ? () => setState(() => _expanded = !_expanded)
-              : null,
+          onTap: () => _showTextDetailSheet(
+            context,
+            title: widget.title,
+            content: widget.detail,
+            language: widget.monospace
+                ? _detailLanguage(widget.title, widget.detail)
+                : 'plaintext',
+            monospace: widget.monospace,
+          ),
           child: Padding(
             padding: const EdgeInsets.all(10),
             child: Row(
@@ -3490,22 +4177,22 @@ class _StructuredInfoCardState extends State<_StructuredInfoCard> {
                               ),
                             ),
                           ),
-                          if (_shouldCollapse)
-                            Icon(
-                              _expanded
-                                  ? Icons.keyboard_arrow_up
-                                  : Icons.keyboard_arrow_down,
-                              size: 18,
-                              color: Colors.grey[600],
-                            ),
+                          Icon(
+                            Icons.open_in_full,
+                            size: 16,
+                            color: Colors.grey[600],
+                          ),
                         ],
                       ),
-                      const SizedBox(height: 6),
-                      SelectableText(
-                        content,
-                        maxLines: collapsed ? 1 : null,
-                        style: textStyle,
-                      ),
+                      if (summary.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          summary,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: textStyle.copyWith(color: Colors.grey[700]),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -3519,8 +4206,8 @@ class _StructuredInfoCardState extends State<_StructuredInfoCard> {
 
   String _collapsedText(String text) {
     final firstLine = text.split('\n').first.trim();
-    if (firstLine.length <= _collapseChars) return firstLine;
-    return '${firstLine.substring(0, _collapseChars).trimRight()}...';
+    if (firstLine.length <= 220) return firstLine;
+    return '${firstLine.substring(0, 220).trimRight()}...';
   }
 }
 

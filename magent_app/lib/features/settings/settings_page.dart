@@ -18,6 +18,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   final _settings = AppSettingsService();
   String? _defaultProvider;
   List<dynamic> _providers = [];
+  final Map<String, String> _aiCommitModels = {};
+  final Map<String, String> _aiCommitEfforts = {};
   bool _sessionOpenAtBottom = true;
   bool _showAiCommitSessions = false;
   AppThemeModeSetting _themeMode = AppThemeModeSetting.system;
@@ -44,11 +46,25 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         providers = await bootstrap.getProviders();
       } catch (_) {}
     }
+    final aiCommitModels = <String, String>{};
+    final aiCommitEfforts = <String, String>{};
+    for (final p in providers) {
+      final name = p['name']?.toString() ?? '';
+      if (name.isEmpty) continue;
+      aiCommitModels[name] = await storage.getAiCommitModel(name) ?? '';
+      aiCommitEfforts[name] = await storage.getAiCommitEffort(name) ?? '';
+    }
 
     if (mounted) {
       setState(() {
         _defaultProvider = provider;
         _providers = providers;
+        _aiCommitModels
+          ..clear()
+          ..addAll(aiCommitModels);
+        _aiCommitEfforts
+          ..clear()
+          ..addAll(aiCommitEfforts);
         _sessionOpenAtBottom = sessionOpenAtBottom;
         _showAiCommitSessions = showAiCommitSessions;
         _themeMode = themeMode;
@@ -120,6 +136,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       subtitle: l10n.settingsGitManageSub,
                       onTap: () => context.go('/projects'),
                     ),
+                    _buildAiCommitSettingsTile(l10n),
                   ],
                 ),
                 _buildSection(
@@ -258,10 +275,139 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
+  Widget _buildAiCommitSettingsTile(AppLocalizations l10n) {
+    return _SettingsTile(
+      icon: Icons.auto_awesome,
+      title: Text(l10n.settingsAiCommitModel),
+      subtitle: Text(_aiCommitSettingsSummary(l10n)),
+      onTap: () => _showAiCommitSettingsSheet(l10n),
+    );
+  }
+
+  String _aiCommitSettingsSummary(AppLocalizations l10n) {
+    final available = _availableProviders;
+    if (available.isEmpty) return l10n.sessionsNoProvider;
+    final provider = _defaultProvider?.isNotEmpty == true
+        ? _defaultProvider!
+        : available.first['name']?.toString() ?? 'codex';
+    final model = _aiCommitModels[provider] ?? '';
+    final effort = _aiCommitEfforts[provider] ?? '';
+    return [
+      _providerLabel(provider),
+      if (model.isNotEmpty) model else l10n.sessionsModelDefault,
+      if (effort.isNotEmpty) _effortLabel(effort, l10n),
+    ].join(' · ');
+  }
+
+  List<dynamic> get _availableProviders =>
+      _providers.where((p) => p['status'] == 'available').toList();
+
+  void _showAiCommitSettingsSheet(AppLocalizations l10n) {
+    final available = _availableProviders;
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (context) {
+        if (available.isEmpty) {
+          return SafeArea(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Text(l10n.sessionsNoProvider),
+            ),
+          );
+        }
+        return SafeArea(
+          child: DraggableScrollableSheet(
+            initialChildSize: 0.62,
+            minChildSize: 0.36,
+            maxChildSize: 0.9,
+            expand: false,
+            builder: (context, scrollController) {
+              return ListView(
+                controller: scrollController,
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).colorScheme.outlineVariant,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                  ),
+                  Text(
+                    l10n.settingsAiCommitModel,
+                    style: Theme.of(context).textTheme.titleLarge,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    l10n.settingsAiCommitModelSub,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  for (final provider in available)
+                    _AiCommitProviderSettings(
+                      provider: Map<String, dynamic>.from(provider as Map),
+                      selectedModel:
+                          _aiCommitModels[provider['name']?.toString() ?? ''] ??
+                          '',
+                      selectedEffort:
+                          _aiCommitEfforts[provider['name']?.toString() ??
+                              ''] ??
+                          '',
+                      onChanged: _setAiCommitProviderSettings,
+                      effortLabel: (effort) => _effortLabel(effort, l10n),
+                    ),
+                ],
+              );
+            },
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _setAiCommitProviderSettings(
+    String provider,
+    String model,
+    String effort,
+  ) async {
+    final storage = AgentStorage();
+    await storage.setAiCommitModel(provider, model);
+    await storage.setAiCommitEffort(provider, effort);
+    if (mounted) {
+      setState(() {
+        _aiCommitModels[provider] = model;
+        _aiCommitEfforts[provider] = effort;
+      });
+    }
+  }
+
+  String _providerLabel(String name) {
+    if (name.isEmpty) return '';
+    return name[0].toUpperCase() + name.substring(1);
+  }
+
+  String _effortLabel(String effort, AppLocalizations l10n) {
+    switch (effort) {
+      case 'low':
+        return l10n.effortLow;
+      case 'medium':
+        return l10n.effortMedium;
+      case 'high':
+        return l10n.effortHigh;
+      default:
+        return effort;
+    }
+  }
+
   Widget _buildDefaultProviderTile(AppLocalizations l10n) {
-    final available = _providers
-        .where((p) => p['status'] == 'available')
-        .toList();
+    final available = _availableProviders;
 
     return _SettingsTile(
       icon: Icons.smart_toy,
@@ -468,5 +614,164 @@ class _SettingsTile extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+class _AiCommitProviderSettings extends StatelessWidget {
+  final Map<String, dynamic> provider;
+  final String selectedModel;
+  final String selectedEffort;
+  final Future<void> Function(String provider, String model, String effort)
+  onChanged;
+  final String Function(String effort) effortLabel;
+
+  const _AiCommitProviderSettings({
+    required this.provider,
+    required this.selectedModel,
+    required this.selectedEffort,
+    required this.onChanged,
+    required this.effortLabel,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    final name = provider['name']?.toString() ?? '';
+    final config = Map<String, dynamic>.from(provider['config'] as Map? ?? {});
+    final models = (config['models'] as List? ?? const [])
+        .whereType<Map>()
+        .map((m) => Map<String, dynamic>.from(m))
+        .where((m) => (m['id']?.toString() ?? '').isNotEmpty)
+        .toList();
+    final effectiveModel = _validModel(models, selectedModel);
+    final efforts = _effortsForModel(models, effectiveModel);
+    final effectiveEffort = efforts.contains(selectedEffort)
+        ? selectedEffort
+        : efforts.isNotEmpty
+        ? efforts.first
+        : '';
+
+    return Card(
+      margin: const EdgeInsets.only(bottom: 10),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(_providerIcon(name), size: 18, color: scheme.primary),
+                const SizedBox(width: 8),
+                Text(
+                  _providerLabel(name),
+                  style: Theme.of(context).textTheme.titleSmall,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: effectiveModel,
+              decoration: InputDecoration(
+                labelText: l10n.sessionsModel,
+                border: const OutlineInputBorder(),
+              ),
+              items: [
+                DropdownMenuItem(
+                  value: '',
+                  child: Text(l10n.sessionsModelDefault),
+                ),
+                ...models.map(
+                  (m) => DropdownMenuItem(
+                    value: m['id']?.toString() ?? '',
+                    child: Text(
+                      m['name']?.toString().isNotEmpty == true
+                          ? m['name'].toString()
+                          : m['id'].toString(),
+                    ),
+                  ),
+                ),
+              ],
+              onChanged: (value) {
+                final model = value ?? '';
+                final nextEfforts = _effortsForModel(models, model);
+                final effort = nextEfforts.contains(effectiveEffort)
+                    ? effectiveEffort
+                    : nextEfforts.isNotEmpty
+                    ? nextEfforts.first
+                    : '';
+                onChanged(name, model, effort);
+              },
+            ),
+            if (efforts.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              DropdownButtonFormField<String>(
+                initialValue: effectiveEffort,
+                decoration: InputDecoration(
+                  labelText: l10n.sessionsEffort,
+                  border: const OutlineInputBorder(),
+                ),
+                items: efforts
+                    .map(
+                      (effort) => DropdownMenuItem(
+                        value: effort,
+                        child: Text(effortLabel(effort)),
+                      ),
+                    )
+                    .toList(),
+                onChanged: (value) {
+                  onChanged(name, effectiveModel, value ?? '');
+                },
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _validModel(List<Map<String, dynamic>> models, String model) {
+    if (model.isEmpty) return '';
+    return models.any((m) => m['id']?.toString() == model) ? model : '';
+  }
+
+  List<String> _effortsForModel(List<Map<String, dynamic>> models, String id) {
+    if (id.isEmpty) {
+      final defaults = <String>{};
+      for (final model in models) {
+        for (final effort
+            in (model['reasoning_efforts'] as List? ?? const [])) {
+          if (effort.toString().isNotEmpty) defaults.add(effort.toString());
+        }
+      }
+      return defaults.toList();
+    }
+    final model = models.cast<Map<String, dynamic>?>().firstWhere(
+      (m) => m?['id']?.toString() == id,
+      orElse: () => null,
+    );
+    if (model == null) return const [];
+    return (model['reasoning_efforts'] as List? ?? const [])
+        .map((e) => e.toString())
+        .where((e) => e.isNotEmpty)
+        .toList();
+  }
+
+  IconData _providerIcon(String name) {
+    switch (name) {
+      case 'codex':
+        return Icons.smart_toy;
+      case 'claude':
+        return Icons.psychology;
+      case 'aider':
+        return Icons.code;
+      default:
+        return Icons.extension;
+    }
+  }
+
+  String _providerLabel(String name) {
+    if (name.isEmpty) return '';
+    return name[0].toUpperCase() + name.substring(1);
   }
 }

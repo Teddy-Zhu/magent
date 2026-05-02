@@ -175,8 +175,18 @@ class GitRepository {
     return result;
   }
 
-  Future<String> suggestCommitMessage(String projectId) {
-    return _api.suggestCommitMessage(projectId);
+  Future<String> suggestCommitMessage(
+    String projectId, {
+    String? providerId,
+    String? model,
+    String? effort,
+  }) {
+    return _api.suggestCommitMessage(
+      projectId,
+      providerId: providerId,
+      model: model,
+      effort: effort,
+    );
   }
 
   Future<List<dynamic>> getLog(

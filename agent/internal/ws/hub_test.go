@@ -3,6 +3,7 @@ package ws
 import (
 	"encoding/json"
 	"testing"
+	"time"
 )
 
 func TestPrepareBroadcastAddsReplayCursor(t *testing.T) {
@@ -17,8 +18,12 @@ func TestPrepareBroadcastAddsReplayCursor(t *testing.T) {
 	if err := json.Unmarshal(data, &event); err != nil {
 		t.Fatalf("unmarshal broadcast: %v", err)
 	}
-	if event["ws_cursor"] != "1" {
-		t.Fatalf("ws_cursor = %v, want 1", event["ws_cursor"])
+	epoch, _ := event["ws_epoch"].(string)
+	if epoch == "" {
+		t.Fatalf("ws_epoch is empty")
+	}
+	if event["ws_cursor"] != epoch+":1" {
+		t.Fatalf("ws_cursor = %v, want %s:1", event["ws_cursor"], epoch)
 	}
 	if event["ws_seq"].(float64) != 1 {
 		t.Fatalf("ws_seq = %v, want 1", event["ws_seq"])
@@ -35,7 +40,7 @@ func TestReplaySessionReplaysAfterCursor(t *testing.T) {
 	hub.prepareBroadcast(map[string]any{"type": "session.event", "session_id": "s2", "data": map[string]any{"n": 3}})
 
 	client := NewClient(hub, nil, "test")
-	hub.ReplaySession(client, "s1", "1")
+	hub.ReplaySession(client, "s1", hub.replayCursor(1))
 
 	messages := drainClientMessages(client)
 	if len(messages) != 2 {
@@ -46,7 +51,7 @@ func TestReplaySessionReplaysAfterCursor(t *testing.T) {
 	if err := json.Unmarshal(messages[0], &event); err != nil {
 		t.Fatalf("unmarshal event: %v", err)
 	}
-	if event["session_id"] != "s1" || event["ws_cursor"] != "2" {
+	if event["session_id"] != "s1" || event["ws_cursor"] != hub.replayCursor(2) {
 		t.Fatalf("unexpected replay event: %#v", event)
 	}
 
@@ -79,6 +84,45 @@ func TestReplaySessionReportsGap(t *testing.T) {
 	}
 	if event["type"] != "session.sync_required" || event["reason"] != "replay_gap" {
 		t.Fatalf("unexpected sync_required: %#v", event)
+	}
+}
+
+func TestReplaySessionReportsEpochChange(t *testing.T) {
+	hub := NewHub()
+	hub.prepareBroadcast(map[string]any{"type": "session.event", "session_id": "s1"})
+
+	client := NewClient(hub, nil, "test")
+	hub.ReplaySession(client, "s1", "old:1")
+
+	messages := drainClientMessages(client)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want sync_required", len(messages))
+	}
+	var event map[string]any
+	if err := json.Unmarshal(messages[0], &event); err != nil {
+		t.Fatalf("unmarshal sync_required: %v", err)
+	}
+	if event["type"] != "session.sync_required" || event["reason"] != "replay_epoch_changed" {
+		t.Fatalf("unexpected sync_required: %#v", event)
+	}
+}
+
+func TestClientSendQueueFullUnregistersClient(t *testing.T) {
+	hub := NewHub()
+	client := NewClient(hub, nil, "test")
+	for i := 0; i < cap(client.send); i++ {
+		client.send <- []byte(`{"type":"session.event"}`)
+	}
+
+	client.Send([]byte(`{"type":"session.event"}`))
+
+	select {
+	case got := <-hub.unregister:
+		if got != client {
+			t.Fatalf("unregistered client = %#v, want original client", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for unregister")
 	}
 }
 
