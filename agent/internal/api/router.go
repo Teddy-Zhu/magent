@@ -62,7 +62,9 @@ func (s *Server) registerV1Routes(api *gin.RouterGroup) {
 
 func (s *Server) handleAgentInfo(c *gin.Context) {
 	OK(c, gin.H{
-		"version":      version,
+		"version":      buildInfo.Version,
+		"build_time":   buildInfo.BuildTime,
+		"git_commit":   buildInfo.GitCommit,
 		"uptime":       s.wsHub.ClientCount(),
 		"connected":    s.wsHub.ClientCount(),
 		"capabilities": []string{"codex", "git", "file"},

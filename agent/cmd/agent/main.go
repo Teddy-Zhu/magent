@@ -14,8 +14,20 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var (
+	version   = "unknown"
+	buildTime = "unknown"
+	gitCommit = "unknown"
+)
+
 func main() {
 	var cfgFile string
+
+	api.SetBuildInfo(api.BuildInfo{
+		Version:   version,
+		BuildTime: buildTime,
+		GitCommit: gitCommit,
+	})
 
 	rootCmd := &cobra.Command{
 		Use:   "magent",
@@ -85,10 +97,20 @@ func main() {
 		},
 	}
 
+	versionCmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Run: func(cmd *cobra.Command, args []string) {
+			fmt.Printf("magent %s\n", version)
+			fmt.Printf("build_time: %s\n", buildTime)
+			fmt.Printf("git_commit: %s\n", gitCommit)
+		},
+	}
+
 	serveCmd.Flags().StringVarP(&cfgFile, "config", "c", "", "config file path")
 	serveCmd.Flags().String("log-level", "", "global log level: debug, info, warn, error, off")
 	serveCmd.Flags().String("log-levels", "", "component log levels, e.g. gitwatcher=off,codex=debug")
-	rootCmd.AddCommand(serveCmd, initCmd)
+	rootCmd.AddCommand(serveCmd, initCmd, versionCmd)
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)

@@ -11,7 +11,14 @@ import (
 func TestBootstrapHashIgnoresUpdatedAtAndSortsCollections(t *testing.T) {
 	service := &ConfigService{}
 	base := &BootstrapData{
-		Agent: AgentData{Version: "dev", Capabilities: AgentCapabilities{SupportsMultiAgent: true}},
+		Agent: AgentData{
+			Version:   "unknown",
+			BuildTime: "unknown",
+			GitCommit: "unknown",
+			Capabilities: AgentCapabilities{
+				SupportsMultiAgent: true,
+			},
+		},
 		Providers: []ProviderConfigData{
 			{Name: "codex", Status: "available", Config: provider.ProviderConfig{Models: []provider.ModelInfo{{ID: "gpt-5.4", Name: "GPT-5.4"}}}},
 			{Name: "aider", Status: "unavailable", Error: "missing"},

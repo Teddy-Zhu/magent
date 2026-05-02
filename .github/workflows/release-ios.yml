@@ -1,0 +1,108 @@
+name: Release iOS Unsigned IPA
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version, for example v1.0.0"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-ios:
+    name: Build iOS unsigned IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            VERSION="${GITHUB_REF_NAME}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            VERSION="${{ inputs.version }}"
+          else
+            VERSION="dev-${GITHUB_SHA::7}"
+          fi
+          echo "value=${VERSION}" >> "${GITHUB_OUTPUT}"
+
+      - name: Install dependencies
+        working-directory: magent_app
+        run: flutter pub get
+
+      - name: Build iOS app without code signing
+        working-directory: magent_app
+        run: flutter build ios --release --no-codesign
+
+      - name: Archive iOS app without code signing
+        working-directory: magent_app/ios
+        run: |
+          xcodebuild archive \
+            -workspace Runner.xcworkspace \
+            -scheme Runner \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath ../build/ios/archive/Runner.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            DEVELOPMENT_TEAM=""
+
+      - name: Package unsigned IPA
+        working-directory: magent_app
+        shell: bash
+        run: |
+          cd build/ios/archive/Runner.xcarchive/Products/Applications
+          mkdir -p Payload
+          cp -R Runner.app Payload/
+          zip -r magent.ipa Payload
+
+      - name: Rename IPA and archive
+        shell: bash
+        run: |
+          VERSION="${{ steps.version.outputs.value }}"
+          IPA_NAME="magent-ios-${VERSION}-unsigned.ipa"
+          XCARCHIVE_NAME="magent-ios-${VERSION}-unsigned.xcarchive.zip"
+          mkdir -p release
+          cp "magent_app/build/ios/archive/Runner.xcarchive/Products/Applications/magent.ipa" "release/${IPA_NAME}"
+          ditto -c -k --sequesterRsrc --keepParent "magent_app/build/ios/archive/Runner.xcarchive" "release/${XCARCHIVE_NAME}"
+          echo "IPA_NAME=${IPA_NAME}" >> "${GITHUB_ENV}"
+          echo "XCARCHIVE_NAME=${XCARCHIVE_NAME}" >> "${GITHUB_ENV}"
+
+      - name: Upload workflow artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: magent-ios-${{ steps.version.outputs.value }}-unsigned
+          path: |
+            release/${{ env.IPA_NAME }}
+            release/${{ env.XCARCHIVE_NAME }}
+          if-no-files-found: error
+
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+          name: ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+          target_commitish: ${{ github.sha }}
+          files: |
+            release/${{ env.IPA_NAME }}
+            release/${{ env.XCARCHIVE_NAME }}
+          fail_on_unmatched_files: true
+          prerelease: false
+          make_latest: true

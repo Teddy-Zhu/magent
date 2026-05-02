@@ -20,6 +20,7 @@ type ConfigService struct {
 	cfg        *config.Config
 	store      *storage.SQLite
 	projectMgr *project.Manager
+	buildInfo  BuildInfo
 
 	cache     *BootstrapData
 	cacheHash string
@@ -37,6 +38,8 @@ type BootstrapData struct {
 
 type AgentData struct {
 	Version      string            `json:"version"`
+	BuildTime    string            `json:"build_time"`
+	GitCommit    string            `json:"git_commit"`
 	Capabilities AgentCapabilities `json:"capabilities"`
 }
 
@@ -75,14 +78,29 @@ type CheckResult struct {
 	UpdatedAt  int64  `json:"updated_at"`
 }
 
-var version = "dev"
+type BuildInfo struct {
+	Version   string
+	BuildTime string
+	GitCommit string
+}
 
-func NewConfigService(registry *provider.Registry, cfg *config.Config, store *storage.SQLite, projectMgr *project.Manager) *ConfigService {
+func NewConfigService(registry *provider.Registry, cfg *config.Config, store *storage.SQLite, projectMgr *project.Manager, buildInfo BuildInfo) *ConfigService {
+	if buildInfo.Version == "" {
+		buildInfo.Version = "unknown"
+	}
+	if buildInfo.BuildTime == "" {
+		buildInfo.BuildTime = "unknown"
+	}
+	if buildInfo.GitCommit == "" {
+		buildInfo.GitCommit = "unknown"
+	}
+
 	s := &ConfigService{
 		registry:   registry,
 		cfg:        cfg,
 		store:      store,
 		projectMgr: projectMgr,
+		buildInfo:  buildInfo,
 		dirty:      make(chan struct{}, 1),
 	}
 	s.loadCache()
@@ -181,12 +199,7 @@ func (s *ConfigService) refresh(ctx context.Context) error {
 	}
 
 	data := &BootstrapData{
-		Agent: AgentData{
-			Version: version,
-			Capabilities: AgentCapabilities{
-				SupportsMultiAgent: true,
-			},
-		},
+		Agent:     s.agentData(),
 		Providers: providerConfigs,
 		Projects:  projectSummaries,
 		Workspace: s.cfg.Workspace,
@@ -228,6 +241,17 @@ func (s *ConfigService) computeHash(data *BootstrapData) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func (s *ConfigService) agentData() AgentData {
+	return AgentData{
+		Version:   s.buildInfo.Version,
+		BuildTime: s.buildInfo.BuildTime,
+		GitCommit: s.buildInfo.GitCommit,
+		Capabilities: AgentCapabilities{
+			SupportsMultiAgent: true,
+		},
+	}
+}
+
 func (s *ConfigService) loadCache() {
 	row := s.store.DB().QueryRow(`SELECT config_hash, data FROM bootstrap_cache WHERE id = 1`)
 	var hash string
@@ -237,10 +261,11 @@ func (s *ConfigService) loadCache() {
 	}
 	var data BootstrapData
 	json.Unmarshal(dataBytes, &data)
+	data.Agent = s.agentData()
 
 	s.cacheMu.Lock()
 	s.cache = &data
-	s.cacheHash = hash
+	s.cacheHash = s.computeHash(&data)
 	s.cacheMu.Unlock()
 }
 

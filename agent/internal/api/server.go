@@ -25,9 +25,32 @@ import (
 )
 
 var (
-	version   = "dev"
+	buildInfo = BuildInfo{
+		Version:   "unknown",
+		BuildTime: "unknown",
+		GitCommit: "unknown",
+	}
 	startTime = time.Now()
 )
+
+type BuildInfo struct {
+	Version   string `json:"version"`
+	BuildTime string `json:"build_time"`
+	GitCommit string `json:"git_commit"`
+}
+
+func SetBuildInfo(info BuildInfo) {
+	if info.Version == "" {
+		info.Version = "unknown"
+	}
+	if info.BuildTime == "" {
+		info.BuildTime = "unknown"
+	}
+	if info.GitCommit == "" {
+		info.GitCommit = "unknown"
+	}
+	buildInfo = info
+}
 
 type Server struct {
 	cfg             *config.Config
@@ -63,7 +86,11 @@ func NewServer(cfg *config.Config, store *storage.SQLite) *Server {
 	sessionStore := session.NewSessionStore(store)
 	sessionMgr := session.NewManager(sessionStore, registry, hub)
 
-	configService := syncpkg.NewConfigService(registry, cfg, store, projectMgr)
+	configService := syncpkg.NewConfigService(registry, cfg, store, projectMgr, syncpkg.BuildInfo{
+		Version:   buildInfo.Version,
+		BuildTime: buildInfo.BuildTime,
+		GitCommit: buildInfo.GitCommit,
+	})
 
 	gitService := gitservice.NewService(store)
 	fileService := fileservice.NewService(store, cfg.Workspace.ExcludedPattern)
@@ -133,8 +160,10 @@ func (s *Server) Start(ctx context.Context) error {
 func (s *Server) handleHealthz(c *gin.Context) {
 	log.Debug("api", "healthz check from %s", c.ClientIP())
 	c.JSON(200, gin.H{
-		"status":  "ok",
-		"version": version,
-		"uptime":  time.Since(startTime).String(),
+		"status":     "ok",
+		"version":    buildInfo.Version,
+		"build_time": buildInfo.BuildTime,
+		"git_commit": buildInfo.GitCommit,
+		"uptime":     time.Since(startTime).String(),
 	})
 }
