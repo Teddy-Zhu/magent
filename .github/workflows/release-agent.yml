@@ -1,9 +1,6 @@
 name: Release Agent
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -45,13 +42,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF_NAME}"
-          elif [[ -n "${{ inputs.version }}" ]]; then
-            VERSION="${{ inputs.version }}"
-          else
-            VERSION="dev-${GITHUB_SHA::7}"
-          fi
+          VERSION="${{ inputs.version }}"
           echo "value=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Resolve build metadata
@@ -109,8 +100,8 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: magent-agent-${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
-          name: Magent Agent ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+          tag_name: magent-agent-${{ inputs.version }}
+          name: Magent Agent ${{ inputs.version }}
           target_commitish: ${{ github.sha }}
           files: release/*
           fail_on_unmatched_files: true

@@ -1,9 +1,6 @@
 name: Release Android APK
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       version:
@@ -42,13 +39,7 @@ jobs:
         id: version
         shell: bash
         run: |
-          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
-            VERSION="${GITHUB_REF_NAME}"
-          elif [[ -n "${{ inputs.version }}" ]]; then
-            VERSION="${{ inputs.version }}"
-          else
-            VERSION="dev-${GITHUB_SHA::7}"
-          fi
+          VERSION="${{ inputs.version }}"
           echo "value=${VERSION}" >> "${GITHUB_OUTPUT}"
 
       - name: Install dependencies
@@ -78,8 +69,8 @@ jobs:
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: magent-android-${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
-          name: Magent Android ${{ github.ref_type == 'tag' && github.ref_name || inputs.version }}
+          tag_name: magent-android-${{ inputs.version }}
+          name: Magent Android ${{ inputs.version }}
           target_commitish: ${{ github.sha }}
           files: release/${{ env.APK_NAME }}
           fail_on_unmatched_files: true
