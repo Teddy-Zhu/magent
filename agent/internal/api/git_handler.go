@@ -8,12 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Teddy-Zhu/magent/agent/internal/gitservice"
 	"github.com/Teddy-Zhu/magent/agent/internal/log"
 	"github.com/Teddy-Zhu/magent/agent/internal/project"
 	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 	"github.com/Teddy-Zhu/magent/agent/internal/session"
+	"github.com/gin-gonic/gin"
 )
 
 type GitHandler struct {
@@ -569,20 +569,9 @@ Requirements:
 				return
 			}
 			switch event.Type {
-			case string(provider.EventMessage):
+			case string(provider.EventMessage), string(provider.EventMessageDelta):
 				if payload, ok := event.Payload.(map[string]any); ok {
-					if text, ok := payload["text"].(string); ok {
-						message += text
-					}
-					if content, ok := payload["content"].(string); ok {
-						message += content
-					}
-				}
-			case string(provider.EventMessageDelta):
-				if payload, ok := event.Payload.(map[string]any); ok {
-					if delta, ok := payload["delta"].(string); ok {
-						message += delta
-					}
+					message = mergeCommitMessageEvent(message, event.Type, payload)
 				}
 			case string(provider.EventTurnCompleted):
 				log.Info("git", "suggest: turn completed, message len=%d", len(message))
@@ -629,6 +618,29 @@ Requirements:
 			return
 		}
 	}
+}
+
+func mergeCommitMessageEvent(current, eventType string, payload map[string]any) string {
+	switch eventType {
+	case string(provider.EventMessage):
+		if final := commitMessageFromPayload(payload); final != "" {
+			return final
+		}
+	case string(provider.EventMessageDelta):
+		if delta, ok := payload["delta"].(string); ok {
+			return current + delta
+		}
+	}
+	return current
+}
+
+func commitMessageFromPayload(payload map[string]any) string {
+	for _, key := range []string{"text", "content"} {
+		if value, ok := payload[key].(string); ok && value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func cleanCommitMessage(raw string) string {

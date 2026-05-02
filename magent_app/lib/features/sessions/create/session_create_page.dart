@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/repositories/bootstrap_repository.dart';
+import 'package:magent_app/core/repositories/session_repository.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
 
@@ -239,9 +240,16 @@ class _SessionCreatePageState extends ConsumerState<SessionCreatePage> {
         approvalPolicy: data['approval_policy'] as String?,
         sandboxMode: data['sandbox_mode'] as String?,
       );
-      final sessionId = session['id'];
+      final sessionId = session['id']?.toString() ?? '';
+      if (sessionId.isEmpty) return;
+      final repo = SessionRepository(
+        agentId: _api!.agentId,
+        api: _api!.session,
+        db: ref.read(appDatabaseProvider),
+      );
+      await repo.upsertSession(session, projectId: widget.projectId);
 
-      if (mounted) context.push('/sessions/$sessionId');
+      if (mounted) context.pushReplacement('/sessions/$sessionId');
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

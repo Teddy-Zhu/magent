@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -138,6 +139,9 @@ func TestStartThreadUsesWireEnums(t *testing.T) {
 		if params["sandbox"] != "workspace-write" {
 			t.Fatalf("sandbox = %v", params["sandbox"])
 		}
+		if params["persistExtendedHistory"] != true {
+			t.Fatalf("persistExtendedHistory = %v", params["persistExtendedHistory"])
+		}
 		server.writeResponse(t, *req.ID, map[string]any{
 			"thread": map[string]any{"id": "thread_1"},
 		})
@@ -154,6 +158,43 @@ func TestStartThreadUsesWireEnums(t *testing.T) {
 	case <-done:
 	case <-time.After(time.Second):
 		t.Fatal("fake server did not receive thread/start")
+	}
+}
+
+func TestForkThreadPersistsExtendedHistory(t *testing.T) {
+	client, server := newTestAppServerClient(t)
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := server.readRequest(t)
+		if req.Method != "thread/fork" || req.ID == nil {
+			t.Fatalf("request = %#v", req)
+		}
+		params := requestParams(t, req)
+		if params["threadId"] != "thread_1" {
+			t.Fatalf("threadId = %v", params["threadId"])
+		}
+		if params["persistExtendedHistory"] != true {
+			t.Fatalf("persistExtendedHistory = %v", params["persistExtendedHistory"])
+		}
+		server.writeResponse(t, *req.ID, map[string]any{
+			"thread": map[string]any{"id": "thread_2"},
+		})
+	}()
+
+	threadID, err := client.ForkThread(context.Background(), "thread_1")
+	if err != nil {
+		t.Fatalf("ForkThread: %v", err)
+	}
+	if threadID != "thread_2" {
+		t.Fatalf("threadID = %q", threadID)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("fake server did not receive thread/fork")
 	}
 }
 
@@ -252,7 +293,116 @@ func TestListThreadTurnsAcceptsObjectChangeKind(t *testing.T) {
 	}
 }
 
+func TestListThreadsPreservesCWD(t *testing.T) {
+	client, server := newTestAppServerClient(t)
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := server.readRequest(t)
+		if req.Method != "thread/list" || req.ID == nil {
+			t.Fatalf("request = %#v", req)
+		}
+		server.writeResponse(t, *req.ID, map[string]any{
+			"data": []any{
+				map[string]any{
+					"id":        "thread_1",
+					"preview":   "hello",
+					"cwd":       "/home/teddyhp/code/python_web_template",
+					"createdAt": float64(1777702095),
+					"updatedAt": float64(1777702632),
+					"status":    map[string]any{"type": "notLoaded"},
+				},
+			},
+		})
+	}()
+
+	threads, err := client.ListThreads(context.Background(), "", 20)
+	if err != nil {
+		t.Fatalf("ListThreads: %v", err)
+	}
+	if len(threads) != 1 {
+		t.Fatalf("threads len = %d, want 1", len(threads))
+	}
+	if threads[0].CWD != "/home/teddyhp/code/python_web_template" {
+		t.Fatalf("cwd = %q", threads[0].CWD)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("fake server did not receive thread/list")
+	}
+}
+
+func TestListThreadsWithOptionsRequestsArchivedVscodeThreads(t *testing.T) {
+	client, server := newTestAppServerClient(t)
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := server.readRequest(t)
+		if req.Method != "thread/list" || req.ID == nil {
+			t.Fatalf("request = %#v", req)
+		}
+		params := requestParams(t, req)
+		if archived, ok := params["archived"].(bool); !ok || !archived {
+			t.Fatalf("archived param = %#v, want true", params["archived"])
+		}
+		if cwd, ok := params["cwd"].(string); !ok || cwd != "/repo" {
+			t.Fatalf("cwd param = %#v, want /repo", params["cwd"])
+		}
+		rawSourceKinds, ok := params["sourceKinds"].([]any)
+		if !ok {
+			t.Fatalf("sourceKinds param = %#v", params["sourceKinds"])
+		}
+		sourceKinds := make(map[string]bool, len(rawSourceKinds))
+		for _, raw := range rawSourceKinds {
+			sourceKinds[fmt.Sprint(raw)] = true
+		}
+		for _, want := range []string{"cli", "vscode", "appServer"} {
+			if !sourceKinds[want] {
+				t.Fatalf("sourceKinds = %#v, missing %q", rawSourceKinds, want)
+			}
+		}
+		if sourceKinds["archived"] {
+			t.Fatalf("sourceKinds = %#v, archived is not a source kind", rawSourceKinds)
+		}
+		server.writeResponse(t, *req.ID, map[string]any{
+			"data": []any{
+				map[string]any{
+					"id":        "thread_archived",
+					"preview":   "archived thread",
+					"cwd":       "/repo",
+					"createdAt": float64(1777702095),
+					"updatedAt": float64(1777702632),
+					"status":    map[string]any{"type": "notLoaded"},
+				},
+			},
+		})
+	}()
+
+	threads, err := client.ListThreadsWithOptions(context.Background(), ListThreadsOptions{
+		CWD:      "/repo",
+		Limit:    20,
+		Archived: true,
+	})
+	if err != nil {
+		t.Fatalf("ListThreadsWithOptions: %v", err)
+	}
+	if len(threads) != 1 || threads[0].ID != "thread_archived" {
+		t.Fatalf("threads = %#v", threads)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("fake server did not receive thread/list")
+	}
+}
+
 func TestCodexTurnsToItemsPreservesOrderIndexAndFileStats(t *testing.T) {
+	exitCode := 1
 	items := codexTurnsToItems([]ThreadTurn{
 		{
 			ID:          "turn_1",
@@ -288,15 +438,30 @@ func TestCodexTurnsToItemsPreservesOrderIndexAndFileStats(t *testing.T) {
 			StartedAt: 102,
 			Items: []TurnItem{
 				{ID: "msg_2", Type: "agentMessage", Text: "next"},
+				{
+					ID:               "cmd_1",
+					Type:             "commandExecution",
+					Command:          []any{"go", "test", "./..."},
+					CWD:              "/repo",
+					Status:           "failed",
+					AggregatedOutput: "FAIL",
+					ExitCode:         &exitCode,
+					Raw: map[string]any{
+						"id": "cmd_1",
+						"commandActions": []any{
+							map[string]any{"type": "rerun"},
+						},
+					},
+				},
 			},
 		},
 	})
 
-	if len(items) != 3 {
-		t.Fatalf("items len = %d, want 3", len(items))
+	if len(items) != 4 {
+		t.Fatalf("items len = %d, want 4", len(items))
 	}
-	if items[0].Index != 0 || items[1].Index != 1 || items[2].Index != 100000 {
-		t.Fatalf("item indexes = [%d %d %d], want [0 1 100000]", items[0].Index, items[1].Index, items[2].Index)
+	if items[0].Index != 0 || items[1].Index != 1 || items[2].Index != 100000 || items[3].Index != 100001 {
+		t.Fatalf("item indexes = [%d %d %d %d], want [0 1 100000 100001]", items[0].Index, items[1].Index, items[2].Index, items[3].Index)
 	}
 	content, ok := items[1].Content.(map[string]any)
 	if !ok {
@@ -313,6 +478,28 @@ func TestCodexTurnsToItemsPreservesOrderIndexAndFileStats(t *testing.T) {
 	}
 	if content["diff"] == "" {
 		t.Fatal("diff should be preserved")
+	}
+	cmdContent, ok := items[3].Content.(map[string]any)
+	if !ok {
+		t.Fatalf("command content = %#v", items[3].Content)
+	}
+	if got := fmt.Sprint(cmdContent["command"]); !strings.Contains(got, "go") || !strings.Contains(got, "test") {
+		t.Fatalf("command = %v, want go test", cmdContent["command"])
+	}
+	if cmdContent["cwd"] != "/repo" {
+		t.Fatalf("cwd = %v, want /repo", cmdContent["cwd"])
+	}
+	if cmdContent["status"] != "failed" {
+		t.Fatalf("status = %v, want failed", cmdContent["status"])
+	}
+	if cmdContent["aggregatedOutput"] != "FAIL" || cmdContent["output"] != "FAIL" {
+		t.Fatalf("output fields = aggregated:%v output:%v, want FAIL", cmdContent["aggregatedOutput"], cmdContent["output"])
+	}
+	if cmdContent["exitCode"] != 1 || cmdContent["exit_code"] != 1 {
+		t.Fatalf("exit fields = exitCode:%v exit_code:%v, want 1", cmdContent["exitCode"], cmdContent["exit_code"])
+	}
+	if _, ok := cmdContent["commandActions"].([]any); !ok {
+		t.Fatalf("commandActions = %#v, want preserved list", cmdContent["commandActions"])
 	}
 }
 
@@ -342,16 +529,16 @@ func TestCodexListedThreadStatusRequiresActiveSessionForRunning(t *testing.T) {
 			want:   string(provider.SessionStatusRunning),
 		},
 		{
-			name:   "system error active session is failed",
+			name:   "system error active session is still input-capable",
 			status: ThreadStatus{Type: "systemError"},
 			active: true,
-			want:   string(provider.SessionStatusFailed),
+			want:   string(provider.SessionStatusRunning),
 		},
 		{
-			name:   "completed active session remains completed",
+			name:   "completed active session is still input-capable",
 			status: ThreadStatus{Type: "completed"},
 			active: true,
-			want:   string(provider.SessionStatusCompleted),
+			want:   string(provider.SessionStatusRunning),
 		},
 	}
 
@@ -362,6 +549,86 @@ func TestCodexListedThreadStatusRequiresActiveSessionForRunning(t *testing.T) {
 				t.Fatalf("status = %q, want %q", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestProviderCloseUnsubscribesActiveThreads(t *testing.T) {
+	client, server := newTestAppServerClient(t)
+	p := New(CodexConfig{}, nil, nil)
+	p.client = client
+	p.threadIDs["session_1"] = "thread_1"
+	p.threadIDs["session_2"] = "thread_2"
+	p.threadIDs["session_3"] = "thread_2"
+
+	done := make(chan map[string]int, 1)
+	go func() {
+		seen := make(map[string]int)
+		for len(seen) < 2 {
+			req := server.readRequest(t)
+			if req.Method != "thread/unsubscribe" || req.ID == nil {
+				t.Fatalf("request = %#v", req)
+			}
+			params := requestParams(t, req)
+			threadID, _ := params["threadId"].(string)
+			if threadID == "" {
+				t.Fatalf("threadId params = %#v", params)
+			}
+			seen[threadID]++
+			server.writeResponse(t, *req.ID, map[string]any{"status": "unsubscribed"})
+		}
+		done <- seen
+	}()
+
+	if err := p.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	select {
+	case seen := <-done:
+		if seen["thread_1"] != 1 || seen["thread_2"] != 1 {
+			t.Fatalf("unsubscribe calls = %#v, want one per active thread", seen)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for unsubscribe calls")
+	}
+	if p.client != nil {
+		t.Fatal("provider client should be cleared after close")
+	}
+}
+
+func TestProviderResumeSessionPersistsExtendedHistory(t *testing.T) {
+	client, server := newTestAppServerClient(t)
+	p := New(CodexConfig{}, nil, nil)
+	p.client = client
+	p.meta["session_1"] = &sessionMeta{Model: "gpt-5.5"}
+	defer client.Close()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		req := server.readRequest(t)
+		if req.Method != "thread/resume" || req.ID == nil {
+			t.Fatalf("request = %#v", req)
+		}
+		params := requestParams(t, req)
+		if params["threadId"] != "thread_1" {
+			t.Fatalf("threadId = %v", params["threadId"])
+		}
+		if params["persistExtendedHistory"] != true {
+			t.Fatalf("persistExtendedHistory = %v", params["persistExtendedHistory"])
+		}
+		server.writeResponse(t, *req.ID, map[string]any{
+			"thread": map[string]any{"id": "thread_1"},
+		})
+	}()
+
+	if err := p.ResumeSession(context.Background(), "session_1", "thread_1"); err != nil {
+		t.Fatalf("ResumeSession: %v", err)
+	}
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("fake server did not receive thread/resume")
 	}
 }
 

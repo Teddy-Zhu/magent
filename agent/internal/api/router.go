@@ -1,9 +1,9 @@
 package api
 
 import (
-	"github.com/gin-gonic/gin"
 	"github.com/Teddy-Zhu/magent/agent/internal/log"
 	"github.com/Teddy-Zhu/magent/agent/internal/ws"
+	"github.com/gin-gonic/gin"
 )
 
 func (s *Server) registerV1Routes(api *gin.RouterGroup) {
@@ -46,6 +46,9 @@ func (s *Server) registerV1Routes(api *gin.RouterGroup) {
 	api.POST("/sessions", s.sessionHandler.Create)
 	api.GET("/sessions", s.sessionHandler.List)
 	api.GET("/sessions/:id", s.sessionHandler.Get)
+	api.DELETE("/sessions/:id", s.sessionHandler.Delete)
+	api.POST("/sessions/:id/archive", s.sessionHandler.Archive)
+	api.POST("/sessions/:id/unarchive", s.sessionHandler.Unarchive)
 	api.POST("/sessions/:id/resume", s.sessionHandler.Resume)
 	api.POST("/sessions/:id/input", s.sessionHandler.SendInput)
 	api.POST("/sessions/:id/interrupt", s.sessionHandler.Interrupt)

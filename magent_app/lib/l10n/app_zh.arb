@@ -16,6 +16,7 @@
   "back": "返回",
   "copy": "复制",
   "copied": "已复制到剪贴板",
+  "more": "更多",
   "loading": "加载中...",
   "error": "错误",
   "noData": "暂无数据",
@@ -188,6 +189,22 @@
 
   "sessionsEmptyYet": "暂无会话",
   "sessionsEmptySub": "启动一个新的 AI 编码会话",
+  "sessionsActive": "活跃",
+  "sessionsArchived": "归档",
+  "sessionsArchivedEmpty": "暂无归档会话",
+  "sessionsArchivedEmptySub": "归档后的会话会显示在这里",
+  "sessionArchive": "归档",
+  "sessionUnarchive": "取消归档",
+  "sessionArchiveFailed": "归档失败",
+  "sessionUnarchiveFailed": "取消归档失败",
+  "sessionDeleteTitle": "删除会话",
+  "sessionDeleteConfirm": "确定删除「{title}」？这会移除本地 Codex 历史 JSONL，且不可撤销。",
+  "@sessionDeleteConfirm": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "sessionDeleteFailed": "删除失败",
   "sessionPurposeAiCommit": "AI 提交",
   "sessionsLoadMore": "还有 {count} 个更早会话，点击加载",
   "@sessionsLoadMore": {
@@ -299,9 +316,9 @@
   },
   "chatTemplatesTooltip": "历史消息和模板",
   "chatSkillsTooltip": "调用技能",
-  "chatFilesTooltip": "引用工作区文件",
+  "chatFilesTooltip": "引用工作区路径",
   "chatChooseSkill": "选择技能",
-  "chatChooseWorkspaceFile": "选择工作区文件",
+  "chatChooseWorkspaceFile": "选择工作区文件或目录",
   "chatCollapsedEvents": "已折叠 {count} 条更早消息",
   "@chatCollapsedEvents": {
     "placeholders": {

@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -206,11 +208,56 @@ func (p *CodexProvider) forwardClientEvents(client *AppServerClient) {
 		}
 		event.SessionID = sessionID
 		p.emit(sessionID, event)
+		if eventClosesSession(event) {
+			p.markSessionInactive(sessionID)
+		}
 		switch event.Type {
 		case string(provider.EventTurnCompleted), string(provider.EventTurnFailed):
 			go p.drainQueuedInput(context.Background(), sessionID)
 		}
 	}
+}
+
+func eventClosesSession(event provider.ProviderEvent) bool {
+	if event.Type != string(provider.EventSessionStatusChanged) {
+		return false
+	}
+	status := statusTypeFromPayload(event.Payload)
+	switch provider.NormalizeSessionStatus(status) {
+	case string(provider.SessionStatusStopped), string(provider.SessionStatusLost):
+		return true
+	default:
+		return false
+	}
+}
+
+func statusTypeFromPayload(payload any) string {
+	m, ok := payload.(map[string]any)
+	if !ok {
+		return ""
+	}
+	status := m["status"]
+	switch value := status.(type) {
+	case string:
+		return value
+	case map[string]any:
+		if t, ok := value["type"].(string); ok {
+			return t
+		}
+		if s, ok := value["status"].(string); ok {
+			return s
+		}
+	case map[string]string:
+		if t := value["type"]; t != "" {
+			return t
+		}
+		return value["status"]
+	}
+	return ""
+}
+
+func (p *CodexProvider) markSessionInactive(sessionID string) {
+	p.dropSessionRuntime(sessionID)
 }
 
 // handleServerRequests processes server-initiated JSON-RPC requests (e.g. approval requests).
@@ -416,7 +463,8 @@ func (p *CodexProvider) ResumeSession(ctx context.Context, sessionID, threadID s
 
 	// Resume the existing thread
 	result, err := client.call(ctx, "thread/resume", map[string]any{
-		"threadId": threadID,
+		"threadId":               threadID,
+		"persistExtendedHistory": true,
 	})
 	if err != nil {
 		return fmt.Errorf("resume: thread/resume: %w", err)
@@ -446,6 +494,31 @@ func (p *CodexProvider) ResumeSession(ctx context.Context, sessionID, threadID s
 
 	log.Info("codex", "session resumed id=%s thread=%s", sessionID, threadID)
 	return nil
+}
+
+func (p *CodexProvider) UpdateSessionMetadata(session provider.Session) {
+	if session.ID == "" {
+		return
+	}
+	p.metaMu.Lock()
+	defer p.metaMu.Unlock()
+	current := p.meta[session.ID]
+	if current == nil {
+		current = &sessionMeta{}
+		p.meta[session.ID] = current
+	}
+	if session.Model != "" {
+		current.Model = session.Model
+	}
+	if session.Workdir != "" {
+		current.Workdir = session.Workdir
+	}
+	if session.ApprovalPolicy != "" {
+		current.ApprovalPolicy = provider.NormalizeApprovalPolicy(session.ApprovalPolicy)
+	}
+	if session.SandboxMode != "" {
+		current.SandboxMode = provider.NormalizeSandboxMode(session.SandboxMode)
+	}
 }
 
 func (p *CodexProvider) ReadThreadEvents(ctx context.Context, threadID, cursor string, limit int) (*provider.EventPage, error) {
@@ -851,11 +924,59 @@ func codexItemPayload(item TurnItem) map[string]any {
 		if item.ID != "" && payload["id"] == nil {
 			payload["id"] = item.ID
 		}
+		applyCodexTypedItemFields(payload, item)
 		return payload
 	}
-	return map[string]any{
+	payload := map[string]any{
 		"id":   item.ID,
 		"type": item.Type,
+	}
+	applyCodexTypedItemFields(payload, item)
+	return payload
+}
+
+func applyCodexTypedItemFields(payload map[string]any, item TurnItem) {
+	if item.Type != "" && payload["type"] == nil {
+		payload["type"] = item.Type
+	}
+	if item.Text != "" && payload["text"] == nil {
+		payload["text"] = item.Text
+	}
+	if item.Phase != "" && payload["phase"] == nil {
+		payload["phase"] = item.Phase
+	}
+	if item.Status != "" && payload["status"] == nil {
+		payload["status"] = item.Status
+	}
+	if item.Summary != nil && payload["summary"] == nil {
+		payload["summary"] = item.Summary
+	}
+	if item.Command != nil && payload["command"] == nil {
+		payload["command"] = item.Command
+	}
+	if item.CWD != "" && payload["cwd"] == nil {
+		payload["cwd"] = item.CWD
+	}
+	if item.AggregatedOutput != "" && payload["aggregatedOutput"] == nil {
+		payload["aggregatedOutput"] = item.AggregatedOutput
+	}
+	if item.ExitCode != nil && payload["exitCode"] == nil {
+		payload["exitCode"] = *item.ExitCode
+	}
+	if item.Path != "" && payload["path"] == nil {
+		payload["path"] = item.Path
+	}
+	if item.Tool != "" && payload["tool"] == nil {
+		payload["tool"] = item.Tool
+	}
+	if item.Result != nil && payload["result"] == nil {
+		payload["result"] = item.Result
+	}
+	if item.Error != nil && payload["error"] == nil {
+		payload["error"] = item.Error
+	}
+	if len(item.Changes) > 0 && payload["changes"] == nil {
+		payload["changes"] = item.Changes
 	}
 }
 
@@ -1176,22 +1297,11 @@ func (p *CodexProvider) StopSession(ctx context.Context, sessionID string) error
 		return fmt.Errorf("session %s not found", sessionID)
 	}
 
-	// Clean up meta
-	p.metaMu.Lock()
-	delete(p.meta, sessionID)
-	p.metaMu.Unlock()
-	p.queueMu.Lock()
-	delete(p.queuedInputs, sessionID)
-	delete(p.queueDraining, sessionID)
-	p.queueMu.Unlock()
-
 	if err := client.UnsubscribeThread(ctx, threadID); err != nil {
 		log.Warn("codex", "unsubscribe thread %s failed: %v", threadID, err)
 	}
 
-	p.threadIDsMu.Lock()
-	delete(p.threadIDs, sessionID)
-	p.threadIDsMu.Unlock()
+	p.dropSessionRuntime(sessionID)
 
 	return nil
 }
@@ -1250,77 +1360,237 @@ func (p *CodexProvider) Capabilities() provider.ProviderCapabilities {
 }
 
 func (p *CodexProvider) ListThreadInfos(ctx context.Context, cwd string, limit int) ([]ThreadInfo, error) {
+	return p.ListThreadInfosWithOptions(ctx, provider.ThreadListOptions{
+		CWD:   cwd,
+		Limit: limit,
+	})
+}
+
+func (p *CodexProvider) ListThreadInfosWithOptions(ctx context.Context, opts provider.ThreadListOptions) ([]ThreadInfo, error) {
 	client, err := p.appServerClient(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	return client.ListThreads(ctx, cwd, limit)
+	return client.ListThreadsWithOptions(ctx, ListThreadsOptions{
+		CWD:      opts.CWD,
+		Limit:    opts.Limit,
+		Archived: opts.Archived,
+	})
 }
 
 // ListThreads queries codex for threads and converts them to provider.Session.
 // This makes codex the source of truth for session listing.
 func (p *CodexProvider) ListThreads(ctx context.Context, cwd string, limit int) ([]provider.Session, error) {
-	threads, err := p.ListThreadInfos(ctx, cwd, limit)
+	return p.ListThreadsWithOptions(ctx, provider.ThreadListOptions{
+		CWD:   cwd,
+		Limit: limit,
+	})
+}
+
+func (p *CodexProvider) ListThreadsWithOptions(ctx context.Context, opts provider.ThreadListOptions) ([]provider.Session, error) {
+	threads, err := p.ListThreadInfosWithOptions(ctx, opts)
 	if err != nil {
 		return nil, err
 	}
 
 	var sessions []provider.Session
 	for _, t := range threads {
-		status := codexListedThreadStatus(t.Status, p.HasSession(t.ID))
-
-		title := t.Name
-		if title == "" {
-			title = t.Preview
-		}
-
-		createdAt := time.Unix(t.CreatedAt, 0)
-		updatedAt := time.Unix(t.UpdatedAt, 0)
-
-		sessions = append(sessions, provider.Session{
-			ID:         t.ID,
-			ProviderID: "codex",
-			ThreadID:   t.ID,
-			Title:      title,
-			Status:     status,
-			RunnerType: "app-server",
-			CreatedAt:  createdAt,
-			UpdatedAt:  updatedAt,
-		})
+		sessions = append(sessions, p.threadInfoToSession(t, opts.Archived))
 	}
 
 	return sessions, nil
 }
 
+func (p *CodexProvider) ArchiveSession(ctx context.Context, sessionID string) error {
+	client, err := p.appServerClient(ctx)
+	if err != nil {
+		return err
+	}
+	threadID := p.threadIDForSession(sessionID)
+	if threadID == "" {
+		threadID = sessionID
+	}
+	if err := client.ArchiveThread(ctx, threadID); err != nil {
+		return err
+	}
+	p.dropSessionRuntime(sessionID)
+	return nil
+}
+
+func (p *CodexProvider) UnarchiveSession(ctx context.Context, sessionID string) (*provider.Session, error) {
+	client, err := p.appServerClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	threadID := p.threadIDForSession(sessionID)
+	if threadID == "" {
+		threadID = sessionID
+	}
+	thread, err := client.UnarchiveThread(ctx, threadID)
+	if err != nil {
+		return nil, err
+	}
+	if thread == nil {
+		return &provider.Session{
+			ID:         sessionID,
+			ProviderID: "codex",
+			ThreadID:   threadID,
+			Status:     string(provider.SessionStatusStopped),
+			RunnerType: "app-server",
+			UpdatedAt:  time.Now(),
+		}, nil
+	}
+	session := p.threadInfoToSession(*thread, false)
+	return &session, nil
+}
+
+func (p *CodexProvider) DeleteSession(ctx context.Context, sessionID string) error {
+	threadID := p.threadIDForSession(sessionID)
+	if threadID == "" {
+		threadID = sessionID
+	}
+	files, err := codexSessionRolloutFiles(threadID)
+	if err != nil {
+		return err
+	}
+	if len(files) == 0 {
+		return fmt.Errorf("codex session jsonl not found for thread %s", threadID)
+	}
+	for _, file := range files {
+		if err := os.Remove(file); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("remove %s: %w", file, err)
+		}
+	}
+	p.dropSessionRuntime(sessionID)
+	return nil
+}
+
+func (p *CodexProvider) threadInfoToSession(t ThreadInfo, archived bool) provider.Session {
+	status := codexListedThreadStatus(t.Status, p.HasSession(t.ID))
+	title := t.Name
+	if title == "" {
+		title = t.Preview
+	}
+	createdAt := time.Unix(t.CreatedAt, 0)
+	updatedAt := time.Unix(t.UpdatedAt, 0)
+	var archivedAt *time.Time
+	if archived {
+		archivedAt = &updatedAt
+	}
+	return provider.Session{
+		ID:         t.ID,
+		ProviderID: "codex",
+		ThreadID:   t.ID,
+		Title:      title,
+		Workdir:    t.CWD,
+		Status:     status,
+		RunnerType: "app-server",
+		CreatedAt:  createdAt,
+		UpdatedAt:  updatedAt,
+		ArchivedAt: archivedAt,
+	}
+}
+
+func (p *CodexProvider) dropSessionRuntime(sessionID string) {
+	p.metaMu.Lock()
+	delete(p.meta, sessionID)
+	p.metaMu.Unlock()
+
+	p.queueMu.Lock()
+	delete(p.queuedInputs, sessionID)
+	delete(p.queueDraining, sessionID)
+	p.queueMu.Unlock()
+
+	p.threadIDsMu.Lock()
+	delete(p.threadIDs, sessionID)
+	p.threadIDsMu.Unlock()
+}
+
+func codexSessionRolloutFiles(threadID string) ([]string, error) {
+	if threadID == "" {
+		return nil, fmt.Errorf("thread id is required")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	roots := []string{
+		filepath.Join(home, ".codex", "sessions"),
+		filepath.Join(home, ".codex", "archived_sessions"),
+	}
+	var files []string
+	for _, root := range roots {
+		info, err := os.Stat(root)
+		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return nil, err
+		}
+		if !info.IsDir() {
+			continue
+		}
+		err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() {
+				return nil
+			}
+			name := entry.Name()
+			if strings.HasPrefix(name, "rollout-") &&
+				strings.HasSuffix(name, threadID+".jsonl") {
+				files = append(files, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	return files, nil
+}
+
 func codexListedThreadStatus(status ThreadStatus, active bool) string {
 	// Codex thread/list can report historical, unsubscribed threads as "idle".
 	// In Magent, "running" means this agent process owns an active provider
-	// session for the thread. Otherwise list status should match GetSession,
-	// which treats unloaded provider threads as stopped.
+	// session for the thread and can accept input. Otherwise list status should
+	// match GetSession, which treats unloaded provider threads as stopped.
 	if !active {
 		return string(provider.SessionStatusStopped)
 	}
-
-	normalized := provider.NormalizeSessionStatus(status.Type)
-	switch normalized {
-	case string(provider.SessionStatusFailed),
-		string(provider.SessionStatusLost),
-		string(provider.SessionStatusCompleted),
-		string(provider.SessionStatusStopped):
-		return normalized
-	default:
-		return string(provider.SessionStatusRunning)
-	}
+	_ = status
+	return string(provider.SessionStatusRunning)
 }
 
 func (p *CodexProvider) Close() error {
 	p.clientMu.Lock()
 	defer p.clientMu.Unlock()
 	if p.client != nil {
+		p.unsubscribeActiveThreads(context.Background(), p.client)
 		err := p.client.Close()
 		p.client = nil
 		return err
 	}
 	return nil
+}
+
+func (p *CodexProvider) unsubscribeActiveThreads(ctx context.Context, client *AppServerClient) {
+	p.threadIDsMu.RLock()
+	threadIDs := make(map[string]struct{}, len(p.threadIDs))
+	for _, threadID := range p.threadIDs {
+		if threadID != "" {
+			threadIDs[threadID] = struct{}{}
+		}
+	}
+	p.threadIDsMu.RUnlock()
+
+	for threadID := range threadIDs {
+		unsubscribeCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		if err := client.UnsubscribeThread(unsubscribeCtx, threadID); err != nil {
+			log.Warn("codex", "unsubscribe active thread %s failed: %v", threadID, err)
+		}
+		cancel()
+	}
 }

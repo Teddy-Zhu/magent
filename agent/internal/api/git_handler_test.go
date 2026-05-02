@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Teddy-Zhu/magent/agent/internal/gitservice"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 )
 
 func TestIsUntrackedPath(t *testing.T) {
@@ -32,6 +33,33 @@ func TestIsUntrackedPath(t *testing.T) {
 	}
 	if isUntrackedPath(context.Background(), service, repo, "tracked.txt") {
 		t.Fatalf("tracked.txt should not be untracked")
+	}
+}
+
+func TestCommitMessageFromPayloadUsesCompletedTextAsFinalMessage(t *testing.T) {
+	message := ""
+	for _, delta := range []string{"feat", ":", " add", " session"} {
+		message = mergeCommitMessageEvent(message, string(provider.EventMessageDelta), map[string]any{
+			"delta": delta,
+		})
+	}
+
+	message = mergeCommitMessageEvent(message, string(provider.EventMessage), map[string]any{
+		"type": "agentMessage",
+		"text": "feat: add session",
+	})
+
+	if message != "feat: add session" {
+		t.Fatalf("message = %q, want completed text without duplicate", message)
+	}
+}
+
+func TestCommitMessageFromPayloadFallsBackToContent(t *testing.T) {
+	got := commitMessageFromPayload(map[string]any{
+		"content": "fix: handle archived sessions",
+	})
+	if got != "fix: handle archived sessions" {
+		t.Fatalf("message = %q", got)
 	}
 }
 

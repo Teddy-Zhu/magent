@@ -18,7 +18,7 @@ abstract class SessionApiLike {
 
   Future<Map<String, dynamic>> getSession(String id);
 
-  Future<List<dynamic>> listSessions(String projectId);
+  Future<List<dynamic>> listSessions(String projectId, {bool archived = false});
 
   Future<void> sendInput(
     String sessionId,
@@ -32,6 +32,12 @@ abstract class SessionApiLike {
   Future<void> interrupt(String sessionId);
 
   Future<void> stop(String sessionId);
+
+  Future<void> archive(String sessionId);
+
+  Future<Map<String, dynamic>> unarchive(String sessionId);
+
+  Future<void> deleteSession(String sessionId);
 
   Future<Map<String, dynamic>> fork(String sessionId);
 
@@ -55,9 +61,15 @@ abstract class SessionSyncStore {
 
   Future<String?> getRealtimeCursor(String sessionId);
 
-  Future<List<Map<String, dynamic>>> refreshItems(String sessionId);
+  Future<List<Map<String, dynamic>>> refreshItems(
+    String sessionId, {
+    bool forceFull = false,
+  });
 
-  Future<List<Map<String, dynamic>>> refreshSessions(String projectId);
+  Future<List<Map<String, dynamic>>> refreshSessions(
+    String projectId, {
+    bool archived = false,
+  });
 }
 
 class SessionRepository implements SessionSyncStore {
@@ -74,10 +86,17 @@ class SessionRepository implements SessionSyncStore {
 
   // --- Sessions ---
 
-  Stream<List<Map<String, dynamic>>> watchSessions(String projectId) {
+  Stream<List<Map<String, dynamic>>> watchSessions(
+    String projectId, {
+    bool archived = false,
+  }) {
     return _db
-        .watchSessionsByProject(agentId, projectId)
-        .map((rows) => rows.map(_sessionToMap).toList());
+        .watchSessionsWithLastTextByProjectArchived(
+          agentId,
+          projectId,
+          archived: archived,
+        )
+        .map((rows) => rows.map(_sessionWithLastTextToMap).toList());
   }
 
   Stream<List<Map<String, dynamic>>> watchItems(
@@ -118,14 +137,35 @@ class SessionRepository implements SessionSyncStore {
     return row == null ? null : _sessionToMap(row);
   }
 
+  Future<void> upsertSession(
+    Map<String, dynamic> session, {
+    String? projectId,
+  }) async {
+    final companion = _sessionCompanion(session, fallbackProjectId: projectId);
+    if (companion == null) return;
+    await _db.insertOrUpdateSession(companion);
+  }
+
+  Future<void> deleteCachedSession(String sessionId) {
+    return _db.deleteSessionCache(agentId, sessionId);
+  }
+
   /// Returns sessions for a project. Loads from local DB first, then syncs from API.
-  Future<List<Map<String, dynamic>>> getSessions(String projectId) async {
+  Future<List<Map<String, dynamic>>> getSessions(
+    String projectId, {
+    bool archived = false,
+  }) async {
     // 1. Load from local DB
-    final localSessions = await _db.getSessionsByProject(agentId, projectId);
-    final localList = localSessions.map(_sessionToMap).toList();
+    final localWithLastText = await _db
+        .getSessionsWithLastTextByProjectArchived(
+          agentId,
+          projectId,
+          archived: archived,
+        );
+    final localList = localWithLastText.map(_sessionWithLastTextToMap).toList();
 
     // 2. Try syncing from API in background
-    _syncSessionsFromApi(projectId).catchError((e) {
+    _syncSessionsFromApi(projectId, archived: archived).catchError((e) {
       debugPrint('SessionRepository: sync sessions error: $e');
       return <Map<String, dynamic>>[];
     });
@@ -135,42 +175,41 @@ class SessionRepository implements SessionSyncStore {
 
   /// Fetches sessions from API and updates local DB. Returns the fresh list.
   Future<List<Map<String, dynamic>>> _syncSessionsFromApi(
-    String projectId,
-  ) async {
-    final apiSessions = await _api.listSessions(projectId);
+    String projectId, {
+    bool archived = false,
+  }) async {
+    final apiSessions = await _api.listSessions(projectId, archived: archived);
+    final localSessions = await _db.getSessionsByProjectArchived(
+      agentId,
+      projectId,
+      archived: archived,
+    );
+    final remoteIds = <String>{};
 
     final companions = <SessionEntriesCompanion>[];
     for (final s in apiSessions) {
-      final map = _canonicalSessionMap(Map<String, dynamic>.from(s as Map));
-      companions.add(
-        SessionEntriesCompanion(
-          id: Value(map['id']?.toString() ?? ''),
-          agentId: Value(agentId),
-          providerId: Value(map['provider_id']?.toString() ?? ''),
-          threadId: Value(map['thread_id']?.toString()),
-          projectId: Value(projectId),
-          purpose: Value(map['purpose']?.toString()),
-          workdir: Value(map['workdir']?.toString()),
-          title: Value(map['title']?.toString() ?? map['preview']?.toString()),
-          status: Value(_extractStatus(map)),
-          model: Value(map['model']?.toString()),
-          effort: Value(map['effort']?.toString()),
-          approvalPolicy: Value(
-            SessionApprovalPolicies.normalize(map['approval_policy']),
-          ),
-          sandboxMode: Value(
-            SessionSandboxModes.normalize(map['sandbox_mode']),
-          ),
-          providerCursor: Value(map['provider_cursor']?.toString()),
-          listRevision: Value(_parseInt(map['list_revision'])),
-          createdAt: Value(_parseDateTime(map['created_at'])),
-          updatedAt: Value(_parseDateTime(map['updated_at'])),
-        ),
-      );
+      final map = Map<String, dynamic>.from(s as Map);
+      if (archived && map['archived_at'] == null) {
+        map['archived_at'] =
+            map['updated_at'] ??
+            map['updatedAt'] ??
+            DateTime.now().toIso8601String();
+      } else if (!archived) {
+        map['archived_at'] = null;
+      }
+      final id = map['id']?.toString();
+      if (id != null && id.isNotEmpty) remoteIds.add(id);
+      final companion = _sessionCompanion(map, fallbackProjectId: projectId);
+      if (companion != null) companions.add(companion);
     }
 
     if (companions.isNotEmpty) {
       await _db.insertOrUpdateSessions(companions);
+    }
+    for (final local in localSessions) {
+      if (!remoteIds.contains(local.id)) {
+        await _db.deleteSessionCache(agentId, local.id);
+      }
     }
 
     return apiSessions.map((s) => Map<String, dynamic>.from(s as Map)).toList();
@@ -178,8 +217,27 @@ class SessionRepository implements SessionSyncStore {
 
   /// Force refresh sessions from API and update local DB.
   @override
-  Future<List<Map<String, dynamic>>> refreshSessions(String projectId) async {
-    return _syncSessionsFromApi(projectId);
+  Future<List<Map<String, dynamic>>> refreshSessions(
+    String projectId, {
+    bool archived = false,
+  }) async {
+    return _syncSessionsFromApi(projectId, archived: archived);
+  }
+
+  Future<void> archiveSession(String sessionId) async {
+    await _api.archive(sessionId);
+    await _db.deleteSessionCache(agentId, sessionId);
+  }
+
+  Future<void> unarchiveSession(String sessionId, {String? projectId}) async {
+    final session = await _api.unarchive(sessionId);
+    session['archived_at'] = null;
+    await upsertSession(session, projectId: projectId);
+  }
+
+  Future<void> deleteSession(String sessionId) async {
+    await _api.deleteSession(sessionId);
+    await _db.deleteSessionCache(agentId, sessionId);
   }
 
   // --- Events ---
@@ -266,6 +324,9 @@ class SessionRepository implements SessionSyncStore {
       await saveApprovalRequest(event);
     }
     await _applyRealtimeItemProjection(sessionId, eventType, event);
+    if (!_shouldPersistRealtimeEvent(eventType)) {
+      return;
+    }
 
     final cursor =
         event['cursor']?.toString() ??
@@ -287,6 +348,16 @@ class SessionRepository implements SessionSyncStore {
         event['ws_cursor']?.toString() ?? event['ws_seq']?.toString();
     if (wsCursor != null && wsCursor.isNotEmpty) {
       await _db.setSyncCursor(agentId, 'session_ws', sessionId, wsCursor);
+    }
+  }
+
+  bool _shouldPersistRealtimeEvent(String eventType) {
+    switch (eventType) {
+      case SessionEventTypes.started:
+      case SessionEventTypes.statusChanged:
+        return false;
+      default:
+        return true;
     }
   }
 
@@ -352,7 +423,11 @@ class SessionRepository implements SessionSyncStore {
               ? _parseDateTime(data['updated_at'])
               : now,
         ),
-        archivedAt: Value(existing?.archivedAt),
+        archivedAt: Value(
+          data.containsKey('archived_at')
+              ? _parseNullableDateTime(data['archived_at'])
+              : existing?.archivedAt,
+        ),
         deletedAt: Value(existing?.deletedAt),
       ),
     );
@@ -417,9 +492,7 @@ class SessionRepository implements SessionSyncStore {
     if (itemId == null || itemId.isEmpty) return;
 
     final existing = await _db.getItem(agentId, sessionId, itemId);
-    final currentContent = existing == null
-        ? <String, dynamic>{}
-        : Map<String, dynamic>.from(_decodeJson(existing.content) as Map);
+    final currentContent = _storedItemContent(existing);
     final nextContent = Map<String, dynamic>.from(currentContent);
     final now = _parseDateTime(event['created_at']);
     final cursor =
@@ -451,14 +524,14 @@ class SessionRepository implements SessionSyncStore {
         type = 'reasoning';
         status = 'in_progress';
         nextContent['summary'] =
-            '${nextContent['summary'] ?? ''}${_deltaText(data)}';
-        summary = _truncate(nextContent['summary']?.toString() ?? '', 160);
+            '${_messageContentText(nextContent['summary'])}${_deltaText(data)}';
+        summary = _truncate(_messageContentText(nextContent['summary']), 160);
       case SessionEventTypes.reasoningTextDelta:
         type = 'reasoning';
         status = 'in_progress';
         nextContent['content'] =
-            '${nextContent['content'] ?? ''}${_deltaText(data)}';
-        summary ??= 'Reasoning';
+            '${_messageContentText(nextContent['content'])}${_deltaText(data)}';
+        summary = _contentSummary(type, nextContent);
       case SessionEventTypes.reasoningSummaryPart:
         type = 'reasoning';
         status = 'in_progress';
@@ -503,13 +576,20 @@ class SessionRepository implements SessionSyncStore {
         role = _roleForType(type);
         nextContent
           ..clear()
-          ..addAll(completed);
+          ..addAll(_mergeItemContent(currentContent, completed));
         summary = _contentSummary(type, nextContent);
         createdAt = existing?.createdAt ?? now;
         itemIndex =
             _parseInt(completed['index']) ??
             _parseInt(data['index']) ??
             itemIndex;
+    }
+    if (type == SessionItemTypes.reasoning &&
+        !_hasVisibleReasoningContent(nextContent)) {
+      if (existing != null) {
+        await _db.deleteItem(agentId, sessionId, itemId);
+      }
+      return;
     }
 
     await _db.insertOrUpdateItem(
@@ -556,49 +636,58 @@ class SessionRepository implements SessionSyncStore {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> refreshItems(String sessionId) {
-    return _syncItemsFromApi(sessionId);
+  Future<List<Map<String, dynamic>>> refreshItems(
+    String sessionId, {
+    bool forceFull = false,
+  }) {
+    return _syncItemsFromApi(sessionId, useStoredCursor: !forceFull);
   }
 
-  Future<List<Map<String, dynamic>>> _syncItemsFromApi(String sessionId) async {
-    final cursor = await _db.getSyncCursor(agentId, 'session_items', sessionId);
+  Future<List<Map<String, dynamic>>> _syncItemsFromApi(
+    String sessionId, {
+    bool useStoredCursor = true,
+  }) async {
+    final cursor = useStoredCursor
+        ? await _db.getSyncCursor(agentId, 'session_items', sessionId)
+        : null;
     final page = await _api.getItemsPage(sessionId, cursor: cursor);
     final newItems = page['items'] as List<dynamic>? ?? [];
-    final companions = <SessionItemEntriesCompanion>[];
     final realUserMessageContents = <dynamic>[];
+    final entries = <SessionItemEntriesCompanion>[];
     for (final item in newItems) {
       final map = Map<String, dynamic>.from(item as Map);
       final itemId = map['item_id']?.toString() ?? map['id']?.toString() ?? '';
       if (itemId.isEmpty) continue;
       final type = SessionItemTypes.normalize(map['type']?.toString() ?? '');
+      final existing = await _db.getItem(agentId, sessionId, itemId);
+      final existingContent = _storedItemContent(existing);
+      final incomingContent = _apiItemContent(map, type);
+      final content = _mergeItemContent(existingContent, incomingContent);
+      if (type == SessionItemTypes.reasoning &&
+          !_hasVisibleReasoningContent(content)) {
+        if (existing != null) {
+          await _db.deleteItem(agentId, sessionId, itemId);
+        }
+        continue;
+      }
       if (type == SessionItemTypes.userMessage &&
           !itemId.startsWith('local-')) {
-        realUserMessageContents.add(map['content']);
+        realUserMessageContents.add(content);
       }
-      companions.add(
-        SessionItemEntriesCompanion(
-          agentId: Value(agentId),
-          sessionId: Value(sessionId),
-          itemId: Value(itemId),
-          turnId: Value(map['turn_id']?.toString()),
-          type: Value(type),
-          status: Value(map['status']?.toString()),
-          role: Value(map['role']?.toString()),
-          summary: Value(map['summary']?.toString()),
-          content: Value(_encodeJson(map['content'])),
-          providerCursor: Value(
-            map['cursor']?.toString() ?? map['provider_cursor']?.toString(),
-          ),
-          revision: Value(_parseInt(map['revision'])),
-          itemIndex: Value(_parseInt(map['index']) ?? 0),
-          createdAt: Value(_parseDateTime(map['created_at'])),
-          updatedAt: Value(_parseDateTime(map['updated_at'])),
-        ),
+      final next = _sessionItemCompanion(
+        sessionId: sessionId,
+        itemId: itemId,
+        type: type,
+        map: map,
+        content: content,
+        existing: existing,
       );
+      if (!_sessionItemMatchesExisting(existing, next)) {
+        entries.add(next);
+      }
     }
-
-    if (companions.isNotEmpty) {
-      await _db.insertOrUpdateItems(companions);
+    if (entries.isNotEmpty) {
+      await _db.insertOrUpdateItems(entries);
     }
     for (final content in realUserMessageContents) {
       await _removeMatchingPendingUserMessage(sessionId, content);
@@ -608,8 +697,82 @@ class SessionRepository implements SessionSyncStore {
       await _db.setSyncCursor(agentId, 'session_items', sessionId, nextCursor);
     }
 
-    final allItems = await _db.getItemsBySession(agentId, sessionId);
-    return allItems.map(_itemToMap).toList();
+    return entries.map(_itemCompanionToMap).toList(growable: false);
+  }
+
+  SessionItemEntriesCompanion _sessionItemCompanion({
+    required String sessionId,
+    required String itemId,
+    required String type,
+    required Map<String, dynamic> map,
+    required Map<String, dynamic> content,
+    required SessionItemEntry? existing,
+  }) {
+    return SessionItemEntriesCompanion(
+      agentId: Value(agentId),
+      sessionId: Value(sessionId),
+      itemId: Value(itemId),
+      turnId: Value(map['turn_id']?.toString() ?? existing?.turnId),
+      type: Value(type),
+      status: Value(map['status']?.toString() ?? existing?.status),
+      role: Value(map['role']?.toString() ?? existing?.role),
+      summary: Value(
+        _nonEmptyString(map['summary']) ??
+            existing?.summary ??
+            _contentSummary(type, content),
+      ),
+      content: Value(_encodeJson(content)),
+      providerCursor: Value(
+        map['cursor']?.toString() ??
+            map['provider_cursor']?.toString() ??
+            existing?.providerCursor,
+      ),
+      revision: Value(_parseInt(map['revision']) ?? existing?.revision),
+      itemIndex: Value(_parseInt(map['index']) ?? existing?.itemIndex ?? 0),
+      createdAt: Value(
+        map['created_at'] == null
+            ? existing?.createdAt ?? DateTime.now()
+            : _parseDateTime(map['created_at']),
+      ),
+      updatedAt: Value(
+        map['updated_at'] == null
+            ? existing?.updatedAt ?? DateTime.now()
+            : _parseDateTime(map['updated_at']),
+      ),
+    );
+  }
+
+  bool _sessionItemMatchesExisting(
+    SessionItemEntry? existing,
+    SessionItemEntriesCompanion next,
+  ) {
+    if (existing == null) return false;
+    return existing.turnId == next.turnId.value &&
+        existing.type == next.type.value &&
+        existing.status == next.status.value &&
+        existing.role == next.role.value &&
+        existing.summary == next.summary.value &&
+        existing.content == next.content.value &&
+        existing.providerCursor == next.providerCursor.value &&
+        existing.revision == next.revision.value &&
+        existing.itemIndex == next.itemIndex.value &&
+        existing.createdAt == next.createdAt.value;
+  }
+
+  Map<String, dynamic> _itemCompanionToMap(SessionItemEntriesCompanion item) {
+    return {
+      'item_id': item.itemId.value,
+      'turn_id': item.turnId.value,
+      'type': item.type.value,
+      'status': item.status.value,
+      'role': item.role.value,
+      'summary': item.summary.value,
+      'content': _decodeJson(item.content.value),
+      'cursor': item.providerCursor.value,
+      'index': item.itemIndex.value,
+      'created_at': item.createdAt.value.toIso8601String(),
+      'updated_at': item.updatedAt.value.toIso8601String(),
+    };
   }
 
   Future<void> _removeMatchingPendingUserMessage(
@@ -684,7 +847,17 @@ class SessionRepository implements SessionSyncStore {
       'provider_cursor': s.providerCursor,
       'created_at': s.createdAt.toIso8601String(),
       'updated_at': s.updatedAt.toIso8601String(),
+      'archived_at': s.archivedAt?.toIso8601String(),
     };
+  }
+
+  Map<String, dynamic> _sessionWithLastTextToMap(SessionWithLastText row) {
+    final map = _sessionToMap(row.session);
+    final lastText = row.lastText?.trim();
+    if (lastText != null && lastText.isNotEmpty) {
+      map['last_text'] = lastText;
+    }
+    return map;
   }
 
   Map<String, dynamic> _canonicalSessionMap(Map<String, dynamic> input) {
@@ -694,6 +867,42 @@ class SessionRepository implements SessionSyncStore {
       map['provider_id'] = providerId;
     }
     return map;
+  }
+
+  SessionEntriesCompanion? _sessionCompanion(
+    Map<String, dynamic> input, {
+    String? fallbackProjectId,
+  }) {
+    final map = _canonicalSessionMap(input);
+    final id = map['id']?.toString() ?? '';
+    final mappedProjectId = map['project_id']?.toString();
+    final projectId = mappedProjectId != null && mappedProjectId.isNotEmpty
+        ? mappedProjectId
+        : fallbackProjectId;
+    if (id.isEmpty || projectId == null || projectId.isEmpty) return null;
+
+    return SessionEntriesCompanion(
+      id: Value(id),
+      agentId: Value(agentId),
+      providerId: Value(map['provider_id']?.toString() ?? ''),
+      threadId: Value(map['thread_id']?.toString()),
+      projectId: Value(projectId),
+      purpose: Value(map['purpose']?.toString()),
+      workdir: Value(map['workdir']?.toString()),
+      title: Value(map['title']?.toString() ?? map['preview']?.toString()),
+      status: Value(_extractStatus(map)),
+      model: Value(map['model']?.toString()),
+      effort: Value(map['effort']?.toString()),
+      approvalPolicy: Value(
+        SessionApprovalPolicies.normalize(map['approval_policy']),
+      ),
+      sandboxMode: Value(SessionSandboxModes.normalize(map['sandbox_mode'])),
+      providerCursor: Value(map['provider_cursor']?.toString()),
+      listRevision: Value(_parseInt(map['list_revision'])),
+      createdAt: Value(_parseDateTime(map['created_at'])),
+      updatedAt: Value(_parseDateTime(map['updated_at'])),
+      archivedAt: Value(_parseNullableDateTime(map['archived_at'])),
+    );
   }
 
   Map<String, dynamic> _eventToMap(SessionEventEntry e) {
@@ -813,14 +1022,26 @@ class SessionRepository implements SessionSyncStore {
   }
 
   String _contentSummary(String type, Map<String, dynamic> content) {
-    final text = content['text']?.toString();
-    if (text != null && text.isNotEmpty) return _truncate(text, 160);
-    final output = content['output']?.toString();
-    if (output != null && output.isNotEmpty) return _truncate(output, 160);
-    final command = content['command']?.toString();
-    if (command != null && command.isNotEmpty) return _truncate(command, 160);
-    final path = content['path']?.toString();
-    if (path != null && path.isNotEmpty) return path;
+    if (type == SessionItemTypes.reasoning) {
+      final reasoning = _reasoningContentText(content);
+      if (reasoning.isNotEmpty) return _truncate(reasoning, 160);
+      return '';
+    }
+    final text = _firstContentText(content, ['text', 'content']);
+    if (text.isNotEmpty) return _truncate(text, 160);
+    final output = _firstContentText(content, [
+      'output',
+      'aggregatedOutput',
+      'stdout',
+      'stderr',
+      'result',
+      'error',
+    ]);
+    if (output.isNotEmpty) return _truncate(output, 160);
+    final command = _commandContentText(content);
+    if (command.isNotEmpty) return _truncate(command, 160);
+    final path = _firstContentText(content, ['path']);
+    if (path.isNotEmpty) return path;
     final changes = content['changes'];
     if (changes is List && changes.isNotEmpty && changes.first is Map) {
       final first = Map<String, dynamic>.from(changes.first as Map);
@@ -830,13 +1051,136 @@ class SessionRepository implements SessionSyncStore {
     return type;
   }
 
+  Map<String, dynamic> _storedItemContent(SessionItemEntry? item) {
+    if (item == null) return <String, dynamic>{};
+    final decoded = _decodeJson(item.content);
+    if (decoded is Map) return Map<String, dynamic>.from(decoded);
+    if (decoded == null) return <String, dynamic>{};
+    return <String, dynamic>{'value': decoded};
+  }
+
+  Map<String, dynamic> _apiItemContent(Map<String, dynamic> item, String type) {
+    final rawContent = item['content'];
+    final content = rawContent is Map
+        ? Map<String, dynamic>.from(rawContent)
+        : rawContent == null
+        ? <String, dynamic>{}
+        : <String, dynamic>{'value': rawContent};
+    for (final entry in item.entries) {
+      if (_isApiItemEnvelopeKey(entry.key)) continue;
+      if (entry.value != null && content[entry.key] == null) {
+        content[entry.key] = entry.value;
+      }
+    }
+    content['id'] ??= item['item_id'] ?? item['id'];
+    content['type'] ??= type;
+    content['status'] ??= item['status'];
+    _normalizeContentAliases(content);
+    return content;
+  }
+
+  bool _isApiItemEnvelopeKey(String key) {
+    switch (key) {
+      case 'content':
+      case 'cursor':
+      case 'provider_cursor':
+      case 'revision':
+      case 'index':
+      case 'created_at':
+      case 'updated_at':
+      case 'role':
+      case 'summary':
+      case 'turn_id':
+      case 'turnId':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  void _normalizeContentAliases(Map<String, dynamic> content) {
+    if (content['output'] == null && content['aggregatedOutput'] != null) {
+      content['output'] = content['aggregatedOutput'];
+    }
+    if (content['output'] == null && content['stdout'] != null) {
+      content['output'] = content['stdout'];
+    }
+    if (content['output'] == null && content['stderr'] != null) {
+      content['output'] = content['stderr'];
+    }
+    if (content['exit_code'] == null && content['exitCode'] != null) {
+      content['exit_code'] = content['exitCode'];
+    }
+    if (content['command'] == null) {
+      for (final key in [
+        'cmd',
+        'cmdline',
+        'argv',
+        'args',
+        'program',
+        'script',
+      ]) {
+        if (_hasMeaningfulValue(content[key])) {
+          content['command'] = content[key];
+          break;
+        }
+      }
+    }
+  }
+
+  Map<String, dynamic> _mergeItemContent(
+    Map<String, dynamic> existing,
+    Map<String, dynamic> incoming,
+  ) {
+    final merged = Map<String, dynamic>.from(existing);
+    incoming.forEach((key, value) {
+      if (_hasMeaningfulValue(value) || !_hasMeaningfulValue(merged[key])) {
+        merged[key] = value;
+      }
+    });
+    _normalizeContentAliases(merged);
+    return merged;
+  }
+
+  bool _hasMeaningfulValue(dynamic value) {
+    if (value == null) return false;
+    if (value is String) return value.trim().isNotEmpty;
+    if (value is Iterable) return value.isNotEmpty;
+    if (value is Map) return value.isNotEmpty;
+    return true;
+  }
+
+  String? _nonEmptyString(dynamic value) {
+    final text = value?.toString();
+    if (text == null || text.trim().isEmpty) return null;
+    return text;
+  }
+
+  bool _hasVisibleReasoningContent(Map<String, dynamic> content) {
+    return _reasoningContentText(content).trim().isNotEmpty;
+  }
+
+  String _reasoningContentText(Map<String, dynamic> content) {
+    for (final key in ['summary', 'content', 'delta', 'text']) {
+      final text = _messageContentText(content[key]).trim();
+      if (text.isNotEmpty) return text;
+    }
+    final parts = content['summary_parts'];
+    if (parts is List && parts.isNotEmpty) {
+      return parts
+          .map(_messageContentText)
+          .where((text) => text.trim().isNotEmpty)
+          .join('\n');
+    }
+    return '';
+  }
+
   String _commandSummary(
     Map<String, dynamic> data,
     Map<String, dynamic> content,
   ) {
-    final command =
-        data['command']?.toString() ?? content['command']?.toString();
-    if (command != null && command.isNotEmpty) return _truncate(command, 160);
+    final command = _commandContentText({...content, ...data});
+    if (command.isNotEmpty) return _truncate(command, 160);
     return 'Command output';
   }
 
@@ -864,6 +1208,40 @@ class SessionRepository implements SessionSyncStore {
       return '';
     }
     return value.toString();
+  }
+
+  String _firstContentText(Map<String, dynamic> content, List<String> keys) {
+    for (final key in keys) {
+      final text = _messageContentText(content[key]).trim();
+      if (text.isNotEmpty) return text;
+    }
+    return '';
+  }
+
+  String _commandContentText(dynamic value) {
+    if (value == null) return '';
+    if (value is String) return value.trim();
+    if (value is List) {
+      return value
+          .map(_commandContentText)
+          .where((part) => part.isNotEmpty)
+          .join(' ');
+    }
+    if (value is Map) {
+      for (final key in [
+        'command',
+        'cmd',
+        'cmdline',
+        'argv',
+        'args',
+        'program',
+        'script',
+      ]) {
+        final text = _commandContentText(value[key]);
+        if (text.isNotEmpty) return text;
+      }
+    }
+    return value.toString().trim();
   }
 
   String _truncate(String value, int max) {
@@ -898,13 +1276,10 @@ class SessionRepository implements SessionSyncStore {
   String? _sessionStatusFromEvent(String eventType, Map<String, dynamic> data) {
     switch (eventType) {
       case SessionEventTypes.started:
-      case SessionEventTypes.turnStarted:
         return SessionStatuses.running;
       case 'session.created':
         return SessionStatuses.normalize(data['status']) ??
             SessionStatuses.running;
-      case SessionEventTypes.turnFailed:
-        return SessionStatuses.failed;
       case SessionEventTypes.exited:
         return SessionStatuses.completed;
       case SessionEventTypes.statusChanged:
@@ -929,6 +1304,14 @@ class SessionRepository implements SessionSyncStore {
       return parsed;
     }
     return DateTime.now();
+  }
+
+  DateTime? _parseNullableDateTime(dynamic value) {
+    if (value == null) return null;
+    if (value is String && value.trim().isEmpty) return null;
+    if (value is DateTime && value.year <= 1) return null;
+    if (value is int && value <= 0) return null;
+    return _parseDateTime(value);
   }
 
   int? _parseInt(dynamic value) {

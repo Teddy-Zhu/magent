@@ -166,13 +166,19 @@ class _FakeSessions implements SessionSyncStore {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> refreshItems(String sessionId) async {
+  Future<List<Map<String, dynamic>>> refreshItems(
+    String sessionId, {
+    bool forceFull = false,
+  }) async {
     refreshedItems.add(sessionId);
     return [];
   }
 
   @override
-  Future<List<Map<String, dynamic>>> refreshSessions(String projectId) async {
+  Future<List<Map<String, dynamic>>> refreshSessions(
+    String projectId, {
+    bool archived = false,
+  }) async {
     refreshedSessions.add(projectId);
     return [];
   }

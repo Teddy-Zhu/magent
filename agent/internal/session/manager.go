@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/Teddy-Zhu/magent/agent/internal/log"
 	"github.com/Teddy-Zhu/magent/agent/internal/provider"
@@ -130,49 +131,67 @@ func (m *Manager) forwardEvents(sessionID string, p provider.Provider) {
 
 // GetSession returns session info. Provider is source of truth for status.
 func (m *Manager) GetSession(ctx context.Context, sessionID string) (*provider.Session, error) {
-	// Check if provider has it active
-	for _, p := range m.registry.ListProviders() {
-		if p.HasSession(sessionID) {
-			// Active in provider — get metadata from DB if available
-			sess, _ := m.store.Get(sessionID)
-			if sess != nil {
-				sess.Status = string(provider.SessionStatusRunning)
-				return sess, nil
-			}
-			// Not in DB but active — return minimal info
-			return &provider.Session{
-				ID:         sessionID,
-				ProviderID: p.Name(),
-				ThreadID:   sessionID,
-				Status:     string(provider.SessionStatusRunning),
-			}, nil
-		}
-	}
-
-	// Not active in any provider — check DB for metadata
 	sess, err := m.store.Get(sessionID)
 	if err != nil {
 		return nil, err
 	}
+
+	providerName := ""
 	if sess != nil {
-		sess.Status = string(provider.SessionStatusStopped)
-		return sess, nil
+		providerName = sess.ProviderID
+	}
+
+	if p := m.activeProviderForSession(sessionID, providerName); p != nil {
+		if sess != nil {
+			sess.Status = string(provider.SessionStatusRunning)
+			return sess, nil
+		}
+		return &provider.Session{
+			ID:         sessionID,
+			ProviderID: p.Name(),
+			ThreadID:   sessionID,
+			Status:     string(provider.SessionStatusRunning),
+		}, nil
+	}
+
+	if sess != nil {
+		if ps, ok, listErr := m.providerListedSession(ctx, sessionID, sess.ProviderID, ""); listErr != nil {
+			return nil, listErr
+		} else if ok {
+			merged := mergeProviderSessionMetadata(ps, *sess)
+			merged.Status = m.sessionListStatus(merged)
+			return &merged, nil
+		}
+		if deleteErr := m.store.Delete(sessionID); deleteErr != nil {
+			log.Warn("session", "delete stale session failed id=%s: %v", sessionID, deleteErr)
+		}
 	}
 
 	return nil, nil
 }
 
 // ListSessions returns sessions for a project. Provider is source of truth.
-func (m *Manager) ListSessions(ctx context.Context, projectID, providerName, workdir string) ([]provider.Session, error) {
+func (m *Manager) ListSessions(ctx context.Context, projectID, providerName, workdir string, archived bool) ([]provider.Session, error) {
 	// Get threads from provider (source of truth)
 	var providerSessions []provider.Session
 	if providerName != "" {
 		p, err := m.registry.Get(providerName)
-		if err == nil {
+		if err != nil {
+			return nil, err
+		}
+		if lister, ok := p.(provider.ThreadListerWithOptions); ok {
+			providerSessions, err = lister.ListThreadsWithOptions(ctx, provider.ThreadListOptions{
+				CWD:      workdir,
+				Limit:    100,
+				Archived: archived,
+			})
+		} else if archived {
+			providerSessions = nil
+		} else {
 			providerSessions, err = p.ListThreads(ctx, workdir, 100)
-			if err != nil {
-				log.Warn("session", "ListSessions: provider query failed: %v", err)
-			}
+		}
+		if err != nil {
+			return nil, fmt.Errorf("list provider sessions: %w", err)
 		}
 	}
 
@@ -190,29 +209,188 @@ func (m *Manager) ListSessions(ctx context.Context, projectID, providerName, wor
 	for _, ps := range providerSessions {
 		seen[ps.ID] = true
 		if db, ok := dbMap[ps.ID]; ok {
-			// Provider thread has DB metadata — merge model etc.
-			ps.Model = firstNonEmpty(db.Model, ps.Model)
-			ps.ProjectID = db.ProjectID
-			ps.Purpose = db.Purpose
-			ps.Workdir = firstNonEmpty(ps.Workdir, db.Workdir)
-			ps.ApprovalPolicy = firstNonEmpty(ps.ApprovalPolicy, db.ApprovalPolicy)
-			ps.SandboxMode = firstNonEmpty(ps.SandboxMode, db.SandboxMode)
-			ps.Config = db.Config
+			ps = mergeProviderSessionMetadata(ps, db)
 		} else {
 			ps.ProjectID = projectID
+		}
+		if archived {
+			ps.Status = string(provider.SessionStatusStopped)
+		} else {
+			ps.Status = m.sessionListStatus(ps)
 		}
 		result = append(result, ps)
 	}
 
-	// Add DB sessions not in provider (stopped, not loaded)
-	for _, db := range dbSessions {
-		if !seen[db.ID] {
-			db.Status = string(provider.SessionStatusStopped)
-			result = append(result, db)
+	// Add only DB sessions that the provider still holds active in memory. DB
+	// rows not returned by provider history and not active are stale metadata.
+	if !archived {
+		for _, db := range dbSessions {
+			if !seen[db.ID] && m.activeProviderForSession(db.ID, db.ProviderID) != nil {
+				db.Status = m.sessionListStatus(db)
+				result = append(result, db)
+			}
 		}
 	}
 
 	return result, nil
+}
+
+func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) error {
+	sess, err := m.store.Get(sessionID)
+	if err != nil {
+		return err
+	}
+	providerName := ""
+	if sess != nil {
+		providerName = sess.ProviderID
+	}
+	p := m.activeProviderForSession(sessionID, providerName)
+	if p == nil && providerName != "" {
+		p, err = m.registry.Get(providerName)
+		if err != nil {
+			return err
+		}
+	}
+	if p == nil {
+		return fmt.Errorf("session %s not found", sessionID)
+	}
+	archiver, ok := p.(provider.ThreadArchiver)
+	if !ok {
+		return fmt.Errorf("%s does not support archive", p.Name())
+	}
+	if err := archiver.ArchiveSession(ctx, sessionID); err != nil {
+		return err
+	}
+	if deleteErr := m.store.Delete(sessionID); deleteErr != nil {
+		log.Warn("session", "delete archived session metadata failed id=%s: %v", sessionID, deleteErr)
+	}
+	return nil
+}
+
+func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (*provider.Session, error) {
+	p, providerName, err := m.providerForArchivedOperation(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	archiver, ok := p.(provider.ThreadArchiver)
+	if !ok {
+		return nil, fmt.Errorf("%s does not support unarchive", p.Name())
+	}
+	session, err := archiver.UnarchiveSession(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	if session == nil {
+		session = &provider.Session{ID: sessionID, ProviderID: providerName, ThreadID: sessionID}
+	}
+	if session.ProviderID == "" {
+		session.ProviderID = providerName
+	}
+	if session.ID == "" {
+		session.ID = sessionID
+	}
+	if session.ThreadID == "" {
+		session.ThreadID = session.ID
+	}
+	session.ArchivedAt = nil
+	if err := m.store.Save(session); err != nil {
+		log.Error("session", "save unarchived session failed id=%s: %v", session.ID, err)
+	}
+	return session, nil
+}
+
+func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
+	p, _, err := m.providerForArchivedOperation(sessionID)
+	if err != nil {
+		return err
+	}
+	deleter, ok := p.(provider.ThreadDeleter)
+	if !ok {
+		return fmt.Errorf("%s does not support delete", p.Name())
+	}
+	if err := deleter.DeleteSession(ctx, sessionID); err != nil {
+		return err
+	}
+	if deleteErr := m.store.Delete(sessionID); deleteErr != nil {
+		log.Warn("session", "delete session metadata failed id=%s: %v", sessionID, deleteErr)
+	}
+	return nil
+}
+
+func (m *Manager) providerForArchivedOperation(sessionID string) (provider.Provider, string, error) {
+	if sess, err := m.store.Get(sessionID); err != nil {
+		return nil, "", err
+	} else if sess != nil && sess.ProviderID != "" {
+		p, err := m.registry.Get(sess.ProviderID)
+		return p, sess.ProviderID, err
+	}
+	if p := m.activeProviderForSession(sessionID, ""); p != nil {
+		return p, p.Name(), nil
+	}
+	for _, name := range []string{"codex"} {
+		p, err := m.registry.Get(name)
+		if err == nil {
+			return p, name, nil
+		}
+	}
+	return nil, "", fmt.Errorf("session %s not found", sessionID)
+}
+
+func (m *Manager) providerListedSession(ctx context.Context, sessionID, providerName, workdir string) (provider.Session, bool, error) {
+	if providerName == "" {
+		return provider.Session{}, false, nil
+	}
+	p, err := m.registry.Get(providerName)
+	if err != nil {
+		return provider.Session{}, false, err
+	}
+	sessions, err := p.ListThreads(ctx, workdir, 100)
+	if err != nil {
+		return provider.Session{}, false, fmt.Errorf("list provider sessions: %w", err)
+	}
+	for _, session := range sessions {
+		if session.ID == sessionID {
+			return session, true, nil
+		}
+	}
+	return provider.Session{}, false, nil
+}
+
+func mergeProviderSessionMetadata(ps, db provider.Session) provider.Session {
+	ps.Model = firstNonEmpty(db.Model, ps.Model)
+	ps.ProjectID = db.ProjectID
+	ps.Purpose = db.Purpose
+	ps.Workdir = firstNonEmpty(ps.Workdir, db.Workdir)
+	ps.ApprovalPolicy = firstNonEmpty(ps.ApprovalPolicy, db.ApprovalPolicy)
+	ps.SandboxMode = firstNonEmpty(ps.SandboxMode, db.SandboxMode)
+	ps.Config = db.Config
+	return ps
+}
+
+func (m *Manager) sessionListStatus(session provider.Session) string {
+	if m.activeProviderForSession(session.ID, session.ProviderID) != nil {
+		return string(provider.SessionStatusRunning)
+	}
+	return string(provider.SessionStatusStopped)
+}
+
+func (m *Manager) activeProviderForSession(sessionID, providerName string) provider.Provider {
+	if providerName != "" {
+		p, err := m.registry.Get(providerName)
+		if err == nil {
+			if p.HasSession(sessionID) {
+				return p
+			}
+			return nil
+		}
+	}
+
+	for _, p := range m.registry.ListProviders() {
+		if p.HasSession(sessionID) {
+			return p
+		}
+	}
+	return nil
 }
 
 func firstNonEmpty(values ...string) string {
@@ -257,26 +435,59 @@ func (m *Manager) ResumeSession(ctx context.Context, sessionID string) error {
 	providerName, threadID := "codex", sessionID
 	if sess != nil {
 		providerName = sess.ProviderID
-		threadID = sess.ThreadID
+		if sess.ThreadID != "" {
+			threadID = sess.ThreadID
+		}
 	}
 
 	p, err := m.registry.Get(providerName)
 	if err != nil {
 		return err
 	}
+	providerSession, hasProviderSession, err := m.providerListedSession(ctx, sessionID, providerName, "")
+	if err != nil {
+		return err
+	}
+	if hasProviderSession {
+		if sess != nil {
+			merged := mergeProviderSessionMetadata(providerSession, *sess)
+			sess = &merged
+		} else {
+			providerSession.ProjectID = ""
+			sess = &providerSession
+		}
+		if sess.ProviderID == "" {
+			sess.ProviderID = providerName
+		}
+		if sess.ThreadID == "" {
+			sess.ThreadID = threadID
+		}
+	}
 
 	if err := p.ResumeSession(ctx, sessionID, threadID); err != nil {
+		if providerSessionMissing(err) {
+			if deleteErr := m.store.Delete(sessionID); deleteErr != nil {
+				log.Warn("session", "delete stale session failed id=%s: %v", sessionID, deleteErr)
+			}
+			return fmt.Errorf("session %s not found in provider: %w", sessionID, err)
+		}
 		return fmt.Errorf("resume failed: %w", err)
+	}
+	if updater, ok := p.(provider.SessionMetadataUpdater); ok && sess != nil {
+		updater.UpdateSessionMetadata(*sess)
 	}
 
 	// Save to DB if not already there
 	if sess == nil {
-		m.store.Save(&provider.Session{
+		sess = &provider.Session{
 			ID:         sessionID,
 			ProviderID: providerName,
 			ThreadID:   threadID,
 			ProjectID:  "",
-		})
+		}
+	}
+	if err := m.store.Save(sess); err != nil {
+		log.Warn("session", "ResumeSession: store.Save(%s) error: %v", sessionID, err)
 	}
 
 	// Start forwarding live events
@@ -286,11 +497,23 @@ func (m *Manager) ResumeSession(ctx context.Context, sessionID string) error {
 	return nil
 }
 
+func providerSessionMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "not found") ||
+		strings.Contains(msg, "no rollout found")
+}
+
 // SendInput sends input to a session. Auto-resumes if needed.
 func (m *Manager) SendInput(ctx context.Context, sessionID string, input provider.SendInputRequest) error {
 	// Try active provider first
 	for _, p := range m.registry.ListProviders() {
 		if p.HasSession(sessionID) {
+			if err := m.updateProviderSessionMetadata(ctx, p, sessionID); err != nil {
+				return err
+			}
 			return p.SendInput(ctx, sessionID, input)
 		}
 	}
@@ -308,6 +531,30 @@ func (m *Manager) SendInput(ctx context.Context, sessionID string, input provide
 	}
 
 	return fmt.Errorf("session %s not found after resume", sessionID)
+}
+
+func (m *Manager) updateProviderSessionMetadata(ctx context.Context, p provider.Provider, sessionID string) error {
+	updater, ok := p.(provider.SessionMetadataUpdater)
+	if !ok {
+		return nil
+	}
+	sess, _ := m.store.Get(sessionID)
+	if sess == nil {
+		return nil
+	}
+	providerSession, ok, err := m.providerListedSession(ctx, sessionID, sess.ProviderID, "")
+	if err != nil {
+		return err
+	}
+	if ok {
+		merged := mergeProviderSessionMetadata(providerSession, *sess)
+		sess = &merged
+		if saveErr := m.store.Save(sess); saveErr != nil {
+			log.Warn("session", "update provider metadata: store.Save(%s) error: %v", sessionID, saveErr)
+		}
+	}
+	updater.UpdateSessionMetadata(*sess)
+	return nil
 }
 
 // InterruptSession interrupts a running session.
@@ -390,6 +637,9 @@ func (m *Manager) ForkSession(ctx context.Context, sessionID string) (*provider.
 	}
 	if newSession.RunnerType == "" {
 		newSession.RunnerType = "app-server"
+	}
+	if updater, ok := p.(provider.SessionMetadataUpdater); ok {
+		updater.UpdateSessionMetadata(*newSession)
 	}
 
 	if err := m.store.Save(newSession); err != nil {

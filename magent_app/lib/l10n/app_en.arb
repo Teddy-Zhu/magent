@@ -16,6 +16,7 @@
   "back": "Back",
   "copy": "Copy",
   "copied": "Copied to clipboard",
+  "more": "More",
   "loading": "Loading...",
   "error": "Error",
   "noData": "No data",
@@ -188,6 +189,22 @@
 
   "sessionsEmptyYet": "No sessions yet",
   "sessionsEmptySub": "Start a new AI coding session",
+  "sessionsActive": "Active",
+  "sessionsArchived": "Archived",
+  "sessionsArchivedEmpty": "No archived sessions",
+  "sessionsArchivedEmptySub": "Archived sessions will appear here",
+  "sessionArchive": "Archive",
+  "sessionUnarchive": "Unarchive",
+  "sessionArchiveFailed": "Archive failed",
+  "sessionUnarchiveFailed": "Unarchive failed",
+  "sessionDeleteTitle": "Delete session",
+  "sessionDeleteConfirm": "Delete \"{title}\"? This removes the local Codex history JSONL and cannot be undone.",
+  "@sessionDeleteConfirm": {
+    "placeholders": {
+      "title": {}
+    }
+  },
+  "sessionDeleteFailed": "Delete failed",
   "sessionPurposeAiCommit": "AI commit",
   "sessionsLoadMore": "{count} older sessions hidden. Tap to load.",
   "@sessionsLoadMore": {
@@ -299,9 +316,9 @@
   },
   "chatTemplatesTooltip": "History and templates",
   "chatSkillsTooltip": "Use skill",
-  "chatFilesTooltip": "Reference workspace file",
+  "chatFilesTooltip": "Reference workspace path",
   "chatChooseSkill": "Choose skill",
-  "chatChooseWorkspaceFile": "Choose workspace file",
+  "chatChooseWorkspaceFile": "Choose workspace file or folder",
   "chatCollapsedEvents": "{count} older messages hidden",
   "@chatCollapsedEvents": {
     "placeholders": {

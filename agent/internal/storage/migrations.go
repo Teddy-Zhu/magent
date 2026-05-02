@@ -27,7 +27,8 @@ func (s *SQLite) migrate() error {
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			exited_at INTEGER
+			exited_at INTEGER,
+			archived_at INTEGER
 		);
 
 		CREATE TABLE IF NOT EXISTS audit_log (
@@ -83,6 +84,7 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 	hasApprovalMode := false
 	hasApprovalPolicy := false
 	hasPurpose := false
+	hasArchivedAt := false
 	for rows.Next() {
 		var cid int
 		var name, typ string
@@ -105,6 +107,8 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 			hasApprovalPolicy = true
 		case "purpose":
 			hasPurpose = true
+		case "archived_at":
+			hasArchivedAt = true
 		}
 	}
 	if err := rows.Err(); err != nil {
@@ -131,6 +135,10 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 	if hasPurpose {
 		purposeExpr = "purpose"
 	}
+	archivedAtExpr := "NULL"
+	if hasArchivedAt {
+		archivedAtExpr = "archived_at"
+	}
 
 	_, err = s.db.Exec(`
 		CREATE TABLE IF NOT EXISTS sessions_new (
@@ -149,12 +157,13 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 			config TEXT,
 			created_at INTEGER NOT NULL,
 			updated_at INTEGER NOT NULL,
-			exited_at INTEGER
+			exited_at INTEGER,
+			archived_at INTEGER
 		);
 
 		INSERT OR REPLACE INTO sessions_new (
 			id, provider_id, thread_id, project_id, purpose, title, workdir, last_status,
-			runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at
+			runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at, archived_at
 		)
 		SELECT
 			id,
@@ -172,7 +181,8 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 			config,
 			created_at,
 			updated_at,
-			exited_at
+			exited_at,
+			` + archivedAtExpr + `
 		FROM sessions;
 
 		DROP TABLE sessions;

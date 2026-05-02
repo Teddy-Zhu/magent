@@ -51,6 +51,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get copied => '已复制到剪贴板';
 
   @override
+  String get more => '更多';
+
+  @override
   String get loading => '加载中...';
 
   @override
@@ -481,6 +484,41 @@ class AppLocalizationsZh extends AppLocalizations {
   String get sessionsEmptySub => '启动一个新的 AI 编码会话';
 
   @override
+  String get sessionsActive => '活跃';
+
+  @override
+  String get sessionsArchived => '归档';
+
+  @override
+  String get sessionsArchivedEmpty => '暂无归档会话';
+
+  @override
+  String get sessionsArchivedEmptySub => '归档后的会话会显示在这里';
+
+  @override
+  String get sessionArchive => '归档';
+
+  @override
+  String get sessionUnarchive => '取消归档';
+
+  @override
+  String get sessionArchiveFailed => '归档失败';
+
+  @override
+  String get sessionUnarchiveFailed => '取消归档失败';
+
+  @override
+  String get sessionDeleteTitle => '删除会话';
+
+  @override
+  String sessionDeleteConfirm(Object title) {
+    return '确定删除「$title」？这会移除本地 Codex 历史 JSONL，且不可撤销。';
+  }
+
+  @override
+  String get sessionDeleteFailed => '删除失败';
+
+  @override
   String get sessionPurposeAiCommit => 'AI 提交';
 
   @override
@@ -665,13 +703,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatSkillsTooltip => '调用技能';
 
   @override
-  String get chatFilesTooltip => '引用工作区文件';
+  String get chatFilesTooltip => '引用工作区路径';
 
   @override
   String get chatChooseSkill => '选择技能';
 
   @override
-  String get chatChooseWorkspaceFile => '选择工作区文件';
+  String get chatChooseWorkspaceFile => '选择工作区文件或目录';
 
   @override
   String chatCollapsedEvents(int count) {

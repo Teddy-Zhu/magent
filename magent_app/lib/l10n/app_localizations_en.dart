@@ -51,6 +51,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get copied => 'Copied to clipboard';
 
   @override
+  String get more => 'More';
+
+  @override
   String get loading => 'Loading...';
 
   @override
@@ -489,6 +492,41 @@ class AppLocalizationsEn extends AppLocalizations {
   String get sessionsEmptySub => 'Start a new AI coding session';
 
   @override
+  String get sessionsActive => 'Active';
+
+  @override
+  String get sessionsArchived => 'Archived';
+
+  @override
+  String get sessionsArchivedEmpty => 'No archived sessions';
+
+  @override
+  String get sessionsArchivedEmptySub => 'Archived sessions will appear here';
+
+  @override
+  String get sessionArchive => 'Archive';
+
+  @override
+  String get sessionUnarchive => 'Unarchive';
+
+  @override
+  String get sessionArchiveFailed => 'Archive failed';
+
+  @override
+  String get sessionUnarchiveFailed => 'Unarchive failed';
+
+  @override
+  String get sessionDeleteTitle => 'Delete session';
+
+  @override
+  String sessionDeleteConfirm(Object title) {
+    return 'Delete \"$title\"? This removes the local Codex history JSONL and cannot be undone.';
+  }
+
+  @override
+  String get sessionDeleteFailed => 'Delete failed';
+
+  @override
   String get sessionPurposeAiCommit => 'AI commit';
 
   @override
@@ -678,13 +716,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatSkillsTooltip => 'Use skill';
 
   @override
-  String get chatFilesTooltip => 'Reference workspace file';
+  String get chatFilesTooltip => 'Reference workspace path';
 
   @override
   String get chatChooseSkill => 'Choose skill';
 
   @override
-  String get chatChooseWorkspaceFile => 'Choose workspace file';
+  String get chatChooseWorkspaceFile => 'Choose workspace file or folder';
 
   @override
   String chatCollapsedEvents(int count) {

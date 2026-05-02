@@ -188,6 +188,62 @@ func TestHandleNotificationClearsActiveTurnOnTerminalTurnEvents(t *testing.T) {
 	}
 }
 
+func TestHookCompletedBlockedEmitsErrorEvent(t *testing.T) {
+	client := &AppServerClient{
+		events:        make(chan provider.ProviderEvent, 1),
+		activeTurnIDs: make(map[string]string),
+	}
+	client.handleNotification(jsonRPCNotification(t, "hook/completed", map[string]any{
+		"threadId": "thr_1",
+		"turnId":   "turn_1",
+		"run": map[string]any{
+			"id":            "user-prompt-submit:0:/repo/.codex/hooks.json",
+			"status":        "blocked",
+			"statusMessage": "Sending notification",
+			"entries": []any{
+				map[string]any{"kind": "feedback", "text": "missing hook script"},
+			},
+		},
+	}))
+
+	select {
+	case event := <-client.Events():
+		if event.Type != string(provider.EventError) {
+			t.Fatalf("event type = %q, want error", event.Type)
+		}
+		if event.SessionID != "thr_1" {
+			t.Fatalf("session id = %q, want thr_1", event.SessionID)
+		}
+		payload, ok := event.Payload.(map[string]any)
+		if !ok {
+			t.Fatalf("payload = %#v", event.Payload)
+		}
+		if payload["message"] != "missing hook script" {
+			t.Fatalf("message = %v", payload["message"])
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for error event")
+	}
+}
+
+func TestSessionStatusEventClosesOnlySessionTerminalStates(t *testing.T) {
+	openEvent := provider.ProviderEvent{
+		Type:    string(provider.EventSessionStatusChanged),
+		Payload: map[string]any{"status": map[string]any{"type": "completed"}},
+	}
+	if eventClosesSession(openEvent) {
+		t.Fatal("completed turn status should not close an active session")
+	}
+
+	closedEvent := provider.ProviderEvent{
+		Type:    string(provider.EventSessionStatusChanged),
+		Payload: map[string]any{"status": map[string]any{"type": "stopped"}},
+	}
+	if !eventClosesSession(closedEvent) {
+		t.Fatal("stopped session status should close the active session")
+	}
+}
+
 func TestQueuedInputPreservesOrderWhenDrainFindsActiveTurn(t *testing.T) {
 	p := &CodexProvider{queuedInputs: make(map[string][]queuedInput)}
 	p.enqueueInput("session_1", "thread_1", provider.SendInputRequest{Input: "first"})

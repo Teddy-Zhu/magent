@@ -32,7 +32,7 @@ func (c *AppServerClient) handleNotification(msg *protocol.JSONRPCResponse) {
 
 	case "thread/closed":
 		payload := parsePayload(msg.Params)
-		if params, ok := payload.(map[string]any); ok && params["status"] == nil {
+		if params, ok := payload.(map[string]any); ok {
 			params["status"] = map[string]any{"type": string(provider.SessionStatusStopped)}
 			payload = params
 		}
@@ -257,6 +257,17 @@ func (c *AppServerClient) handleNotification(msg *protocol.JSONRPCResponse) {
 			Timestamp: time.Now(),
 		})
 
+	case "hook/completed":
+		payload := parsePayload(msg.Params)
+		if hookRunBlocked(payload) {
+			c.emitEvent(provider.ProviderEvent{
+				Type:      string(provider.EventError),
+				SessionID: sessionIDFromPayload(payload),
+				Payload:   hookErrorPayload(payload),
+				Timestamp: time.Now(),
+			})
+		}
+
 	case "item/commandExecution/requestApproval",
 		"item/fileChange/requestApproval",
 		"item/mcpToolCall/requestApproval":
@@ -318,6 +329,58 @@ func copyThreadContext(dst, src map[string]any) {
 			dst[key] = src[key]
 		}
 	}
+}
+
+func hookRunBlocked(payload any) bool {
+	params, ok := payload.(map[string]any)
+	if !ok {
+		return false
+	}
+	run, ok := params["run"].(map[string]any)
+	if !ok {
+		return false
+	}
+	return run["status"] == "blocked"
+}
+
+func hookErrorPayload(payload any) any {
+	params, ok := payload.(map[string]any)
+	if !ok {
+		return payload
+	}
+	run, _ := params["run"].(map[string]any)
+	message := "Codex hook blocked the turn"
+	if run != nil {
+		if text := hookRunErrorText(run); text != "" {
+			message = text
+		} else if statusMessage, _ := run["statusMessage"].(string); statusMessage != "" {
+			message = statusMessage
+		}
+	}
+	return map[string]any{
+		"threadId": params["threadId"],
+		"turnId":   params["turnId"],
+		"message":  message,
+		"error":    message,
+		"hook":     run,
+	}
+}
+
+func hookRunErrorText(run map[string]any) string {
+	entries, ok := run["entries"].([]any)
+	if !ok {
+		return ""
+	}
+	for _, entry := range entries {
+		m, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		if text, _ := m["text"].(string); text != "" {
+			return text
+		}
+	}
+	return ""
 }
 
 func parsePayload(data json.RawMessage) any {

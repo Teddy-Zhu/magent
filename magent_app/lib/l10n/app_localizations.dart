@@ -182,6 +182,12 @@ abstract class AppLocalizations {
   /// **'Copied to clipboard'**
   String get copied;
 
+  /// No description provided for @more.
+  ///
+  /// In en, this message translates to:
+  /// **'More'**
+  String get more;
+
   /// No description provided for @loading.
   ///
   /// In en, this message translates to:
@@ -1022,6 +1028,72 @@ abstract class AppLocalizations {
   /// **'Start a new AI coding session'**
   String get sessionsEmptySub;
 
+  /// No description provided for @sessionsActive.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get sessionsActive;
+
+  /// No description provided for @sessionsArchived.
+  ///
+  /// In en, this message translates to:
+  /// **'Archived'**
+  String get sessionsArchived;
+
+  /// No description provided for @sessionsArchivedEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'No archived sessions'**
+  String get sessionsArchivedEmpty;
+
+  /// No description provided for @sessionsArchivedEmptySub.
+  ///
+  /// In en, this message translates to:
+  /// **'Archived sessions will appear here'**
+  String get sessionsArchivedEmptySub;
+
+  /// No description provided for @sessionArchive.
+  ///
+  /// In en, this message translates to:
+  /// **'Archive'**
+  String get sessionArchive;
+
+  /// No description provided for @sessionUnarchive.
+  ///
+  /// In en, this message translates to:
+  /// **'Unarchive'**
+  String get sessionUnarchive;
+
+  /// No description provided for @sessionArchiveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Archive failed'**
+  String get sessionArchiveFailed;
+
+  /// No description provided for @sessionUnarchiveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Unarchive failed'**
+  String get sessionUnarchiveFailed;
+
+  /// No description provided for @sessionDeleteTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete session'**
+  String get sessionDeleteTitle;
+
+  /// No description provided for @sessionDeleteConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete \"{title}\"? This removes the local Codex history JSONL and cannot be undone.'**
+  String sessionDeleteConfirm(Object title);
+
+  /// No description provided for @sessionDeleteFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Delete failed'**
+  String get sessionDeleteFailed;
+
   /// No description provided for @sessionPurposeAiCommit.
   ///
   /// In en, this message translates to:
@@ -1361,7 +1433,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatFilesTooltip.
   ///
   /// In en, this message translates to:
-  /// **'Reference workspace file'**
+  /// **'Reference workspace path'**
   String get chatFilesTooltip;
 
   /// No description provided for @chatChooseSkill.
@@ -1373,7 +1445,7 @@ abstract class AppLocalizations {
   /// No description provided for @chatChooseWorkspaceFile.
   ///
   /// In en, this message translates to:
-  /// **'Choose workspace file'**
+  /// **'Choose workspace file or folder'**
   String get chatChooseWorkspaceFile;
 
   /// No description provided for @chatCollapsedEvents.

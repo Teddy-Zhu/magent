@@ -114,6 +114,250 @@ void main() {
     expect(cursor, 'ws:2');
   });
 
+  test('empty reasoning items are ignored', () async {
+    await repo.applyRealtimeEvent({
+      'type': 'session.item_started',
+      'session_id': 's1',
+      'item_id': 'r1',
+      'turn_id': 't1',
+      'created_at': DateTime(2026, 5, 1).toIso8601String(),
+      'data': {
+        'item': {
+          'id': 'r1',
+          'type': 'reasoning',
+          'summary': <dynamic>[],
+          'content': <dynamic>[],
+        },
+      },
+    });
+    await repo.applyRealtimeEvent({
+      'type': 'session.item_completed',
+      'session_id': 's1',
+      'item_id': 'r1',
+      'turn_id': 't1',
+      'created_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+      'data': {
+        'item': {
+          'id': 'r1',
+          'type': 'reasoning',
+          'summary': <dynamic>[],
+          'content': <dynamic>[],
+        },
+      },
+    });
+
+    final items = await db.getItemsBySession('agent-a', 's1');
+
+    expect(items, isEmpty);
+  });
+
+  test('reasoning deltas with text are stored', () async {
+    await repo.applyRealtimeEvent({
+      'type': 'session.reasoning_summary_delta',
+      'session_id': 's1',
+      'item_id': 'r1',
+      'turn_id': 't1',
+      'created_at': DateTime(2026, 5, 1).toIso8601String(),
+      'data': {'delta': 'thinking'},
+    });
+
+    final item = await db.getItem('agent-a', 's1', 'r1');
+
+    expect(item, isNotNull);
+    expect(item!.type, 'reasoning');
+    expect(item.content, contains('thinking'));
+  });
+
+  test('historical command execution keeps provider fields', () async {
+    fakeApi.items = [
+      {
+        'item_id': 'cmd-1',
+        'turn_id': 'turn-1',
+        'index': 1,
+        'type': 'command_execution',
+        'status': 'failed',
+        'content': {
+          'id': 'cmd-1',
+          'type': 'commandExecution',
+          'command': ['go', 'test', './...'],
+          'cwd': '/repo',
+          'status': 'failed',
+          'aggregatedOutput': 'FAIL',
+          'exitCode': 1,
+          'commandActions': [
+            {'type': 'rerun'},
+          ],
+        },
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+      },
+    ];
+
+    await repo.refreshItems('s1');
+    final item = await db.getItem('agent-a', 's1', 'cmd-1');
+
+    expect(item, isNotNull);
+    expect(item!.type, 'command_execution');
+    expect(item.content, contains('"cwd":"/repo"'));
+    expect(item.content, contains('"aggregatedOutput":"FAIL"'));
+    expect(item.content, contains('"output":"FAIL"'));
+    expect(item.content, contains('"exitCode":1'));
+    expect(item.content, contains('"exit_code":1'));
+    expect(item.content, contains('commandActions'));
+  });
+
+  test(
+    'historical sync does not overwrite richer realtime command item',
+    () async {
+      await repo.applyRealtimeEvent({
+        'type': 'session.item_completed',
+        'session_id': 's1',
+        'item_id': 'cmd-1',
+        'turn_id': 'turn-1',
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'data': {
+          'item': {
+            'id': 'cmd-1',
+            'type': 'commandExecution',
+            'command': 'go test ./...',
+            'cwd': '/repo',
+            'status': 'completed',
+            'aggregatedOutput': 'ok',
+            'exitCode': 0,
+          },
+        },
+      });
+      fakeApi.items = [
+        {
+          'item_id': 'cmd-1',
+          'turn_id': 'turn-1',
+          'index': 1,
+          'type': 'command_execution',
+          'status': 'completed',
+          'content': {
+            'id': 'cmd-1',
+            'type': 'commandExecution',
+            'status': 'completed',
+          },
+          'created_at': DateTime(2026, 5, 1).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+        },
+      ];
+
+      await repo.refreshItems('s1');
+      final item = await db.getItem('agent-a', 's1', 'cmd-1');
+
+      expect(item, isNotNull);
+      expect(item!.content, contains('"command":"go test ./..."'));
+      expect(item.content, contains('"cwd":"/repo"'));
+      expect(item.content, contains('"aggregatedOutput":"ok"'));
+      expect(item.content, contains('"output":"ok"'));
+    },
+  );
+
+  test(
+    'refresh items reconciles history even when a cursor was stored',
+    () async {
+      await db.setSyncCursor('agent-a', 'session_items', 's1', 'newer:old');
+      fakeApi.items = [
+        {
+          'item_id': 'cmd-1',
+          'turn_id': 'turn-1',
+          'index': 1,
+          'type': 'command_execution',
+          'status': 'completed',
+          'content': {
+            'id': 'cmd-1',
+            'type': 'commandExecution',
+            'command': 'go test ./...',
+            'aggregatedOutput': 'ok',
+            'exitCode': 0,
+          },
+          'created_at': DateTime(2026, 5, 1).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+        },
+      ];
+
+      await repo.refreshItems('s1', forceFull: true);
+
+      expect(fakeApi.itemRequestCursors, [isNull]);
+      final item = await db.getItem('agent-a', 's1', 'cmd-1');
+      expect(item, isNotNull);
+      expect(item!.content, contains('"command":"go test ./..."'));
+      expect(item.content, contains('"output":"ok"'));
+    },
+  );
+
+  test('refresh items uses stored cursor by default', () async {
+    await db.setSyncCursor('agent-a', 'session_items', 's1', 'newer:old');
+
+    await repo.refreshItems('s1');
+
+    expect(fakeApi.itemRequestCursors, ['newer:old']);
+  });
+
+  test('refresh items skips unchanged cached rows', () async {
+    final createdAt = DateTime(2026, 5, 1);
+    final updatedAt = DateTime(2026, 5, 1, 0, 0, 1);
+    fakeApi.items = [
+      {
+        'item_id': 'msg-1',
+        'turn_id': 'turn-1',
+        'index': 1,
+        'type': 'agent_message',
+        'status': 'completed',
+        'content': {'id': 'msg-1', 'type': 'agentMessage', 'text': 'hello'},
+        'created_at': createdAt.toIso8601String(),
+        'updated_at': updatedAt.toIso8601String(),
+      },
+    ];
+
+    await repo.refreshItems('s1', forceFull: true);
+    final first = await db.getItem('agent-a', 's1', 'msg-1');
+    await repo.refreshItems('s1', forceFull: true);
+    final second = await db.getItem('agent-a', 's1', 'msg-1');
+
+    expect(second, isNotNull);
+    expect(second!.updatedAt, first!.updatedAt);
+    expect(second.content, first.content);
+  });
+
+  test('refresh items ignores timestamp-only provider changes', () async {
+    final createdAt = DateTime(2026, 5, 1);
+    fakeApi.items = [
+      {
+        'item_id': 'msg-1',
+        'turn_id': 'turn-1',
+        'index': 1,
+        'type': 'agent_message',
+        'status': 'completed',
+        'content': {'id': 'msg-1', 'type': 'agentMessage', 'text': 'hello'},
+        'created_at': createdAt.toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+      },
+    ];
+    await repo.refreshItems('s1', forceFull: true);
+    final first = await db.getItem('agent-a', 's1', 'msg-1');
+
+    fakeApi.items = [
+      {
+        'item_id': 'msg-1',
+        'turn_id': 'turn-1',
+        'index': 1,
+        'type': 'agent_message',
+        'status': 'completed',
+        'content': {'id': 'msg-1', 'type': 'agentMessage', 'text': 'hello'},
+        'created_at': createdAt.toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1, 0, 0, 2).toIso8601String(),
+      },
+    ];
+    await repo.refreshItems('s1', forceFull: true);
+    final second = await db.getItem('agent-a', 's1', 'msg-1');
+
+    expect(second, isNotNull);
+    expect(second!.updatedAt, first!.updatedAt);
+  });
+
   test('realtime session status changes update local session row', () async {
     fakeApi.sessions = [
       {
@@ -141,11 +385,56 @@ void main() {
 
     session = await db.getSession('agent-a', 's1');
     expect(session?.status, 'running');
+    final events = await db.getEventsBySession('agent-a', 's1');
+    expect(events, isEmpty);
+  });
+
+  test('active and archived session refreshes reconcile separately', () async {
+    fakeApi.sessions = [
+      {
+        'id': 'active-1',
+        'provider_id': 'codex',
+        'project_id': 'p1',
+        'status': {'type': 'notLoaded'},
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+      },
+    ];
+    await repo.refreshSessions('p1');
+
+    fakeApi.sessions = [
+      {
+        'id': 'archived-1',
+        'provider_id': 'codex',
+        'project_id': 'p1',
+        'status': {'type': 'notLoaded'},
+        'created_at': DateTime(2026, 4, 30).toIso8601String(),
+        'updated_at': DateTime(2026, 4, 30).toIso8601String(),
+      },
+    ];
+    await repo.refreshSessions('p1', archived: true);
+
+    final active = await db.getSessionsByProjectArchived(
+      'agent-a',
+      'p1',
+      archived: false,
+    );
+    final archived = await db.getSessionsByProjectArchived(
+      'agent-a',
+      'p1',
+      archived: true,
+    );
+
+    expect(active.map((s) => s.id), ['active-1']);
+    expect(archived.map((s) => s.id), ['archived-1']);
+    expect(archived.single.archivedAt, isNotNull);
   });
 }
 
 class _FakeSessionApi implements SessionApiLike {
   List<dynamic> sessions = [];
+  List<dynamic> items = [];
+  final List<String?> itemRequestCursors = [];
 
   @override
   Future<void> approve(
@@ -153,6 +442,9 @@ class _FakeSessionApi implements SessionApiLike {
     String approvalId,
     String action,
   ) async {}
+
+  @override
+  Future<void> archive(String sessionId) async {}
 
   @override
   Future<Map<String, dynamic>> createSession({
@@ -180,7 +472,10 @@ class _FakeSessionApi implements SessionApiLike {
     String sessionId, {
     String? cursor,
     int limit = 200,
-  }) async => {'items': <dynamic>[], 'cursor': cursor};
+  }) async {
+    itemRequestCursors.add(cursor);
+    return {'items': items, 'cursor': cursor};
+  }
 
   @override
   Future<Map<String, dynamic>> getSession(String id) async => {'id': id};
@@ -189,7 +484,13 @@ class _FakeSessionApi implements SessionApiLike {
   Future<void> interrupt(String sessionId) async {}
 
   @override
-  Future<List<dynamic>> listSessions(String projectId) async => sessions;
+  Future<List<dynamic>> listSessions(
+    String projectId, {
+    bool archived = false,
+  }) async => sessions;
+
+  @override
+  Future<void> deleteSession(String sessionId) async {}
 
   @override
   Future<void> resume(String sessionId) async {}
@@ -204,4 +505,9 @@ class _FakeSessionApi implements SessionApiLike {
 
   @override
   Future<void> stop(String sessionId) async {}
+
+  @override
+  Future<Map<String, dynamic>> unarchive(String sessionId) async => {
+    'id': sessionId,
+  };
 }

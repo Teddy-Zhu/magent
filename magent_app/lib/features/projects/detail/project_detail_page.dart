@@ -30,6 +30,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
   Map<String, dynamic>? _project;
   List<dynamic> _sessions = [];
   bool _loading = true;
+  bool _showArchivedSessions = false;
   AppApiClient? _api;
   BootstrapRepository? _bootstrap;
   SessionRepository? _repo;
@@ -64,13 +65,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
     );
     _gitRepo = GitRepository(agentId: _api!.agentId, api: _api!.git, db: db);
     _fileRepo = FileRepository(agentId: _api!.agentId, api: _api!.file, db: db);
-    _sessionsSub = _repo!.watchSessions(widget.projectId).listen((sessions) {
-      if (!mounted) return;
-      setState(() {
-        _sessions = sessions;
-        _loading = false;
-      });
-    });
+    _subscribeSessions();
     _connectRealtime();
     // Load saved provider first (fast, local) so UI is ready immediately
     final saved = await _storage.getDefaultProvider();
@@ -91,6 +86,19 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
     });
   }
 
+  void _subscribeSessions() {
+    _sessionsSub?.cancel();
+    _sessionsSub = _repo!
+        .watchSessions(widget.projectId, archived: _showArchivedSessions)
+        .listen((sessions) {
+          if (!mounted) return;
+          setState(() {
+            _sessions = sessions;
+            _loading = false;
+          });
+        });
+  }
+
   Future<void> _loadProject() async {
     if (_bootstrap == null) return;
     try {
@@ -103,7 +111,10 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
     if (_repo == null) return;
     try {
       // 1. Load from local DB first (immediate)
-      final localSessions = await _repo!.getSessions(widget.projectId);
+      final localSessions = await _repo!.getSessions(
+        widget.projectId,
+        archived: _showArchivedSessions,
+      );
       if (mounted && localSessions.isNotEmpty) {
         setState(() {
           _sessions = localSessions;
@@ -114,7 +125,10 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
       }
 
       // 2. Sync from API in background
-      await _repo!.refreshSessions(widget.projectId);
+      await _repo!.refreshSessions(
+        widget.projectId,
+        archived: _showArchivedSessions,
+      );
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }
@@ -163,6 +177,17 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
     _storage.setDefaultProvider(provider);
   }
 
+  void _setSessionsArchiveView(bool archived) {
+    if (_showArchivedSessions == archived) return;
+    setState(() {
+      _showArchivedSessions = archived;
+      _sessions = [];
+      _loading = true;
+    });
+    _subscribeSessions();
+    _loadSessions();
+  }
+
   @override
   void dispose() {
     _gitInvalidationSub?.cancel();
@@ -203,10 +228,6 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
                       _loadSessions();
                     },
             ),
-          IconButton(
-            icon: const Icon(Icons.settings),
-            onPressed: () => context.go('/settings'),
-          ),
         ],
       ),
       body: _loading
@@ -324,6 +345,11 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
           projectId: widget.projectId,
           sessions: _visibleSessions,
           api: _api!,
+          archived: _showArchivedSessions,
+          onArchiveModeChanged: _setSessionsArchiveView,
+          onArchiveSession: _archiveSession,
+          onUnarchiveSession: _unarchiveSession,
+          onDeleteSession: _deleteSession,
           onRefresh: _refreshAll,
         );
       case 1:
@@ -363,5 +389,23 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
           return session['purpose']?.toString() != SessionPurposes.aiCommit;
         })
         .toList(growable: false);
+  }
+
+  Future<void> _archiveSession(String sessionId) async {
+    if (_repo == null) return;
+    await _repo!.archiveSession(sessionId);
+    await _loadSessions();
+  }
+
+  Future<void> _unarchiveSession(String sessionId) async {
+    if (_repo == null) return;
+    await _repo!.unarchiveSession(sessionId, projectId: widget.projectId);
+    await _loadSessions();
+  }
+
+  Future<void> _deleteSession(String sessionId) async {
+    if (_repo == null) return;
+    await _repo!.deleteSession(sessionId);
+    await _loadSessions();
   }
 }

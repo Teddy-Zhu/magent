@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -9,10 +10,12 @@ import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/repositories/bootstrap_repository.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
+import 'package:magent_app/core/repositories/git_repository.dart';
 import 'package:magent_app/core/repositories/session_repository.dart';
 import 'package:magent_app/core/session/session_language.dart';
 import 'package:magent_app/core/services/app_settings_service.dart';
 import 'package:magent_app/core/services/message_template_service.dart';
+import 'package:magent_app/features/git/widgets/diff_sheet.dart';
 import 'package:magent_app/features/sessions/widgets/message_template_sheet.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
 
@@ -25,9 +28,26 @@ class ChatPage extends ConsumerStatefulWidget {
   ConsumerState<ChatPage> createState() => _ChatPageState();
 }
 
+class _LinkedFileTarget {
+  final String projectId;
+  final String relativePath;
+
+  const _LinkedFileTarget({
+    required this.projectId,
+    required this.relativePath,
+  });
+}
+
+class _VisibleEventState {
+  final List<Map<String, dynamic>> events;
+  final int hiddenCount;
+
+  const _VisibleEventState({required this.events, required this.hiddenCount});
+}
+
 class _ChatPageState extends ConsumerState<ChatPage> {
-  static const _initialVisibleEventCount = 200;
-  static const _eventPageSize = 200;
+  static const _initialVisibleEventCount = 80;
+  static const _eventPageSize = 80;
   static const _sendModeQueue = 'queue';
   static const _sendModeInterruptThenSend = 'interrupt_then_send';
 
@@ -39,17 +59,23 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   final List<Map<String, dynamic>> _inputItems = [];
   final List<Map<String, dynamic>> _selectedSkills = [];
   final List<Map<String, dynamic>> _skills = [];
+  List<Map<String, dynamic>> _visibleEventsCache = const [];
+  int _hiddenEventCountCache = 0;
   var _disposed = false;
   bool _loading = true;
   bool _resuming = false;
   bool _openAtBottom = true;
   bool _didInitialBottomScroll = false;
+  bool _pendingScrollToBottom = false;
+  bool _pendingJumpToBottom = false;
   bool _turnActive = false;
+  bool _itemsRefreshInFlight = false;
   int _queuedInputCount = 0;
   AppApiClient? _api;
   SessionRepository? _repo;
   BootstrapRepository? _bootstrap;
   FileRepository? _files;
+  GitRepository? _git;
   StreamSubscription<Map<String, dynamic>>? _sessionEventsSub;
   StreamSubscription<List<Map<String, dynamic>>>? _itemsSub;
   StreamSubscription<int>? _itemCountSub;
@@ -67,7 +93,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   /// Session exists but is not loaded in provider — needs resume
   bool get _isIdle {
-    return SessionStatuses.canResume(_session?['status']);
+    if (_session == null && !_loading) return true;
+    final status = SessionStatuses.normalize(_session?['status']);
+    return status == null || SessionStatuses.canResume(status);
   }
 
   @override
@@ -79,7 +107,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Future<void> _init() async {
     _openAtBottom = await _settings.getSessionOpenAtBottom();
     _api = await loadActiveApi(ref);
-    if (_api == null || !_isActive) return;
+    if (_api == null || !_isActive) {
+      if (_isActive) setState(() => _loading = false);
+      return;
+    }
     final db = ref.read(appDatabaseProvider);
     _repo = SessionRepository(
       agentId: _api!.agentId,
@@ -88,17 +119,24 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
     _bootstrap = createBootstrapRepository(ref, _api!);
     _files = FileRepository(agentId: _api!.agentId, api: _api!.file, db: db);
+    _git = GitRepository(agentId: _api!.agentId, api: _api!.git, db: db);
     _subscribeItems();
     _itemCountSub = _repo!.watchItemCount(widget.sessionId).listen((count) {
       if (!_isActive) return;
+      if (_totalEventCount == count) return;
       setState(() => _totalEventCount = count);
     });
     final engine = ref.read(syncEngineProvider);
     engine?.start();
-    await _loadSession();
-    await _refreshSkills();
-    await _loadItems();
-    _connectSessionEvents();
+    unawaited(
+      _loadSession().then((_) {
+        if (_isActive) unawaited(_refreshSkills());
+      }),
+    );
+    unawaited(_connectSessionEvents());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_isActive) unawaited(_loadItems());
+    });
   }
 
   void _subscribeItems() {
@@ -107,21 +145,48 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         .watchItems(widget.sessionId, limit: _visibleEventCount)
         .listen((items) {
           if (!_isActive) return;
-          final shouldAutoScroll = _isNearBottom();
+          final nextEvents = items.map(_itemToEvent).toList(growable: false);
+          final nextVisibleState = _computeVisibleEventState(nextEvents);
+          final eventsChanged = !_eventListsEqualShallow(_events, nextEvents);
+          final visibleEventsChanged = !_eventListsEqualShallow(
+            _visibleEventsCache,
+            nextVisibleState.events,
+          );
+          final nextTurnActive = _itemsContainActiveTurn(items);
+          final turnActiveChanged = _turnActive != nextTurnActive;
+          final loadingChanged = _loading;
+          final shouldInitialBottomScroll =
+              !_didInitialBottomScroll && nextVisibleState.events.isNotEmpty;
+          final shouldAutoScroll = visibleEventsChanged && _isNearBottom();
           if (!_isActive) return;
-          setState(() {
-            _events
-              ..clear()
-              ..addAll(items.map(_itemToEvent));
-            _turnActive = _itemsContainActiveTurn(items);
-            _loading = false;
-          });
-          if (!_didInitialBottomScroll && items.isNotEmpty) {
+          if (eventsChanged ||
+              visibleEventsChanged ||
+              turnActiveChanged ||
+              loadingChanged) {
+            setState(() {
+              if (eventsChanged) {
+                _events
+                  ..clear()
+                  ..addAll(nextEvents);
+              }
+              if (eventsChanged || visibleEventsChanged) {
+                _applyVisibleEventState(nextVisibleState);
+              }
+              if (turnActiveChanged) {
+                _turnActive = nextTurnActive;
+              }
+              if (loadingChanged) {
+                _loading = false;
+              }
+            });
+          }
+          if (shouldInitialBottomScroll) {
             _didInitialBottomScroll = true;
             if (_openAtBottom) {
               _jumpToBottom();
             }
-          } else if (shouldAutoScroll || items.length <= 1) {
+          } else if (visibleEventsChanged &&
+              (shouldAutoScroll || nextVisibleState.events.length <= 1)) {
             _scrollToBottom();
           }
         });
@@ -153,16 +218,33 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       };
       final normalizedType = normalized['type'] as String;
       _applyTurnRuntimeState(normalizedType, normalized['data']);
+      if (!_isRenderableRealtimeEvent(normalizedType)) return;
       if (_isItemProjectionEvent(normalizedType)) {
         _upsertRealtimeItemEvent(normalizedType, event);
         return;
       }
       final shouldAutoScroll = _isNearBottom();
       if (!_isActive) return;
-      setState(() => _events.add(normalized));
+      if (_events.isNotEmpty && _eventEquals(_events.last, normalized)) {
+        return;
+      }
+      setState(() {
+        _events.add(normalized);
+        _recomputeVisibleEventCache();
+      });
       if (shouldAutoScroll) _scrollToBottom();
     });
     await engine.subscribeSession(widget.sessionId);
+  }
+
+  bool _isRenderableRealtimeEvent(String type) {
+    switch (type) {
+      case SessionEventTypes.started:
+      case SessionEventTypes.statusChanged:
+        return false;
+      default:
+        return true;
+    }
   }
 
   bool _isItemProjectionEvent(String type) {
@@ -215,6 +297,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     );
     if (next == null) return;
 
+    final hasSameExisting =
+        existingIndex >= 0 && _eventEquals(_events[existingIndex], next);
+    if (hasSameExisting && !_hasMatchingPendingUserEvent(next)) {
+      return;
+    }
     final shouldAutoScroll = _isNearBottom();
     if (!_isActive) return;
     setState(() {
@@ -227,27 +314,38 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       } else {
         _events.add(next);
       }
+      _recomputeVisibleEventCache();
     });
     if (shouldAutoScroll) _scrollToBottom();
   }
 
+  bool _hasMatchingPendingUserEvent(Map<String, dynamic> next) {
+    final text = _pendingUserMessageText(next);
+    if (text.isEmpty) return false;
+    return _events.any((event) => _isMatchingPendingUserEvent(event, text));
+  }
+
   void _removeMatchingPendingUserEvent(Map<String, dynamic> next) {
-    if (next['type'] != SessionEventTypes.userMessage) return;
-    final itemKey = next['_item_key']?.toString() ?? '';
-    if (itemKey.isEmpty || itemKey.startsWith('local-')) return;
-    final text = _messageText(next['data'], ['content', 'text']).trim();
+    final text = _pendingUserMessageText(next);
     if (text.isEmpty) return;
-    _events.removeWhere((event) {
-      if (event['type'] != SessionEventTypes.userMessage) return false;
-      final pendingKey = event['_item_key']?.toString() ?? '';
-      if (!pendingKey.startsWith('local-')) return false;
-      if (event['status']?.toString() != 'pending') return false;
-      final pendingText = _messageText(event['data'], [
-        'content',
-        'text',
-      ]).trim();
-      return pendingText == text;
-    });
+    _events.removeWhere((event) => _isMatchingPendingUserEvent(event, text));
+  }
+
+  String _pendingUserMessageText(Map<String, dynamic> next) {
+    if (next['type'] != SessionEventTypes.userMessage) return '';
+    final itemKey = next['_item_key']?.toString() ?? '';
+    if (itemKey.isEmpty || itemKey.startsWith('local-')) return '';
+    final text = _messageText(next['data'], ['content', 'text']).trim();
+    return text;
+  }
+
+  bool _isMatchingPendingUserEvent(Map<String, dynamic> event, String text) {
+    if (event['type'] != SessionEventTypes.userMessage) return false;
+    final pendingKey = event['_item_key']?.toString() ?? '';
+    if (!pendingKey.startsWith('local-')) return false;
+    if (event['status']?.toString() != 'pending') return false;
+    final pendingText = _messageText(event['data'], ['content', 'text']).trim();
+    return pendingText == text;
   }
 
   Map<String, dynamic>? _mergedRealtimeItemEvent({
@@ -294,16 +392,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       case SessionEventTypes.itemStarted:
         final item = _eventItemPayload(data);
         renderType = _eventTypeForItem(item, fallback: type);
+        if (renderType.isEmpty) return null;
         nextData.addAll(item);
+        _normalizeEventDataAliases(nextData);
         status = item['status']?.toString() ?? status;
         if (!_hasVisibleItemContent(renderType, nextData)) return null;
       case SessionEventTypes.itemCompleted:
         final item = _eventItemPayload(data);
         renderType = _eventTypeForItem(item, fallback: type);
+        if (renderType.isEmpty) return null;
         nextData
           ..clear()
           ..addAll(item);
+        _normalizeEventDataAliases(nextData);
         status = item['status']?.toString() ?? 'completed';
+        if (!_hasVisibleItemContent(renderType, nextData)) return null;
       case SessionEventTypes.message:
       case SessionEventTypes.userMessage:
       case SessionEventTypes.commandCompleted:
@@ -313,6 +416,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         nextData
           ..clear()
           ..addAll(data);
+        _normalizeEventDataAliases(nextData);
         status = data['status']?.toString() ?? 'completed';
       default:
         return null;
@@ -353,6 +457,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     required String fallback,
   }) {
     switch (SessionItemTypes.normalize(item['type']?.toString() ?? '')) {
+      case 'context_compaction':
+        return '';
       case SessionItemTypes.userMessage:
         return SessionEventTypes.userMessage;
       case SessionItemTypes.agentMessage:
@@ -391,34 +497,125 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   bool _hasVisibleItemContent(String type, Map<String, dynamic> data) {
+    if (_isHiddenSessionItemType(data['type']?.toString()) ||
+        _isHiddenSessionItemType(data['item_type']?.toString())) {
+      return false;
+    }
     switch (type) {
       case SessionEventTypes.message:
       case SessionEventTypes.userMessage:
-        return (data['text']?.toString().isNotEmpty ?? false) ||
-            (data['content']?.toString().isNotEmpty ?? false);
+        return _messageText(data, ['text', 'content']).trim().isNotEmpty;
+      case SessionEventTypes.reasoning:
+      case SessionEventTypes.reasoningSummaryDelta:
+      case SessionEventTypes.reasoningTextDelta:
+      case SessionEventTypes.reasoningSummaryPart:
+        return _reasoningText(data, fallback: '').trim().isNotEmpty;
       case SessionEventTypes.commandCompleted:
       case SessionEventTypes.commandOutputDelta:
-        return data['command'] != null || data['output'] != null;
+        return _commandText(_commandValue(data)).isNotEmpty ||
+            _toolText(_commandOutputValue(data)).isNotEmpty ||
+            _hasMeaningfulData(data, [
+              'cwd',
+              'status',
+              'commandActions',
+              'exit_code',
+              'exitCode',
+              'durationMs',
+            ]);
       case SessionEventTypes.fileWrite:
       case SessionEventTypes.fileChangeOutputDelta:
       case SessionEventTypes.fileRead:
-        return data['path'] != null ||
-            data['changes'] != null ||
-            data['output'] != null;
+        return _hasMeaningfulData(data, [
+          'path',
+          'changes',
+          'output',
+          'diff',
+          'kind',
+          'status',
+          'additions',
+          'deletions',
+          'change_count',
+        ]);
+      case SessionEventTypes.mcpToolCompleted:
+        return _hasMeaningfulData(data, [
+          'server',
+          'tool',
+          'name',
+          'arguments',
+          'result',
+          'error',
+          'output',
+          'status',
+        ]);
       default:
-        return data.isNotEmpty;
+        return data.entries.any((entry) {
+          if (entry.key.startsWith('_')) return false;
+          return _isMeaningfulValue(entry.value);
+        });
     }
+  }
+
+  void _normalizeEventDataAliases(Map<String, dynamic> data) {
+    if (data['output'] == null && data['aggregatedOutput'] != null) {
+      data['output'] = data['aggregatedOutput'];
+    }
+    if (data['output'] == null && data['stdout'] != null) {
+      data['output'] = data['stdout'];
+    }
+    if (data['output'] == null && data['stderr'] != null) {
+      data['output'] = data['stderr'];
+    }
+    if (data['exit_code'] == null && data['exitCode'] != null) {
+      data['exit_code'] = data['exitCode'];
+    }
+    if (data['command'] == null) {
+      for (final key in [
+        'cmd',
+        'cmdline',
+        'argv',
+        'args',
+        'program',
+        'script',
+      ]) {
+        if (_isMeaningfulValue(data[key])) {
+          data['command'] = data[key];
+          break;
+        }
+      }
+    }
+  }
+
+  bool _hasMeaningfulData(Map<String, dynamic> data, List<String> keys) {
+    for (final key in keys) {
+      if (_isMeaningfulValue(data[key])) return true;
+    }
+    return false;
+  }
+
+  bool _isMeaningfulValue(dynamic value) {
+    if (value == null) return false;
+    if (value is String) return value.trim().isNotEmpty;
+    if (value is Iterable) return value.isNotEmpty;
+    if (value is Map) return value.isNotEmpty;
+    return true;
   }
 
   Future<void> _loadSession() async {
     if (_api == null) return;
     try {
       final cached = await _repo?.getCachedSession(widget.sessionId);
+      if (cached != null && mounted) {
+        _replaceSession(cached);
+      }
       final session = await _api!.session.getSession(widget.sessionId);
+      await _repo?.upsertSession(
+        session,
+        projectId:
+            session['project_id']?.toString() ??
+            cached?['project_id']?.toString(),
+      );
       if (mounted) {
-        setState(() {
-          _session = _mergeSession(cached, session);
-        });
+        _replaceSession(_mergeSession(cached, session));
         debugPrint('ChatPage: loaded session status=${_session?['status']}');
       }
     } on DioException catch (e) {
@@ -428,14 +625,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       // If 404, session might only exist in provider — set as idle
       if (e.response?.statusCode == 404 && mounted) {
         final cached = await _repo?.getCachedSession(widget.sessionId);
-        setState(() {
-          _session = {
-            ...?cached,
+        if (cached != null) {
+          _replaceSession({
+            ...cached,
             'id': widget.sessionId,
-            'status': 'stopped',
-            'provider_id': cached?['provider_id'] ?? 'codex',
-          };
-        });
+            'status': SessionStatuses.stopped,
+            'provider_id': cached['provider_id'] ?? 'codex',
+          });
+        } else {
+          _replaceSession({
+            'id': widget.sessionId,
+            'status': SessionStatuses.lost,
+            'provider_id': 'codex',
+          });
+        }
       }
     } catch (e) {
       debugPrint('ChatPage: loadSession error: $e');
@@ -456,68 +659,158 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return merged;
   }
 
+  void _replaceSession(Map<String, dynamic> next) {
+    if (!_isActive) return;
+    if (_sessionUiEquals(_session, next)) {
+      _session = next;
+      return;
+    }
+    setState(() => _session = next);
+  }
+
+  bool _sessionUiEquals(
+    Map<String, dynamic>? current,
+    Map<String, dynamic> next,
+  ) {
+    if (current == null) return false;
+    return _deepValueEquals(
+      _sessionUiSnapshot(current),
+      _sessionUiSnapshot(next),
+    );
+  }
+
+  Map<String, dynamic> _sessionUiSnapshot(Map<String, dynamic> session) {
+    return {
+      for (final key in [
+        'id',
+        'provider_id',
+        'thread_id',
+        'project_id',
+        'purpose',
+        'workdir',
+        'title',
+        'status',
+        'model',
+        'effort',
+        'approval_policy',
+        'sandbox_mode',
+      ])
+        key: session[key],
+    };
+  }
+
   void _applyTurnRuntimeState(String type, Object? data) {
     if (!_isActive) return;
     switch (type) {
+      case SessionEventTypes.started:
+        _applySessionRuntimeStatus(SessionStatuses.running);
+        break;
       case SessionEventTypes.turnStarted:
+        final nextQueuedInputCount = _queuedInputCount > 0
+            ? _queuedInputCount - 1
+            : _queuedInputCount;
+        if (_turnActive && _queuedInputCount == nextQueuedInputCount) return;
         setState(() {
           _turnActive = true;
-          if (_queuedInputCount > 0) _queuedInputCount--;
+          _queuedInputCount = nextQueuedInputCount;
         });
         break;
       case SessionEventTypes.turnCompleted:
+        if (!_turnActive) return;
         setState(() => _turnActive = false);
         break;
       case SessionEventTypes.turnFailed:
       case SessionEventTypes.error:
-      case SessionEventTypes.exited:
+        if (!_turnActive && _queuedInputCount == 0) return;
         setState(() {
           _turnActive = false;
           _queuedInputCount = 0;
         });
         break;
-      case SessionEventTypes.statusChanged:
-        final status = _runtimeStatusType(data);
-        if (status == 'active' ||
-            status == 'inProgress' ||
-            status == 'running') {
-          setState(() => _turnActive = true);
-        } else if (status == 'idle' ||
-            status == 'notLoaded' ||
-            status == 'not_loaded' ||
-            status == 'stopped' ||
-            status == 'closed' ||
-            status == 'completed' ||
-            status == 'systemError' ||
-            status == 'failed' ||
-            status == 'error') {
-          setState(() {
-            _turnActive = false;
-            if (status != 'idle') _queuedInputCount = 0;
-          });
+      case SessionEventTypes.exited:
+        final currentStatus = SessionStatuses.normalize(_session?['status']);
+        if (!_turnActive &&
+            _queuedInputCount == 0 &&
+            currentStatus == SessionStatuses.completed) {
+          return;
         }
+        setState(() {
+          _turnActive = false;
+          _queuedInputCount = 0;
+          _session = {
+            ...?_session,
+            'id': widget.sessionId,
+            'status': SessionStatuses.completed,
+          };
+        });
+        break;
+      case SessionEventTypes.statusChanged:
+        _applySessionRuntimeStatus(_sessionRuntimeStatus(data));
         break;
     }
   }
 
-  String? _runtimeStatusType(Object? data) {
-    if (data is! Map) return null;
+  String? _sessionRuntimeStatus(Object? data) {
+    if (data is! Map) return SessionStatuses.normalize(data);
     final status = data['status'];
     if (status is Map) {
-      return status['type']?.toString() ?? status['status']?.toString();
+      return SessionStatuses.normalize(
+        status['type']?.toString() ?? status['status']?.toString(),
+      );
     }
-    return status?.toString();
+    return SessionStatuses.normalize(
+      status?.toString() ?? data['type']?.toString(),
+    );
+  }
+
+  void _applySessionRuntimeStatus(String? status) {
+    if (status == null || !_isActive) return;
+    final currentStatus = SessionStatuses.normalize(_session?['status']);
+    final nextTurnActive = status == SessionStatuses.running
+        ? _turnActive
+        : false;
+    final nextQueuedInputCount = status == SessionStatuses.running
+        ? _queuedInputCount
+        : 0;
+    if (currentStatus == status &&
+        _turnActive == nextTurnActive &&
+        _queuedInputCount == nextQueuedInputCount) {
+      return;
+    }
+    setState(() {
+      _session = {...?_session, 'id': widget.sessionId, 'status': status};
+      if (status != SessionStatuses.running) {
+        _turnActive = false;
+        _queuedInputCount = 0;
+      }
+    });
   }
 
   Future<void> _loadItems() async {
-    if (_repo == null) return;
+    if (_repo == null || _itemsRefreshInFlight) return;
+    _itemsRefreshInFlight = true;
     try {
-      await _repo!.getItems(widget.sessionId, limit: _visibleEventCount);
       await _repo!.refreshItems(widget.sessionId);
-      if (mounted) setState(() => _loading = false);
+      if (mounted && _loading) setState(() => _loading = false);
     } catch (e) {
       debugPrint('ChatPage: loadEvents error: $e');
-      if (mounted) setState(() => _loading = false);
+      if (mounted && _loading) setState(() => _loading = false);
+    } finally {
+      _itemsRefreshInFlight = false;
+    }
+  }
+
+  Future<void> _refreshItemsFull() async {
+    if (_repo == null || _itemsRefreshInFlight) return;
+    _itemsRefreshInFlight = true;
+    try {
+      await _repo!.refreshItems(widget.sessionId, forceFull: true);
+      if (mounted && _loading) setState(() => _loading = false);
+    } catch (e) {
+      debugPrint('ChatPage: refreshEvents error: $e');
+      if (mounted && _loading) setState(() => _loading = false);
+    } finally {
+      _itemsRefreshInFlight = false;
     }
   }
 
@@ -588,6 +881,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final errCode = e.response?.data?['error']?['code'] as String?;
       if (errCode == 'SESSION_NOT_FOUND') {
         _restoreInputDraft(previousInput, previousItems, previousSkills);
+        await _repo?.deleteCachedSession(widget.sessionId);
         _showSessionLostDialog();
       } else {
         _restoreInputDraft(previousInput, previousItems, previousSkills);
@@ -711,6 +1005,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (!mounted) return;
       final errCode = e.response?.data?['error']?['code'] as String?;
       if (errCode == 'SESSION_NOT_FOUND') {
+        await _repo?.deleteCachedSession(widget.sessionId);
         _showSessionLostDialog();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -749,7 +1044,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     try {
       await _api!.session.interrupt(widget.sessionId);
       if (mounted) {
-        setState(() => _turnActive = false);
+        if (_turnActive) setState(() => _turnActive = false);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(AppLocalizations.of(context)!.chatInterruptSent),
@@ -813,9 +1108,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     try {
       await _api!.session.stop(widget.sessionId);
       if (mounted) {
-        setState(() {
-          _session = {...?_session, 'status': 'stopped'};
-        });
+        _applySessionRuntimeStatus(SessionStatuses.stopped);
         ScaffoldMessenger.of(
           context,
         ).showSnackBar(SnackBar(content: Text(l10n.chatSessionStopped)));
@@ -859,11 +1152,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   void _scrollToBottom() {
+    if (_pendingScrollToBottom || _pendingJumpToBottom) return;
+    _pendingScrollToBottom = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_isActive) return;
+      if (!_pendingScrollToBottom || !_isActive) return;
+      _pendingScrollToBottom = false;
       if (_scrollController.hasClients) {
+        final position = _scrollController.position;
+        final target = position.maxScrollExtent;
+        if ((position.pixels - target).abs() < 1) return;
         _scrollController.animateTo(
-          _scrollController.position.maxScrollExtent,
+          target,
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeOut,
         );
@@ -872,10 +1171,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   void _jumpToBottom() {
+    if (_pendingJumpToBottom) return;
+    _pendingScrollToBottom = false;
+    _pendingJumpToBottom = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!_isActive) return;
+      if (!_pendingJumpToBottom || !_isActive) return;
+      _pendingJumpToBottom = false;
       if (_scrollController.hasClients) {
-        _scrollController.jumpTo(_scrollController.position.maxScrollExtent);
+        final position = _scrollController.position;
+        final target = position.maxScrollExtent;
+        if ((position.pixels - target).abs() < 1) return;
+        _scrollController.jumpTo(target);
       }
     });
   }
@@ -888,15 +1194,116 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   List<Map<String, dynamic>> get _visibleEvents {
-    if (_events.length <= _visibleEventCount) return _events;
-    return _events
-        .skip(_events.length - _visibleEventCount)
-        .toList(growable: false);
+    return _visibleEventsCache;
+  }
+
+  _VisibleEventState _computeVisibleEventState(
+    List<Map<String, dynamic>> events,
+  ) {
+    final visible = <Map<String, dynamic>>[];
+    var renderableCount = 0;
+    for (final event in events) {
+      if (!_isVisibleEvent(event)) continue;
+      renderableCount++;
+      visible.add(event);
+      if (visible.length > _visibleEventCount) {
+        visible.removeAt(0);
+      }
+    }
+    final hidden = renderableCount - visible.length;
+    return _VisibleEventState(
+      events: visible,
+      hiddenCount: hidden > 0 ? hidden : 0,
+    );
+  }
+
+  void _applyVisibleEventState(_VisibleEventState state) {
+    _visibleEventsCache = state.events;
+    _hiddenEventCountCache = state.hiddenCount;
+  }
+
+  void _recomputeVisibleEventCache() {
+    _applyVisibleEventState(_computeVisibleEventState(_events));
+  }
+
+  bool _eventListsEqualShallow(
+    List<Map<String, dynamic>> left,
+    List<Map<String, dynamic>> right,
+  ) {
+    if (identical(left, right)) return true;
+    if (left.length != right.length) return false;
+    for (var i = 0; i < left.length; i++) {
+      if (!_eventShallowEquals(left[i], right[i])) return false;
+    }
+    return true;
+  }
+
+  bool _eventListsEqual(
+    List<Map<String, dynamic>> left,
+    List<Map<String, dynamic>> right,
+  ) {
+    if (left.length != right.length) return false;
+    for (var i = 0; i < left.length; i++) {
+      if (!_eventEquals(left[i], right[i])) return false;
+    }
+    return true;
+  }
+
+  bool _eventEquals(Map<String, dynamic> left, Map<String, dynamic> right) {
+    return _deepValueEquals(left, right);
+  }
+
+  bool _eventShallowEquals(
+    Map<String, dynamic> left,
+    Map<String, dynamic> right,
+  ) {
+    if (identical(left, right)) return true;
+    if (left['_item_key'] != right['_item_key']) return false;
+    if (left['type'] != right['type']) return false;
+    if (left['status'] != right['status']) return false;
+    if (left['_item_key'] != null || right['_item_key'] != null) {
+      for (final key in ['_index', '_summary', '_content_sig']) {
+        if (left[key] != right[key]) return false;
+      }
+      return true;
+    }
+    return _deepValueEquals(left['data'], right['data']);
+  }
+
+  bool _deepValueEquals(Object? left, Object? right) {
+    if (identical(left, right)) return true;
+    if (left is Map && right is Map) {
+      if (left.length != right.length) return false;
+      for (final key in left.keys) {
+        if (!right.containsKey(key)) return false;
+        if (!_deepValueEquals(left[key], right[key])) return false;
+      }
+      return true;
+    }
+    if (left is List && right is List) {
+      if (left.length != right.length) return false;
+      for (var i = 0; i < left.length; i++) {
+        if (!_deepValueEquals(left[i], right[i])) return false;
+      }
+      return true;
+    }
+    return left == right;
+  }
+
+  bool _isVisibleEvent(Map<String, dynamic> event) {
+    final type = event['type']?.toString() ?? '';
+    final data = event['data'];
+    if (data is Map) {
+      return _hasVisibleItemContent(type, Map<String, dynamic>.from(data));
+    }
+    return true;
   }
 
   int get _hiddenEventCount {
-    final hidden = _totalEventCount - _events.length;
-    return hidden > 0 ? hidden : 0;
+    if (_totalEventCount > _events.length) {
+      return _totalEventCount - _events.length + _hiddenEventCountCache;
+    }
+    return _hiddenEventCountCache;
   }
 
   void _loadMoreEvents() {
@@ -904,7 +1311,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (!_isActive) return;
     setState(() => _visibleEventCount += _eventPageSize);
     _subscribeItems();
-    _loadItems();
+  }
+
+  String _eventRenderKey(Map<String, dynamic> event, int index) {
+    final itemKey = event['_item_key']?.toString();
+    if (itemKey != null && itemKey.isNotEmpty) return 'item:$itemKey';
+    final data = event['data'];
+    final dataId = data is Map ? data['id']?.toString() : null;
+    final suffix = dataId == null || dataId.isEmpty ? index.toString() : dataId;
+    return '${event['type']}:$suffix';
   }
 
   void _openTemplates() {
@@ -942,6 +1357,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       final config = await _bootstrap!.fetchProviderConfig(providerId);
       final skills = _skillsFromConfig(config);
       if (!mounted) return;
+      if (_eventListsEqual(_skills, skills)) return;
       setState(() {
         _skills
           ..clear()
@@ -980,8 +1396,256 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       file: _files!,
       projectId: projectId,
     );
-    if (selected == null || selected.isEmpty) return;
-    _insertTextToken('@$selected');
+    if (selected == null || selected.path.isEmpty) return;
+    _insertTextToken(_workspacePathToken(selected.path));
+  }
+
+  String _workspacePathToken(String path) {
+    final providerId = _session == null
+        ? null
+        : canonicalProviderId(Map<String, dynamic>.from(_session!));
+    switch (providerId?.toLowerCase()) {
+      case 'codex':
+        return path;
+      case 'claude':
+      default:
+        return '@$path';
+    }
+  }
+
+  Future<void> _openChanges() async {
+    final projectId = await _resolveProjectId();
+    if (!mounted) return;
+    if (projectId == null || projectId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.chatMissingProject),
+        ),
+      );
+      return;
+    }
+    context.push('/git/manage', extra: {'projectId': projectId});
+  }
+
+  Future<void> _openLinkedFileDiff(String? href) async {
+    final targetPath = _pathFromMarkdownHref(href);
+    if (targetPath == null || _git == null) return;
+    final linkTarget = await _resolveLinkedFileTarget(targetPath);
+    if (!mounted) return;
+    if (linkTarget == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(AppLocalizations.of(context)!.chatMissingProject),
+        ),
+      );
+      return;
+    }
+
+    try {
+      final file = await _changedFileForPath(
+        linkTarget.projectId,
+        linkTarget.relativePath,
+      );
+      final staged =
+          file?['staged'] == true ||
+          (file == null &&
+              await _shouldUseStagedDiff(
+                linkTarget.projectId,
+                linkTarget.relativePath,
+              ));
+      if (!mounted) return;
+      DiffSheet.show(
+        context: context,
+        git: _git!,
+        file: _files,
+        projectId: linkTarget.projectId,
+        path: linkTarget.relativePath,
+        diffHash: file?['diff_hash']?.toString() ?? '',
+        isBinary: file?['binary'] == true,
+        staged: staged,
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            localizedErrorMessage(
+              AppLocalizations.of(context)!,
+              e,
+              action: AppLocalizations.of(context)!.gitLoadDiffFailed,
+            ),
+          ),
+        ),
+      );
+    }
+  }
+
+  String? _pathFromMarkdownHref(String? href) {
+    final raw = href?.trim();
+    if (raw == null || raw.isEmpty) return null;
+    final uri = Uri.tryParse(raw);
+    final value = uri == null || !uri.hasScheme
+        ? raw
+        : uri.scheme == 'file'
+        ? uri.toFilePath()
+        : null;
+    if (value == null || value.isEmpty) return null;
+    return _decodeUriText(value).replaceFirst(RegExp(r':\d+$'), '');
+  }
+
+  String _decodeUriText(String value) {
+    try {
+      return Uri.decodeFull(value);
+    } catch (_) {
+      try {
+        return Uri.decodeComponent(value);
+      } catch (_) {
+        return value;
+      }
+    }
+  }
+
+  Future<_LinkedFileTarget?> _resolveLinkedFileTarget(String path) async {
+    final projects = await _loadKnownProjects();
+    final matched = _projectForPath(projects, path);
+    if (matched != null) {
+      final projectId = matched['id']?.toString();
+      final root = matched['path']?.toString();
+      final relativePath = _relativePathForProject(path, root);
+      if (projectId != null &&
+          projectId.isNotEmpty &&
+          relativePath != null &&
+          relativePath.isNotEmpty) {
+        return _LinkedFileTarget(
+          projectId: projectId,
+          relativePath: relativePath,
+        );
+      }
+    }
+
+    final projectId = await _resolveProjectId();
+    if (projectId == null || projectId.isEmpty) return null;
+    final projectRoot = await _resolveProjectRoot(projectId);
+    final relativePath = _relativePathForProject(path, projectRoot);
+    if (relativePath == null || relativePath.isEmpty) return null;
+    return _LinkedFileTarget(projectId: projectId, relativePath: relativePath);
+  }
+
+  Future<List<Map<String, dynamic>>> _loadKnownProjects() async {
+    if (_bootstrap == null) return const [];
+    var projects = await _bootstrap!.getProjects();
+    if (projects.isEmpty) {
+      projects = await _bootstrap!.refreshProjects();
+    }
+    return projects;
+  }
+
+  Map<String, dynamic>? _projectForPath(
+    List<Map<String, dynamic>> projects,
+    String path,
+  ) {
+    final normalizedPath = _normalizePath(path);
+    if (!normalizedPath.startsWith('/')) return null;
+    Map<String, dynamic>? best;
+    var bestLength = -1;
+    for (final project in projects) {
+      final root = _normalizePath(project['path']?.toString());
+      if (root.isEmpty) continue;
+      final rootPrefix = root.endsWith('/') ? root : '$root/';
+      final matches =
+          normalizedPath == root || normalizedPath.startsWith(rootPrefix);
+      if (matches && root.length > bestLength) {
+        best = project;
+        bestLength = root.length;
+      }
+    }
+    return best;
+  }
+
+  Future<Map<String, dynamic>?> _changedFileForPath(
+    String projectId,
+    String relativePath,
+  ) async {
+    final snapshot = await _git!.refreshSnapshot(projectId);
+    return _findChangedFile(snapshot.files, relativePath);
+  }
+
+  Future<bool> _shouldUseStagedDiff(
+    String projectId,
+    String relativePath,
+  ) async {
+    final unstaged = await _git!.getFileDiff(
+      projectId,
+      relativePath,
+      '',
+      offset: 0,
+      limit: 1,
+      staged: false,
+    );
+    if (_diffHasLines(unstaged)) return false;
+    final staged = await _git!.getFileDiff(
+      projectId,
+      relativePath,
+      '',
+      offset: 0,
+      limit: 1,
+      staged: true,
+    );
+    return _diffHasLines(staged);
+  }
+
+  bool _diffHasLines(Map<String, dynamic> diff) {
+    final total = diff['total_lines'];
+    if (total is int && total > 0) return true;
+    final lines = diff['lines'];
+    return lines is List && lines.isNotEmpty;
+  }
+
+  Future<String?> _resolveProjectRoot(String projectId) async {
+    final project = await _bootstrap?.getProject(projectId);
+    final projectPath = project?['path']?.toString();
+    if (projectPath != null && projectPath.isNotEmpty) {
+      return projectPath;
+    }
+    final sessionWorkdir = _session?['workdir']?.toString();
+    if (sessionWorkdir != null && sessionWorkdir.isNotEmpty) {
+      return sessionWorkdir;
+    }
+    final cached = await _repo?.getCachedSession(widget.sessionId);
+    final cachedWorkdir = cached?['workdir']?.toString();
+    if (cachedWorkdir != null && cachedWorkdir.isNotEmpty) {
+      return cachedWorkdir;
+    }
+    return null;
+  }
+
+  String? _relativePathForProject(String path, String? projectRoot) {
+    final normalizedPath = _normalizePath(path);
+    final normalizedRoot = _normalizePath(projectRoot);
+    if (normalizedPath.isEmpty) return null;
+    if (!normalizedPath.startsWith('/')) return normalizedPath;
+    if (normalizedRoot.isEmpty) return null;
+    if (normalizedPath == normalizedRoot) return null;
+    final rootPrefix = normalizedRoot.endsWith('/')
+        ? normalizedRoot
+        : '$normalizedRoot/';
+    if (!normalizedPath.startsWith(rootPrefix)) return null;
+    return normalizedPath.substring(rootPrefix.length);
+  }
+
+  Map<String, dynamic>? _findChangedFile(List<dynamic> files, String path) {
+    final normalizedPath = _normalizePath(path);
+    Map<String, dynamic>? stagedMatch;
+    for (final file in files) {
+      if (file is! Map) continue;
+      final map = Map<String, dynamic>.from(file);
+      if (_normalizePath(_decodeUriText(map['path']?.toString() ?? '')) ==
+          normalizedPath) {
+        if (map['staged'] != true) return map;
+        stagedMatch ??= map;
+      }
+    }
+    return stagedMatch;
   }
 
   Future<String?> _resolveProjectId() async {
@@ -992,7 +1656,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final cachedProjectId = cached?['project_id']?.toString();
     if (cachedProjectId != null && cachedProjectId.isNotEmpty) {
       if (mounted) {
-        setState(() => _session = _mergeSession(_session, cached!));
+        _replaceSession(_mergeSession(_session, cached!));
       }
       return cachedProjectId;
     }
@@ -1007,13 +1671,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     final matched = _projectForWorkdir(projects, workdir);
     final id = matched?['id']?.toString();
     if (id != null && id.isNotEmpty && mounted) {
-      setState(() {
-        _session = {
-          ...?_session,
-          ...?cached,
-          'project_id': id,
-          if (matched?['path'] != null) 'workdir': matched!['path'],
-        };
+      _replaceSession({
+        ...?_session,
+        ...?cached,
+        'project_id': id,
+        if (matched?['path'] != null) 'workdir': matched!['path'],
       });
     }
     return id;
@@ -1112,6 +1774,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Map<String, dynamic> _itemToEvent(Map<String, dynamic> item) {
     final type = SessionItemTypes.normalize(item['type']?.toString() ?? '');
+    if (_isHiddenSessionItemType(type)) {
+      return {'type': '', 'data': const <String, dynamic>{}};
+    }
     final content = item['content'];
     final data = content is Map<String, dynamic>
         ? content
@@ -1122,6 +1787,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (itemKey != null && itemKey.isNotEmpty) event['_item_key'] = itemKey;
       final status = item['status']?.toString();
       if (status != null && status.isNotEmpty) event['status'] = status;
+      for (final entry in {
+        '_index': item['index'],
+        '_summary': item['summary'],
+        '_content_sig': item['content']?.toString(),
+      }.entries) {
+        if (entry.value != null) event[entry.key] = entry.value;
+      }
       return event;
     }
 
@@ -1150,6 +1822,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
   }
 
+  bool _isHiddenSessionItemType(String? type) {
+    if (type == null || type.isEmpty) return false;
+    return SessionItemTypes.normalize(type) == 'context_compaction';
+  }
+
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
@@ -1160,6 +1837,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         : canonicalProviderId(Map<String, dynamic>.from(_session!));
     final visibleEvents = _visibleEvents;
     final hiddenEventCount = _hiddenEventCount;
+    final hasVisibleContent = visibleEvents.isNotEmpty || hiddenEventCount > 0;
 
     return Scaffold(
       appBar: AppBar(
@@ -1191,8 +1869,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.difference_outlined),
+            onPressed: _openChanges,
+            tooltip: l10n.gitChanges,
+          ),
+          IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _loadItems,
+            onPressed: _refreshItemsFull,
             tooltip: l10n.chatRefresh,
           ),
           if (_isRunning)
@@ -1209,11 +1892,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           Expanded(
             child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : _events.isEmpty
+                : !hasVisibleContent
                 ? _buildEmptyState()
                 : ListView.builder(
                     controller: _scrollController,
-                    cacheExtent: 900,
+                    cacheExtent: 360,
+                    addAutomaticKeepAlives: false,
+                    addRepaintBoundaries: true,
                     itemCount:
                         visibleEvents.length + (hiddenEventCount > 0 ? 1 : 0),
                     itemBuilder: (context, index) {
@@ -1226,7 +1911,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                       final eventIndex = hiddenEventCount > 0
                           ? index - 1
                           : index;
-                      return _buildEventWidget(visibleEvents[eventIndex]);
+                      final event = visibleEvents[eventIndex];
+                      return KeyedSubtree(
+                        key: ValueKey(_eventRenderKey(event, eventIndex)),
+                        child: _buildEventWidget(event),
+                      );
                     },
                   ),
           ),
@@ -1431,13 +2120,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       case SessionEventTypes.userMessage:
         return _UserBubble(content: _messageText(data, ['text', 'content']));
       case SessionEventTypes.message:
-        return _MessageBubble(content: _messageText(data, ['text', 'content']));
+        return _MessageBubble(
+          content: _messageText(data, ['text', 'content']),
+          onTapLink: (_, href, _) => _openLinkedFileDiff(href),
+        );
       case SessionEventTypes.messageDelta:
         return _MessageBubble(
           content: _messageText(data, ['delta', 'text', 'content']),
+          onTapLink: (_, href, _) => _openLinkedFileDiff(href),
         );
       case SessionEventTypes.output:
-        return _MessageBubble(content: _messageText(data, ['content', 'text']));
+        return _MessageBubble(
+          content: _messageText(data, ['content', 'text']),
+          onTapLink: (_, href, _) => _openLinkedFileDiff(href),
+        );
       case SessionEventTypes.plan:
       case SessionEventTypes.planDelta:
       case SessionEventTypes.planUpdated:
@@ -1466,10 +2162,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         return _ToolCallCard(
           icon: Icons.terminal,
           title: _commandTitle(
-            data?['command'],
+            _commandValue(data),
             fallback: l10n.chatCommandOutput,
           ),
-          output: _toolText(data?['delta'] ?? data?['output']),
+          output: _toolText(data?['delta'] ?? _commandOutputValue(data)),
           success: true,
         );
       case SessionEventTypes.fileChangeOutputDelta:
@@ -1482,9 +2178,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       case SessionEventTypes.commandCompleted:
         return _ToolCallCard(
           icon: Icons.terminal,
-          title: _commandTitle(data?['command'], fallback: l10n.chatCommand),
-          output: _toolText(data?['output']),
-          success: data?['exit_code'] == 0,
+          title: _commandTitle(_commandValue(data), fallback: l10n.chatCommand),
+          output: _commandCompletedOutput(data),
+          success: _commandSuccess(data),
         );
       case SessionEventTypes.fileWrite:
         return _ToolCallCard(
@@ -1504,10 +2200,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         return _ToolCallCard(
           icon: Icons.extension_outlined,
           title: _toolText(
-            data?['tool'] ?? data?['name'],
+            data?['tool'] ?? data?['name'] ?? data?['server'],
             fallback: 'MCP Tool',
           ),
-          output: _toolText(data?['output'] ?? data?['result']),
+          output: _toolText(
+            data?['output'] ?? data?['result'] ?? data?['error'],
+          ),
           success: data?['error'] == null,
         );
       case SessionEventTypes.turnStarted:
@@ -1559,7 +2257,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ),
         );
       default:
-        return const SizedBox.shrink();
+        return _StructuredInfoCard(
+          icon: Icons.data_object,
+          title: _genericItemTitle(type, data),
+          content: _genericItemContent(data),
+          monospace: true,
+        );
     }
   }
 
@@ -1616,24 +2319,82 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return data.toString();
   }
 
-  String _reasoningText(dynamic data) {
-    if (data is! Map) return '';
-    final summary = data['summary']?.toString();
-    if (summary != null && summary.isNotEmpty) return summary;
-    final content = data['content']?.toString();
-    if (content != null && content.isNotEmpty) return content;
-    final delta = data['delta']?.toString() ?? data['text']?.toString();
-    if (delta != null && delta.isNotEmpty) return delta;
+  String _reasoningText(dynamic data, {String? fallback}) {
+    if (data is! Map) return fallback ?? '';
+    final summary = _messageText(data['summary'], ['text', 'content']);
+    if (summary.isNotEmpty) return summary;
+    final content = _messageText(data['content'], ['text', 'content']);
+    if (content.isNotEmpty) return content;
+    final delta = _messageText(data['delta'] ?? data['text'], [
+      'text',
+      'content',
+      'delta',
+    ]);
+    if (delta.isNotEmpty) return delta;
     final parts = data['summary_parts'];
     if (parts is List && parts.isNotEmpty) {
-      return parts.map((e) => e.toString()).join('\n');
+      final text = parts
+          .map((e) => _messageText(e, ['text', 'content']))
+          .where((text) => text.isNotEmpty)
+          .join('\n');
+      if (text.isNotEmpty) return text;
     }
-    return AppLocalizations.of(context)!.chatReasoningUpdated;
+    return fallback ?? AppLocalizations.of(context)!.chatReasoningUpdated;
   }
 
   String _commandTitle(dynamic command, {required String fallback}) {
     final text = _commandText(command);
     return text.isEmpty ? fallback : text;
+  }
+
+  dynamic _commandValue(dynamic data) {
+    if (data is! Map) return null;
+    for (final key in [
+      'command',
+      'cmd',
+      'cmdline',
+      'argv',
+      'args',
+      'program',
+      'script',
+    ]) {
+      if (_isMeaningfulValue(data[key])) return data[key];
+    }
+    return null;
+  }
+
+  dynamic _commandOutputValue(dynamic data) {
+    if (data is! Map) return null;
+    for (final key in ['output', 'aggregatedOutput', 'stdout', 'stderr']) {
+      if (_isMeaningfulValue(data[key])) return data[key];
+    }
+    return null;
+  }
+
+  String _commandCompletedOutput(dynamic data) {
+    final output = _toolText(_commandOutputValue(data));
+    if (output.isNotEmpty) return output;
+    if (data is! Map) return '';
+    final details = <String>[];
+    final cwd = _toolText(data['cwd']);
+    if (cwd.isNotEmpty) details.add('cwd: $cwd');
+    final status = _toolText(data['status']);
+    if (status.isNotEmpty) details.add('status: $status');
+    final exitCode = data['exit_code'] ?? data['exitCode'];
+    if (exitCode != null) details.add('exit: $exitCode');
+    return details.join('\n');
+  }
+
+  bool _commandSuccess(dynamic data) {
+    if (data is! Map) return true;
+    final exitCode = data['exit_code'] ?? data['exitCode'];
+    if (exitCode == null) {
+      final status = data['status']?.toString();
+      if (status == null || status.isEmpty) return true;
+      return status != 'failed' && status != 'declined';
+    }
+    final parsed = _intValue(exitCode);
+    return parsed == null || parsed == 0;
   }
 
   String _commandText(dynamic command) {
@@ -1681,6 +2442,25 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
     final text = value.toString().trim();
     return text.isEmpty ? fallback : text;
+  }
+
+  String _genericItemTitle(String type, dynamic data) {
+    if (data is Map) {
+      final itemType = _toolText(data['item_type'] ?? data['type']);
+      if (itemType.isNotEmpty) return itemType;
+      final id = _toolText(data['id'] ?? data['item_id'] ?? data['itemId']);
+      if (id.isNotEmpty) return id;
+    }
+    return type.isEmpty ? 'Item' : type;
+  }
+
+  String _genericItemContent(dynamic data) {
+    if (data == null) return '';
+    try {
+      return const JsonEncoder.withIndent('  ').convert(data);
+    } catch (_) {
+      return data.toString();
+    }
   }
 
   String _fileChangeSummary(dynamic data) {
@@ -2027,6 +2807,13 @@ class _SkillPickerSheet extends StatelessWidget {
   }
 }
 
+class _WorkspacePathSelection {
+  final String path;
+  final bool isDir;
+
+  const _WorkspacePathSelection({required this.path, required this.isDir});
+}
+
 class _WorkspaceFilePickerSheet extends StatefulWidget {
   final FileRepository file;
   final String projectId;
@@ -2036,12 +2823,12 @@ class _WorkspaceFilePickerSheet extends StatefulWidget {
     required this.projectId,
   });
 
-  static Future<String?> show(
+  static Future<_WorkspacePathSelection?> show(
     BuildContext context, {
     required FileRepository file,
     required String projectId,
   }) {
-    return showModalBottomSheet<String>(
+    return showModalBottomSheet<_WorkspacePathSelection>(
       context: context,
       isScrollControlled: true,
       builder: (_) =>
@@ -2137,6 +2924,22 @@ class _WorkspaceFilePickerSheetState extends State<_WorkspaceFilePickerSheet> {
                     )
                   : null,
             ),
+            ListTile(
+              leading: const Icon(Icons.folder_open_outlined),
+              title: Text(AppLocalizations.of(context)!.select),
+              subtitle: Text(
+                _path.isEmpty ? '.' : _path,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              onTap: () => Navigator.pop(
+                context,
+                _WorkspacePathSelection(
+                  path: _path.isEmpty ? '.' : _path,
+                  isDir: true,
+                ),
+              ),
+            ),
             if (_loading)
               const Padding(
                 padding: EdgeInsets.all(24),
@@ -2170,10 +2973,31 @@ class _WorkspaceFilePickerSheetState extends State<_WorkspaceFilePickerSheet> {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                       ),
-                      trailing: isDir ? const Icon(Icons.chevron_right) : null,
+                      trailing: isDir
+                          ? Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const Icon(Icons.check),
+                                  tooltip: AppLocalizations.of(context)!.select,
+                                  onPressed: () => Navigator.pop(
+                                    context,
+                                    _WorkspacePathSelection(
+                                      path: path,
+                                      isDir: true,
+                                    ),
+                                  ),
+                                ),
+                                const Icon(Icons.chevron_right),
+                              ],
+                            )
+                          : null,
                       onTap: isDir
                           ? () => _openDir(name)
-                          : () => Navigator.pop(context, path),
+                          : () => Navigator.pop(
+                              context,
+                              _WorkspacePathSelection(path: path, isDir: false),
+                            ),
                     );
                   },
                 ),
@@ -2351,7 +3175,9 @@ class _UserBubble extends StatelessWidget {
 
 class _MessageBubble extends StatelessWidget {
   final String content;
-  const _MessageBubble({required this.content});
+  final MarkdownTapLinkCallback? onTapLink;
+
+  const _MessageBubble({required this.content, this.onTapLink});
 
   @override
   Widget build(BuildContext context) {
@@ -2378,7 +3204,11 @@ class _MessageBubble extends StatelessWidget {
                 ).colorScheme.surfaceContainerHighest,
                 borderRadius: BorderRadius.circular(12),
                 childBuilder: (context, text, collapsed, maxLines) =>
-                    MarkdownBody(data: text, shrinkWrap: true),
+                    MarkdownBody(
+                      data: text,
+                      shrinkWrap: true,
+                      onTapLink: onTapLink,
+                    ),
               ),
             ),
           ),

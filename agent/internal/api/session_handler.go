@@ -4,11 +4,11 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Teddy-Zhu/magent/agent/internal/log"
 	"github.com/Teddy-Zhu/magent/agent/internal/project"
 	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 	"github.com/Teddy-Zhu/magent/agent/internal/session"
+	"github.com/gin-gonic/gin"
 )
 
 type SessionHandler struct {
@@ -79,7 +79,8 @@ func (h *SessionHandler) List(c *gin.Context) {
 		workdir = proj.Path
 	}
 
-	sessions, err := h.manager.ListSessions(c.Request.Context(), projectID, providerName, workdir)
+	archived, _ := strconv.ParseBool(c.DefaultQuery("archived", "false"))
+	sessions, err := h.manager.ListSessions(c.Request.Context(), projectID, providerName, workdir, archived)
 	if err != nil {
 		Fail(c, 500, ErrInternalError, err.Error())
 		return
@@ -101,7 +102,8 @@ func (h *SessionHandler) ListChanges(c *gin.Context) {
 		workdir = proj.Path
 	}
 
-	sessions, err := h.manager.ListSessions(c.Request.Context(), projectID, providerName, workdir)
+	archived, _ := strconv.ParseBool(c.DefaultQuery("archived", "false"))
+	sessions, err := h.manager.ListSessions(c.Request.Context(), projectID, providerName, workdir, archived)
 	if err != nil {
 		Fail(c, 500, ErrInternalError, err.Error())
 		return
@@ -113,6 +115,44 @@ func (h *SessionHandler) ListChanges(c *gin.Context) {
 		"deletes":    []string{},
 		"has_more":   false,
 	})
+}
+
+func (h *SessionHandler) Archive(c *gin.Context) {
+	id := c.Param("id")
+	log.Info("session", "archive id=%s", id)
+	if err := h.manager.ArchiveSession(c.Request.Context(), id); err != nil {
+		log.Error("session", "archive failed id=%s: %v", id, err)
+		Fail(c, 500, ErrInternalError, err.Error())
+		return
+	}
+	OK(c, nil)
+}
+
+func (h *SessionHandler) Unarchive(c *gin.Context) {
+	id := c.Param("id")
+	log.Info("session", "unarchive id=%s", id)
+	sess, err := h.manager.UnarchiveSession(c.Request.Context(), id)
+	if err != nil {
+		log.Error("session", "unarchive failed id=%s: %v", id, err)
+		Fail(c, 500, ErrInternalError, err.Error())
+		return
+	}
+	OK(c, sess)
+}
+
+func (h *SessionHandler) Delete(c *gin.Context) {
+	id := c.Param("id")
+	log.Info("session", "delete id=%s", id)
+	if err := h.manager.DeleteSession(c.Request.Context(), id); err != nil {
+		log.Error("session", "delete failed id=%s: %v", id, err)
+		if isSessionNotFound(err) || strings.Contains(strings.ToLower(err.Error()), "not found") {
+			Fail(c, 404, "SESSION_NOT_FOUND", err.Error())
+		} else {
+			Fail(c, 500, ErrInternalError, err.Error())
+		}
+		return
+	}
+	OK(c, nil)
 }
 
 func (h *SessionHandler) Resume(c *gin.Context) {

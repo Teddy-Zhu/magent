@@ -29,6 +29,29 @@ type Provider interface {
 	Close() error
 }
 
+type SessionMetadataUpdater interface {
+	UpdateSessionMetadata(session Session)
+}
+
+type ThreadListOptions struct {
+	CWD      string
+	Limit    int
+	Archived bool
+}
+
+type ThreadListerWithOptions interface {
+	ListThreadsWithOptions(ctx context.Context, opts ThreadListOptions) ([]Session, error)
+}
+
+type ThreadArchiver interface {
+	ArchiveSession(ctx context.Context, sessionID string) error
+	UnarchiveSession(ctx context.Context, sessionID string) (*Session, error)
+}
+
+type ThreadDeleter interface {
+	DeleteSession(ctx context.Context, sessionID string) error
+}
+
 type ModelInfo struct {
 	ID               string   `json:"id"`
 	Name             string   `json:"name"`
@@ -184,4 +207,5 @@ type Session struct {
 	CreatedAt      time.Time      `json:"created_at"`
 	UpdatedAt      time.Time      `json:"updated_at"`
 	ExitedAt       *time.Time     `json:"exited_at,omitempty"`
+	ArchivedAt     *time.Time     `json:"archived_at,omitempty"`
 }

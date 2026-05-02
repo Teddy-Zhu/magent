@@ -281,10 +281,11 @@ func (c *AppServerClient) StartThread(ctx context.Context, model, cwd, approvalP
 	wireSandbox := codexThreadSandboxMode(sandbox)
 	log.Debug("codex", "thread/start model=%s cwd=%s approval=%s sandbox=%s", model, cwd, wireApprovalPolicy, wireSandbox)
 	result, err := c.call(ctx, "thread/start", map[string]any{
-		"model":          model,
-		"cwd":            cwd,
-		"approvalPolicy": wireApprovalPolicy,
-		"sandbox":        wireSandbox,
+		"model":                  model,
+		"cwd":                    cwd,
+		"approvalPolicy":         wireApprovalPolicy,
+		"sandbox":                wireSandbox,
+		"persistExtendedHistory": true,
 	})
 	if err != nil {
 		return "", err
@@ -313,7 +314,8 @@ func (c *AppServerClient) ForkThread(ctx context.Context, threadID string) (stri
 	}
 	log.Debug("codex", "thread/fork thread=%s", threadID)
 	result, err := c.call(ctx, "thread/fork", map[string]any{
-		"threadId": threadID,
+		"threadId":               threadID,
+		"persistExtendedHistory": true,
 	})
 	if err != nil {
 		return "", err
@@ -490,18 +492,40 @@ type ThreadInfo struct {
 	Name          string       `json:"name"`
 	Ephemeral     bool         `json:"ephemeral"`
 	ModelProvider string       `json:"modelProvider"`
+	CWD           string       `json:"cwd"`
 	Status        ThreadStatus `json:"status"`
 	CreatedAt     int64        `json:"createdAt"`
 	UpdatedAt     int64        `json:"updatedAt"`
 }
 
+type ListThreadsOptions struct {
+	CWD      string
+	Limit    int
+	Archived bool
+}
+
+var codexThreadListSourceKinds = []string{"cli", "vscode", "appServer"}
+
 func (c *AppServerClient) ListThreads(ctx context.Context, cwd string, limit int) ([]ThreadInfo, error) {
-	params := map[string]any{
-		"limit":   limit,
-		"sortKey": "updated_at",
+	return c.ListThreadsWithOptions(ctx, ListThreadsOptions{
+		CWD:   cwd,
+		Limit: limit,
+	})
+}
+
+func (c *AppServerClient) ListThreadsWithOptions(ctx context.Context, opts ListThreadsOptions) ([]ThreadInfo, error) {
+	limit := opts.Limit
+	if limit <= 0 {
+		limit = 100
 	}
-	if cwd != "" {
-		params["cwd"] = cwd
+	params := map[string]any{
+		"limit":       limit,
+		"sortKey":     "updated_at",
+		"archived":    opts.Archived,
+		"sourceKinds": codexThreadListSourceKinds,
+	}
+	if opts.CWD != "" {
+		params["cwd"] = opts.CWD
 	}
 	result, err := c.call(ctx, "thread/list", params)
 	if err != nil {
@@ -515,6 +539,28 @@ func (c *AppServerClient) ListThreads(ctx context.Context, cwd string, limit int
 		log.Error("codex", "thread/list unmarshal error: %v", err)
 	}
 	return resp.Data, nil
+}
+
+func (c *AppServerClient) ArchiveThread(ctx context.Context, threadID string) error {
+	_, err := c.call(ctx, "thread/archive", map[string]any{"threadId": threadID})
+	return err
+}
+
+func (c *AppServerClient) UnarchiveThread(ctx context.Context, threadID string) (*ThreadInfo, error) {
+	result, err := c.call(ctx, "thread/unarchive", map[string]any{"threadId": threadID})
+	if err != nil {
+		return nil, err
+	}
+	var resp struct {
+		Thread ThreadInfo `json:"thread"`
+	}
+	if err := json.Unmarshal(result, &resp); err != nil {
+		return nil, err
+	}
+	if resp.Thread.ID == "" {
+		return nil, nil
+	}
+	return &resp.Thread, nil
 }
 
 type ThreadTurn struct {

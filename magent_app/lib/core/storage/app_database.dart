@@ -7,6 +7,13 @@ import 'package:path/path.dart' as p;
 
 part 'app_database.g.dart';
 
+class SessionWithLastText {
+  final SessionEntry session;
+  final String? lastText;
+
+  const SessionWithLastText({required this.session, this.lastText});
+}
+
 class ProjectEntries extends Table {
   TextColumn get agentId => text().named('agent_id')();
   TextColumn get id => text()();
@@ -457,24 +464,114 @@ class AppDatabase extends _$AppDatabase {
     String agentId,
     String projectId,
   ) {
+    return getSessionsByProjectArchived(agentId, projectId, archived: false);
+  }
+
+  Future<List<SessionEntry>> getSessionsByProjectArchived(
+    String agentId,
+    String projectId, {
+    required bool archived,
+  }) {
     return (select(sessionEntries)
           ..where(
-            (t) => t.agentId.equals(agentId) & t.projectId.equals(projectId),
+            (t) =>
+                t.agentId.equals(agentId) &
+                t.projectId.equals(projectId) &
+                (archived ? t.archivedAt.isNotNull() : t.archivedAt.isNull()),
           )
           ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
         .get();
+  }
+
+  Future<List<SessionWithLastText>> getSessionsWithLastTextByProjectArchived(
+    String agentId,
+    String projectId, {
+    required bool archived,
+  }) async {
+    final rows = await _sessionRowsWithLastTextByProjectArchived(
+      agentId,
+      projectId,
+      archived: archived,
+    ).get();
+    return rows.map(_sessionWithLastTextFromRow).toList(growable: false);
   }
 
   Stream<List<SessionEntry>> watchSessionsByProject(
     String agentId,
     String projectId,
   ) {
+    return watchSessionsByProjectArchived(agentId, projectId, archived: false);
+  }
+
+  Stream<List<SessionEntry>> watchSessionsByProjectArchived(
+    String agentId,
+    String projectId, {
+    required bool archived,
+  }) {
     return (select(sessionEntries)
           ..where(
-            (t) => t.agentId.equals(agentId) & t.projectId.equals(projectId),
+            (t) =>
+                t.agentId.equals(agentId) &
+                t.projectId.equals(projectId) &
+                (archived ? t.archivedAt.isNotNull() : t.archivedAt.isNull()),
           )
           ..orderBy([(t) => OrderingTerm.desc(t.updatedAt)]))
         .watch();
+  }
+
+  Stream<List<SessionWithLastText>> watchSessionsWithLastTextByProjectArchived(
+    String agentId,
+    String projectId, {
+    required bool archived,
+  }) {
+    return _sessionRowsWithLastTextByProjectArchived(
+      agentId,
+      projectId,
+      archived: archived,
+    ).watch().map(
+      (rows) => rows.map(_sessionWithLastTextFromRow).toList(growable: false),
+    );
+  }
+
+  Selectable<QueryRow> _sessionRowsWithLastTextByProjectArchived(
+    String agentId,
+    String projectId, {
+    required bool archived,
+  }) {
+    final archivedClause = archived
+        ? 's.archived_at IS NOT NULL'
+        : 's.archived_at IS NULL';
+    return customSelect(
+      '''
+      SELECT
+        s.*,
+        (
+          SELECT i.summary
+          FROM session_item_entries i
+          WHERE i.agent_id = s.agent_id
+            AND i.session_id = s.id
+            AND i.type IN ('user_message', 'agent_message')
+            AND i.summary IS NOT NULL
+            AND TRIM(i.summary) <> ''
+          ORDER BY i.item_index DESC, i.created_at DESC, i.item_id DESC
+          LIMIT 1
+        ) AS last_text
+      FROM session_entries s
+      WHERE s.agent_id = ?
+        AND s.project_id = ?
+        AND $archivedClause
+      ORDER BY s.updated_at DESC
+      ''',
+      variables: [Variable.withString(agentId), Variable.withString(projectId)],
+      readsFrom: {sessionEntries, sessionItemEntries},
+    );
+  }
+
+  SessionWithLastText _sessionWithLastTextFromRow(QueryRow row) {
+    return SessionWithLastText(
+      session: sessionEntries.map(row.data),
+      lastText: row.read<String?>('last_text'),
+    );
   }
 
   Future<SessionEntry?> getSession(String agentId, String id) {
@@ -499,6 +596,27 @@ class AppDatabase extends _$AppDatabase {
     return (delete(
       sessionEntries,
     )..where((t) => t.agentId.equals(agentId) & t.id.equals(id))).go();
+  }
+
+  Future<void> deleteSessionCache(String agentId, String sessionId) async {
+    await transaction(() async {
+      await deleteEventsBySession(agentId, sessionId);
+      await deleteItemsBySession(agentId, sessionId);
+      await (delete(pendingApprovalEntries)..where(
+            (t) => t.agentId.equals(agentId) & t.sessionId.equals(sessionId),
+          ))
+          .go();
+      await (delete(syncStateEntries)..where(
+            (t) =>
+                t.agentId.equals(agentId) &
+                t.key.equals(sessionId) &
+                (t.scope.equals('session_events') |
+                    t.scope.equals('session_items') |
+                    t.scope.equals('session_ws')),
+          ))
+          .go();
+      await deleteSession(agentId, sessionId);
+    });
   }
 
   // --- Event operations ---

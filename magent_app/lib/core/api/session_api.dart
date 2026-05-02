@@ -38,10 +38,13 @@ class SessionApi implements SessionApiLike {
   }
 
   @override
-  Future<List<dynamic>> listSessions(String projectId) async {
+  Future<List<dynamic>> listSessions(
+    String projectId, {
+    bool archived = false,
+  }) async {
     final resp = await _dio.get(
       '$_apiPrefix/sessions',
-      queryParameters: {'project_id': projectId},
+      queryParameters: {'project_id': projectId, 'archived': archived},
     );
     return resp.data['data'] ?? [];
   }
@@ -76,6 +79,22 @@ class SessionApi implements SessionApiLike {
   @override
   Future<void> stop(String sessionId) async {
     await _dio.post('$_apiPrefix/sessions/$sessionId/stop');
+  }
+
+  @override
+  Future<void> archive(String sessionId) async {
+    await _dio.post('$_apiPrefix/sessions/$sessionId/archive');
+  }
+
+  @override
+  Future<Map<String, dynamic>> unarchive(String sessionId) async {
+    final resp = await _dio.post('$_apiPrefix/sessions/$sessionId/unarchive');
+    return Map<String, dynamic>.from(resp.data['data'] as Map? ?? {});
+  }
+
+  @override
+  Future<void> deleteSession(String sessionId) async {
+    await _dio.delete('$_apiPrefix/sessions/$sessionId');
   }
 
   @override
