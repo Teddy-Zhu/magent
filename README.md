@@ -84,7 +84,7 @@ Provider CLI 需要在运行 Agent 的机器上完成登录或 API Key 配置。
 
 ## 快速开始
 
-### 1. 启动 Go Agent
+### 1. 编译和启动 Go Agent
 
 ```bash
 cd agent
@@ -113,6 +113,110 @@ server:
 ```
 
 然后重启 Agent，并在 App 中使用开发机器的局域网 IP，例如 `http://192.168.1.100:9000`。
+
+## Agent 编译
+
+开发环境本机编译：
+
+```bash
+cd agent
+go build -o magent ./cmd/agent
+./magent version
+```
+
+带版本信息编译：
+
+```bash
+cd agent
+VERSION=v1.0.0
+BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+GIT_COMMIT=$(git rev-parse --short=12 HEAD)
+
+go build \
+  -trimpath \
+  -ldflags "-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME} -X main.gitCommit=${GIT_COMMIT}" \
+  -o magent \
+  ./cmd/agent
+
+./magent version
+```
+
+Linux 发布包编译示例：
+
+```bash
+cd agent
+VERSION=v1.0.0
+BUILD_TIME=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
+GIT_COMMIT=$(git rev-parse --short=12 HEAD)
+
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build \
+  -trimpath \
+  -ldflags "-s -w -X main.version=${VERSION} -X main.buildTime=${BUILD_TIME} -X main.gitCommit=${GIT_COMMIT}" \
+  -o dist/magent \
+  ./cmd/agent
+
+tar -C dist -czf "magent-${VERSION}-linux-amd64.tar.gz" magent
+```
+
+GitHub Actions 中的 Agent Release 目前会自动构建 Linux `amd64` 和 `arm64` 两个包。
+
+## Agent 使用
+
+初始化配置和 Token：
+
+```bash
+cd agent
+./magent init
+```
+
+首次初始化会生成配置文件：
+
+```text
+~/.magent/default.yaml
+```
+
+同时会输出默认 Token。Flutter App 连接 Agent 时需要填写这个 Token。配置文件也可以手动编辑，常用项见下方“Agent 配置”。
+
+启动服务：
+
+```bash
+cd agent
+./magent serve
+```
+
+指定配置文件启动：
+
+```bash
+./magent serve --config /path/to/default.yaml
+```
+
+开启调试日志：
+
+```bash
+./magent serve --log-level debug
+./magent serve --log-levels codex=debug,gitwatcher=off
+```
+
+查看版本信息：
+
+```bash
+./magent version
+```
+
+检查服务状态：
+
+```bash
+curl http://127.0.0.1:9000/healthz
+```
+
+验证鉴权接口：
+
+```bash
+TOKEN="<your-token>"
+curl -H "Authorization: Bearer ${TOKEN}" http://127.0.0.1:9000/api/v1/agent/info
+```
+
+添加项目和创建会话建议通过 Flutter App 操作。Agent 运行机器上需要提前安装并登录对应 Provider CLI；目前推荐使用 `codex`，`claude` 和 `aider` 仍是 PTY 兼容占位能力。
 
 ### 2. 启动 Flutter App
 
