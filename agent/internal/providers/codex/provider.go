@@ -9,11 +9,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/magent/agent/internal/log"
-	"github.com/magent/agent/internal/protocol"
-	"github.com/magent/agent/internal/provider"
-	"github.com/magent/agent/internal/storage"
-	"github.com/magent/agent/internal/ws"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/protocol"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/storage"
+	"github.com/Teddy-Zhu/magent/agent/internal/ws"
 )
 
 type CodexConfig struct {

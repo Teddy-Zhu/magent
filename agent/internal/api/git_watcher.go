@@ -4,9 +4,9 @@ import (
 	"context"
 	"time"
 
-	"github.com/magent/agent/internal/gitservice"
-	"github.com/magent/agent/internal/log"
-	"github.com/magent/agent/internal/project"
+	"github.com/Teddy-Zhu/magent/agent/internal/gitservice"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/project"
 )
 
 func (s *Server) startGitWatchers(ctx context.Context) {

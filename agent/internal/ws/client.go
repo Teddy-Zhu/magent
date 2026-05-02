@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
-	"github.com/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
 )
 
 const (

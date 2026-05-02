@@ -3,8 +3,8 @@ package session
 import (
 	"testing"
 
-	"github.com/magent/agent/internal/provider"
-	"github.com/magent/agent/internal/storage"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/storage"
 )
 
 func TestSessionStoreSavesControlPlaneMetadata(t *testing.T) {

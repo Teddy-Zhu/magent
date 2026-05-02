@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/magent/agent/internal/log"
-	"github.com/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 )
 
 func (p *CodexProvider) Config() provider.ProviderConfig {

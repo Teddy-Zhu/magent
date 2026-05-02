@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/magent/agent/internal/log"
-	"github.com/magent/agent/internal/provider"
-	"github.com/magent/agent/internal/ws"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/ws"
 )
 
 type Manager struct {

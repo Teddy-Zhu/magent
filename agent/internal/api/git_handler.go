@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/magent/agent/internal/gitservice"
-	"github.com/magent/agent/internal/log"
-	"github.com/magent/agent/internal/project"
-	"github.com/magent/agent/internal/provider"
-	"github.com/magent/agent/internal/session"
+	"github.com/Teddy-Zhu/magent/agent/internal/gitservice"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/project"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/session"
 )
 
 type GitHandler struct {

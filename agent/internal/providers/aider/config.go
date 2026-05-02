@@ -1,6 +1,6 @@
 package aider
 
-import "github.com/magent/agent/internal/provider"
+import "github.com/Teddy-Zhu/magent/agent/internal/provider"
 
 func (p *AiderProvider) Config() provider.ProviderConfig {
 	return provider.ProviderConfig{

@@ -39,7 +39,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: ${{ env.GO_VERSION }}
-          cache-dependency-path: agent/go.sum
+          cache-dependency-path: go.sum
 
       - name: Resolve version
         id: version
@@ -64,7 +64,6 @@ jobs:
           echo "git_commit=${GIT_COMMIT}" >> "${GITHUB_OUTPUT}"
 
       - name: Build binary
-        working-directory: agent
         env:
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
@@ -76,7 +75,7 @@ jobs:
             -trimpath \
             -ldflags "-s -w -X main.version=${{ steps.version.outputs.value }} -X main.buildTime=${{ steps.meta.outputs.build_time }} -X main.gitCommit=${{ steps.meta.outputs.git_commit }}" \
             -o "dist/${APP_NAME}" \
-            ./cmd/agent
+            ./agent/cmd/magent
 
       - name: Package artifact
         shell: bash
@@ -85,7 +84,7 @@ jobs:
           PLATFORM="linux-${{ matrix.goarch }}"
           mkdir -p release
           ARCHIVE="${APP_NAME}-${VERSION}-${PLATFORM}.tar.gz"
-          tar -C agent/dist -czf "release/${ARCHIVE}" "${APP_NAME}"
+          tar -C dist -czf "release/${ARCHIVE}" "${APP_NAME}"
           echo "ARCHIVE=${ARCHIVE}" >> "${GITHUB_ENV}"
 
       - name: Upload workflow artifact

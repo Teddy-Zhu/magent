@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/magent/agent/internal/protocol"
-	"github.com/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/protocol"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 )
 
 func TestHandleNotificationMapsCodexEventsToCanonicalEvents(t *testing.T) {

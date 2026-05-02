@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/fsnotify/fsnotify"
-	"github.com/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
 )
 
 type GitWatcher struct {

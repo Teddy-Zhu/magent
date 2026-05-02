@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/magent/agent/internal/gitservice"
-	"github.com/magent/agent/internal/ws"
+	"github.com/Teddy-Zhu/magent/agent/internal/gitservice"
+	"github.com/Teddy-Zhu/magent/agent/internal/ws"
 )
 
 func TestBroadcastGitInvalidatedIsLightweight(t *testing.T) {

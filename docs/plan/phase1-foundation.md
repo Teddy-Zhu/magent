@@ -22,7 +22,7 @@
 
 ```
 agent/
-├── cmd/agent/main.go            # 入口
+├── cmd/magent/main.go            # 入口
 ├── internal/
 │   ├── api/
 │   │   ├── server.go            # HTTP + WS 服务器
@@ -813,7 +813,7 @@ class AgentConnectPage extends StatefulWidget {
 ### 第 1 天：Go 项目初始化
 - [ ] `go mod init`，安装依赖
 - [ ] 配置系统（viper 加载 YAML）
-- [ ] `cmd/agent/main.go` 入口（cobra 命令）
+- [ ] `cmd/magent/main.go` 入口（cobra 命令）
 
 ### 第 2 天：SQLite + 项目模型
 - [ ] SQLite 初始化 + 迁移

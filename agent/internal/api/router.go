@@ -2,8 +2,8 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/magent/agent/internal/log"
-	"github.com/magent/agent/internal/ws"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/ws"
 )
 
 func (s *Server) registerV1Routes(api *gin.RouterGroup) {

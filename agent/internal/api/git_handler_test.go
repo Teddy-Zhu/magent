@@ -7,7 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/magent/agent/internal/gitservice"
+	"github.com/Teddy-Zhu/magent/agent/internal/gitservice"
 )
 
 func TestIsUntrackedPath(t *testing.T) {

@@ -4,8 +4,10 @@
 
 ```
 magent/
+├── go.mod                    # Go module: github.com/Teddy-Zhu/magent
+├── go.sum
 ├── agent/                    # Go Agent 后端
-│   ├── cmd/agent/main.go     # 入口
+│   ├── cmd/magent/main.go     # 入口
 │   ├── internal/
 │   │   ├── api/              # HTTP API + WebSocket
 │   │   │   ├── server.go     # 服务器
@@ -29,8 +31,7 @@ magent/
 │   │   ├── storage/          # SQLite 存储
 │   │   ├── sync/             # 配置同步
 │   │   └── ws/               # WebSocket Hub
-│   ├── configs/default.yaml
-│   └── go.mod
+│   └── configs/default.yaml
 │
 ├── magent_app/               # Flutter App
 │   ├── lib/
@@ -76,13 +77,13 @@ magent/
 
 ```bash
 # 编译
-cd agent && go build ./...
+go build ./agent/...
 
 # 运行
-cd agent && go run ./cmd/agent serve
+go run ./agent/cmd/magent serve
 
 # 初始化配置
-cd agent && go run ./cmd/agent init
+go run ./agent/cmd/magent init
 ```
 
 ### Flutter App

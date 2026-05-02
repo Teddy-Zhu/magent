@@ -4,9 +4,9 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/magent/agent/internal/log"
-	"github.com/magent/agent/internal/protocol"
-	"github.com/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/protocol"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 )
 
 func (c *AppServerClient) handleNotification(msg *protocol.JSONRPCResponse) {

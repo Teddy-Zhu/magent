@@ -1,6 +1,6 @@
 package claude
 
-import "github.com/magent/agent/internal/provider"
+import "github.com/Teddy-Zhu/magent/agent/internal/provider"
 
 func (p *ClaudeProvider) Config() provider.ProviderConfig {
 	return provider.ProviderConfig{

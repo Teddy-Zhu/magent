@@ -5,12 +5,13 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
-	"github.com/magent/agent/internal/api"
-	"github.com/magent/agent/internal/config"
-	"github.com/magent/agent/internal/log"
-	"github.com/magent/agent/internal/storage"
+	"github.com/Teddy-Zhu/magent/agent/internal/api"
+	"github.com/Teddy-Zhu/magent/agent/internal/config"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/storage"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +23,8 @@ var (
 
 func main() {
 	var cfgFile string
+
+	applyBuildInfoDefaults()
 
 	api.SetBuildInfo(api.BuildInfo{
 		Version:   version,
@@ -115,5 +118,32 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
+	}
+}
+
+func applyBuildInfoDefaults() {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return
+	}
+
+	if (version == "" || version == "unknown") && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		version = info.Main.Version
+	}
+
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "vcs.revision":
+			if gitCommit == "" || gitCommit == "unknown" {
+				gitCommit = setting.Value
+				if len(gitCommit) > 12 {
+					gitCommit = gitCommit[:12]
+				}
+			}
+		case "vcs.time":
+			if buildTime == "" || buildTime == "unknown" {
+				buildTime = setting.Value
+			}
+		}
 	}
 }

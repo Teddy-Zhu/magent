@@ -4,8 +4,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/magent/agent/internal/provider"
-	"github.com/magent/agent/internal/runner"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/runner"
 )
 
 func TestAiderArgs(t *testing.T) {

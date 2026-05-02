@@ -2,14 +2,14 @@
 
 ## 项目结构与模块组织
 
-本仓库包含两个主要子项目。`agent/` 是 Go 后端运行时，包含 `cmd/agent/main.go`、`internal/api`、`internal/session`、`internal/gitservice`、`internal/providers` 以及 SQLite 存储。`magent_app/` 是 Flutter 客户端，应用初始化代码位于 `lib/app`，可复用的 API/存储代码位于 `lib/core`，功能页面位于 `lib/features`，共享组件位于 `lib/shared`，本地化文件位于 `lib/l10n`。规划和架构说明位于 `docs/`。
+本仓库包含两个主要子项目。`agent/` 是 Go 后端运行时，包含 `cmd/magent/main.go`、`internal/api`、`internal/session`、`internal/gitservice`、`internal/providers` 以及 SQLite 存储。Go module 位于仓库根目录，module 路径为 `github.com/Teddy-Zhu/magent`。`magent_app/` 是 Flutter 客户端，应用初始化代码位于 `lib/app`，可复用的 API/存储代码位于 `lib/core`，功能页面位于 `lib/features`，共享组件位于 `lib/shared`，本地化文件位于 `lib/l10n`。规划和架构说明位于 `docs/`。
 
 ## 构建、测试与开发命令
 
-- `cd agent && go build ./...`：编译 Go agent。
-- `cd agent && go run ./cmd/agent serve`：在本地运行后端服务。
-- `cd agent && go run ./cmd/agent init`：初始化本地配置和 token 数据。
-- `cd agent && go test ./...`：运行 Go 包测试。
+- `go build ./agent/...`：编译 Go agent。
+- `go run ./agent/cmd/magent serve`：在本地运行后端服务。
+- `go run ./agent/cmd/magent init`：初始化本地配置和 token 数据。
+- `go test ./agent/...`：运行 Go 包测试。
 - `cd magent_app && flutter pub get`：安装 Flutter 依赖。
 - `cd magent_app && flutter run`：运行移动端/桌面端应用。
 - `cd magent_app && flutter analyze`：使用项目 lint 规则运行 Dart 静态分析。

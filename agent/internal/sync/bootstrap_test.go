@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/magent/agent/internal/config"
-	"github.com/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/config"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 )
 
 func TestBootstrapHashIgnoresUpdatedAtAndSortsCollections(t *testing.T) {

@@ -1,6 +1,6 @@
 package codex
 
-import "github.com/magent/agent/internal/provider"
+import "github.com/Teddy-Zhu/magent/agent/internal/provider"
 
 func codexApprovalPolicy(policy string) string {
 	switch policy {

@@ -4,8 +4,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/magent/agent/internal/config"
-	"github.com/magent/agent/internal/log"
+	"github.com/Teddy-Zhu/magent/agent/internal/config"
+	"github.com/Teddy-Zhu/magent/agent/internal/log"
 )
 
 func Auth(cfg config.AuthConfig) gin.HandlerFunc {

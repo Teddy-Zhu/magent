@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/magent/agent/internal/provider"
-	"github.com/magent/agent/internal/storage"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/storage"
 )
 
 type SessionStore struct {

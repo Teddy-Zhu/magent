@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/magent/agent/internal/project"
-	"github.com/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/project"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 )
 
 // 错误码常量

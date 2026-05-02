@@ -9,10 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/magent/agent/internal/config"
-	"github.com/magent/agent/internal/project"
-	"github.com/magent/agent/internal/provider"
-	"github.com/magent/agent/internal/storage"
+	"github.com/Teddy-Zhu/magent/agent/internal/config"
+	"github.com/Teddy-Zhu/magent/agent/internal/project"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/storage"
 )
 
 type ConfigService struct {

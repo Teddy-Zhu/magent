@@ -2,7 +2,7 @@ package api
 
 import (
 	"github.com/gin-gonic/gin"
-	"github.com/magent/agent/internal/sync"
+	"github.com/Teddy-Zhu/magent/agent/internal/sync"
 )
 
 type SyncHandler struct {

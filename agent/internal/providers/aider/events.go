@@ -3,8 +3,8 @@ package aider
 import (
 	"time"
 
-	"github.com/magent/agent/internal/provider"
-	"github.com/magent/agent/internal/runner"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/runner"
 )
 
 func aiderRunnerEvent(sessionID string, event runner.RunnerEvent) (provider.ProviderEvent, bool) {

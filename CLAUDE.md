@@ -7,7 +7,7 @@
 ```
 magent/
 ├── agent/                    # Go Agent 后端 (Go 1.23, Gin + SQLite)
-│   ├── cmd/agent/main.go     # 入口 (cobra: serve / init)
+│   ├── cmd/magent/main.go     # 入口 (cobra: serve / init)
 │   ├── internal/
 │   │   ├── api/              # HTTP API + WebSocket (router.go 定义所有路由)
 │   │   ├── fileservice/      # 文件服务 (hash 缓存, 分页读取)
@@ -52,8 +52,8 @@ magent/
 ```bash
 # Go Agent
 cd agent && go build ./...                    # 编译
-cd agent && go run ./cmd/agent serve          # 运行服务
-cd agent && go run ./cmd/agent init           # 初始化配置/生成 token
+cd agent && go run ./cmd/magent serve          # 运行服务
+cd agent && go run ./cmd/magent init           # 初始化配置/生成 token
 
 # Flutter App
 cd magent_app && flutter pub get              # 安装依赖

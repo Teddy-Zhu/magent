@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/magent/agent/internal/storage"
+	"github.com/Teddy-Zhu/magent/agent/internal/storage"
 )
 
 type AuditLogger struct {

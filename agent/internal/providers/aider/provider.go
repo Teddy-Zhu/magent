@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/magent/agent/internal/provider"
-	"github.com/magent/agent/internal/runner"
+	"github.com/Teddy-Zhu/magent/agent/internal/provider"
+	"github.com/Teddy-Zhu/magent/agent/internal/runner"
 )
 
 type AiderProvider struct {

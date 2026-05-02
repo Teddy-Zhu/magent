@@ -7,7 +7,7 @@
 ### Go Agent（`agent/` 目录）
 
 - [x] 项目结构初始化
-  - `cmd/agent/main.go` - 入口
+  - `cmd/magent/main.go` - 入口
   - `internal/api/` - HTTP API 层
   - `internal/config/` - 配置系统
   - `internal/project/` - 项目管理
@@ -70,7 +70,7 @@
 
 ## 验收标准
 
-1. `cd agent && go run ./cmd/agent serve` 可启动 Agent
+1. `cd agent && go run ./cmd/magent serve` 可启动 Agent
 2. `curl http://localhost:9000/healthz` 返回 JSON
 3. Flutter 可运行并显示 Agent 列表页面
 

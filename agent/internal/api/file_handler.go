@@ -7,8 +7,8 @@ import (
 	"strconv"
 
 	"github.com/gin-gonic/gin"
-	"github.com/magent/agent/internal/fileservice"
-	"github.com/magent/agent/internal/project"
+	"github.com/Teddy-Zhu/magent/agent/internal/fileservice"
+	"github.com/Teddy-Zhu/magent/agent/internal/project"
 )
 
 type FileHandler struct {
