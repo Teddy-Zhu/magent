@@ -90,6 +90,8 @@
   "chatSend": "发送",
   "chatInterrupt": "中断",
   "chatStop": "停止",
+  "chatSyncingTitle": "正在同步对话",
+  "chatSyncingSubtitle": "加载最新消息中...",
   "chatApprove": "批准",
   "chatDeny": "拒绝",
 

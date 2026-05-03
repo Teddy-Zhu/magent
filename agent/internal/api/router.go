@@ -58,6 +58,8 @@ func (s *Server) registerV1Routes(api *gin.RouterGroup) {
 	api.POST("/sessions/:id/rollback", s.sessionHandler.Rollback)
 	api.GET("/sessions/:id/events", s.sessionHandler.GetEvents)
 	api.GET("/sessions/:id/items", s.sessionHandler.GetItems)
+	api.GET("/sessions/:id/items/snapshot", s.sessionHandler.GetItemSnapshot)
+	api.GET("/sessions/:id/items/changes", s.sessionHandler.GetItemChanges)
 	api.POST("/sessions/:id/approvals/:approval_id", s.sessionHandler.ResolveApproval)
 
 	api.GET("/ws", s.handleWebSocket)

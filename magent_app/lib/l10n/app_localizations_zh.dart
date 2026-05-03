@@ -253,6 +253,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatStop => '停止';
 
   @override
+  String get chatSyncingTitle => '正在同步对话';
+
+  @override
+  String get chatSyncingSubtitle => '加载最新消息中...';
+
+  @override
   String get chatApprove => '批准';
 
   @override

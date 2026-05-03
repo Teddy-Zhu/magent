@@ -34,13 +34,23 @@ void main() {
   test('real user message removes matching local pending item', () async {
     await repo.addPendingUserMessage('s1', 'hello');
 
-    await repo.applyRealtimeEvent({
-      'type': 'session.user_message',
-      'session_id': 's1',
-      'item_id': 'real-user-1',
-      'created_at': DateTime(2026, 5, 1).toIso8601String(),
-      'data': {'id': 'real-user-1', 'type': 'userMessage', 'content': 'hello'},
-    });
+    fakeApi.items = [
+      {
+        'item_id': 'real-user-1',
+        'turn_id': 'turn-1',
+        'index': 1,
+        'type': 'user_message',
+        'status': 'completed',
+        'content': {
+          'id': 'real-user-1',
+          'type': 'userMessage',
+          'content': 'hello',
+        },
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+      },
+    ];
+    await repo.refreshItems('s1', forceFull: true);
 
     final items = await db.getItemsBySession('agent-a', 's1');
 
@@ -82,7 +92,7 @@ void main() {
     },
   );
 
-  test('realtime deltas update item projection and ws cursor', () async {
+  test('realtime item deltas are hints and only advance ws cursor', () async {
     final firstApplied = await repo.applyRealtimeEvent({
       'type': 'session.message_delta',
       'session_id': 's1',
@@ -107,12 +117,9 @@ void main() {
     final item = await db.getItem('agent-a', 's1', 'i1');
     final cursor = await repo.getRealtimeCursor('s1');
 
-    expect(firstApplied, isTrue);
-    expect(secondApplied, isTrue);
-    expect(item, isNotNull);
-    expect(item!.type, 'agent_message');
-    expect(item.role, 'assistant');
-    expect(item.content, contains('hello'));
+    expect(firstApplied, isFalse);
+    expect(secondApplied, isFalse);
+    expect(item, isNull);
     expect(cursor, 'ws:2');
   });
 
@@ -131,10 +138,9 @@ void main() {
     final duplicateApplied = await repo.applyRealtimeEvent(event);
 
     final item = await db.getItem('agent-a', 's1', 'i1');
-    expect(firstApplied, isTrue);
+    expect(firstApplied, isFalse);
     expect(duplicateApplied, isFalse);
-    expect(item?.content, contains('hel'));
-    expect(item?.content, isNot(contains('helhel')));
+    expect(item, isNull);
   });
 
   test('lower ws cursor after agent restart is still applied', () async {
@@ -156,8 +162,8 @@ void main() {
     final cursor = await repo.getRealtimeCursor('s1');
     final epoch = await repo.getRealtimeEpoch('s1');
 
-    expect(applied, isTrue);
-    expect(item?.content, contains('new'));
+    expect(applied, isFalse);
+    expect(item, isNull);
     expect(cursor, '1');
     expect(epoch, 'new');
   });
@@ -217,8 +223,8 @@ void main() {
 
     final item = await db.getItem('agent-a', 's1', 'i1');
 
-    expect(applied, isTrue);
-    expect(item?.content, contains('new'));
+    expect(applied, isFalse);
+    expect(item, isNull);
   });
 
   test('delta after completed item from catch-up is dropped', () async {
@@ -255,37 +261,33 @@ void main() {
     expect(cursor, '2');
   });
 
-  test(
-    'plan and diff realtime updates use stable synthetic item ids',
-    () async {
-      final planApplied = await repo.applyRealtimeEvent({
-        'type': 'session.plan_updated',
-        'session_id': 's1',
-        'turn_id': 'turn-1',
-        'created_at': DateTime(2026, 5, 1).toIso8601String(),
-        'data': {
-          'explanation': 'plan',
-          'plan': [
-            {'step': 'one', 'status': 'inProgress'},
-          ],
-        },
-      });
-      final diffApplied = await repo.applyRealtimeEvent({
-        'type': 'session.diff_updated',
-        'session_id': 's1',
-        'turn_id': 'turn-1',
-        'created_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
-        'data': {'summary': 'diff'},
-      });
+  test('plan and diff realtime updates are projection hints', () async {
+    final planApplied = await repo.applyRealtimeEvent({
+      'type': 'session.plan_updated',
+      'session_id': 's1',
+      'turn_id': 'turn-1',
+      'created_at': DateTime(2026, 5, 1).toIso8601String(),
+      'data': {
+        'explanation': 'plan',
+        'plan': [
+          {'step': 'one', 'status': 'inProgress'},
+        ],
+      },
+    });
+    final diffApplied = await repo.applyRealtimeEvent({
+      'type': 'session.diff_updated',
+      'session_id': 's1',
+      'turn_id': 'turn-1',
+      'created_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+      'data': {'summary': 'diff'},
+    });
 
-      final items = await db.getItemsBySession('agent-a', 's1');
+    final items = await db.getItemsBySession('agent-a', 's1');
 
-      expect(planApplied, isTrue);
-      expect(diffApplied, isTrue);
-      expect(items.map((item) => item.itemId), ['plan:turn-1', 'diff:turn-1']);
-      expect(items.map((item) => item.type), ['plan', 'diff']);
-    },
-  );
+    expect(planApplied, isFalse);
+    expect(diffApplied, isFalse);
+    expect(items, isEmpty);
+  });
 
   test('empty reasoning items are ignored', () async {
     await repo.applyRealtimeEvent({
@@ -324,7 +326,7 @@ void main() {
     expect(items, isEmpty);
   });
 
-  test('reasoning deltas with text are stored', () async {
+  test('reasoning deltas are projection hints', () async {
     await repo.applyRealtimeEvent({
       'type': 'session.reasoning_summary_delta',
       'session_id': 's1',
@@ -336,9 +338,7 @@ void main() {
 
     final item = await db.getItem('agent-a', 's1', 'r1');
 
-    expect(item, isNotNull);
-    expect(item!.type, 'reasoning');
-    expect(item.content, contains('thinking'));
+    expect(item, isNull);
   });
 
   test('historical command execution keeps provider fields', () async {
@@ -379,54 +379,46 @@ void main() {
     expect(item.content, contains('commandActions'));
   });
 
-  test(
-    'historical sync does not overwrite richer realtime command item',
-    () async {
-      await repo.applyRealtimeEvent({
-        'type': 'session.item_completed',
-        'session_id': 's1',
+  test('snapshot replaces cached provider item content', () async {
+    await db.insertOrUpdateItem(
+      SessionItemEntriesCompanion.insert(
+        agentId: 'agent-a',
+        sessionId: 's1',
+        itemId: 'cmd-1',
+        type: 'command_execution',
+        status: const Value('completed'),
+        content: const Value(
+          '{"id":"cmd-1","type":"commandExecution","command":"stale"}',
+        ),
+        itemIndex: const Value(1),
+        createdAt: DateTime(2026, 5, 1),
+        updatedAt: DateTime(2026, 5, 1),
+      ),
+    );
+    fakeApi.items = [
+      {
         'item_id': 'cmd-1',
         'turn_id': 'turn-1',
-        'created_at': DateTime(2026, 5, 1).toIso8601String(),
-        'data': {
-          'item': {
-            'id': 'cmd-1',
-            'type': 'commandExecution',
-            'command': 'go test ./...',
-            'cwd': '/repo',
-            'status': 'completed',
-            'aggregatedOutput': 'ok',
-            'exitCode': 0,
-          },
-        },
-      });
-      fakeApi.items = [
-        {
-          'item_id': 'cmd-1',
-          'turn_id': 'turn-1',
-          'index': 1,
-          'type': 'command_execution',
+        'index': 1,
+        'type': 'command_execution',
+        'status': 'completed',
+        'content': {
+          'id': 'cmd-1',
+          'type': 'commandExecution',
           'status': 'completed',
-          'content': {
-            'id': 'cmd-1',
-            'type': 'commandExecution',
-            'status': 'completed',
-          },
-          'created_at': DateTime(2026, 5, 1).toIso8601String(),
-          'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
         },
-      ];
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+      },
+    ];
 
-      await repo.refreshItems('s1');
-      final item = await db.getItem('agent-a', 's1', 'cmd-1');
+    await repo.refreshItems('s1');
+    final item = await db.getItem('agent-a', 's1', 'cmd-1');
 
-      expect(item, isNotNull);
-      expect(item!.content, contains('"command":"go test ./..."'));
-      expect(item.content, contains('"cwd":"/repo"'));
-      expect(item.content, contains('"aggregatedOutput":"ok"'));
-      expect(item.content, contains('"output":"ok"'));
-    },
-  );
+    expect(item, isNotNull);
+    expect(item!.content, isNot(contains('"command":"stale"')));
+    expect(item.content, contains('"status":"completed"'));
+  });
 
   test(
     'refresh items reconciles history even when a cursor was stored',
@@ -461,64 +453,61 @@ void main() {
     },
   );
 
-  test(
-    'refresh items reconciles stored cursor and latest page by default',
-    () async {
-      await db.setSyncCursor('agent-a', 'session_items', 's1', 'newer:old');
-      fakeApi.itemsByCursor['newer:old'] = [
-        {
-          'item_id': 'msg-old',
-          'turn_id': 'turn-1',
-          'index': 1,
-          'type': 'agent_message',
-          'status': 'completed',
-          'content': {'id': 'msg-old', 'type': 'agentMessage', 'text': 'old'},
-          'created_at': DateTime(2026, 5, 1).toIso8601String(),
-          'updated_at': DateTime(2026, 5, 1).toIso8601String(),
-        },
-      ];
-      fakeApi.pageCursors['newer:old'] = 'newer:next';
-      fakeApi.pageHasMore['newer:old'] = true;
-      fakeApi.itemsByCursor['newer:next'] = [
-        {
+  test('delete session cache clears websocket epoch cursor', () async {
+    await db.setSyncCursor('agent-a', 'session_ws', 's1', 'old:24');
+    await db.setSyncCursor('agent-a', 'session_ws_epoch', 's1', 'old');
+    fakeApi.revision = 1;
+    fakeApi.items = [
+      {
+        'item_id': 'msg-1',
+        'turn_id': 'turn-1',
+        'index': 1,
+        'revision': 1,
+        'type': 'agent_message',
+        'status': 'completed',
+        'content': {'id': 'msg-1', 'type': 'agentMessage', 'text': 'hello'},
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+      },
+    ];
+
+    await repo.refreshItems('s1', forceFull: true);
+    await db.deleteSessionCache('agent-a', 's1');
+
+    expect(await repo.getRealtimeCursor('s1'), isNull);
+    expect(await repo.getRealtimeEpoch('s1'), isNull);
+  });
+
+  test('refresh items applies revision changes by default', () async {
+    await db.setSyncState('agent-a', 'session_items', 's1', revision: 1);
+    fakeApi.revision = 2;
+    fakeApi.changes = [
+      {
+        'revision': 2,
+        'op': 'upsert',
+        'item_id': 'msg-next',
+        'item': {
           'item_id': 'msg-next',
           'turn_id': 'turn-2',
           'index': 2,
+          'revision': 2,
           'type': 'agent_message',
           'status': 'completed',
           'content': {'id': 'msg-next', 'type': 'agentMessage', 'text': 'next'},
           'created_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
           'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
         },
-      ];
-      fakeApi.itemsByCursor[null] = [
-        {
-          'item_id': 'msg-latest',
-          'turn_id': 'turn-2',
-          'index': 3,
-          'type': 'agent_message',
-          'status': 'completed',
-          'content': {
-            'id': 'msg-latest',
-            'type': 'agentMessage',
-            'text': 'latest',
-          },
-          'created_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
-          'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
-        },
-      ];
+      },
+    ];
 
-      await repo.refreshItems('s1');
+    await repo.refreshItems('s1');
 
-      expect(fakeApi.itemRequestCursors, ['newer:old', 'newer:next', isNull]);
-      final items = await db.getItemsBySession('agent-a', 's1');
-      expect(items.map((item) => item.itemId), [
-        'msg-old',
-        'msg-next',
-        'msg-latest',
-      ]);
-    },
-  );
+    expect(fakeApi.itemChangeRequestRevisions, [1]);
+    expect(fakeApi.itemChangeRequestReconciles, [true]);
+    final items = await db.getItemsBySession('agent-a', 's1');
+    expect(items.map((item) => item.itemId), ['msg-next']);
+    expect(await repo.getItemRevision('s1'), 2);
+  });
 
   test('refresh items stores codex app-server tool call projections', () async {
     fakeApi.items = [
@@ -797,10 +786,14 @@ void main() {
 class _FakeSessionApi implements SessionApiLike {
   List<dynamic> sessions = [];
   List<dynamic> items = [];
+  List<dynamic> changes = [];
+  int revision = 1;
   final Map<String?, List<dynamic>> itemsByCursor = {};
   final Map<String?, String?> pageCursors = {};
   final Map<String?, bool> pageHasMore = {};
   final List<String?> itemRequestCursors = [];
+  final List<int> itemChangeRequestRevisions = [];
+  final List<bool> itemChangeRequestReconciles = [];
 
   @override
   Future<void> approve(
@@ -844,6 +837,29 @@ class _FakeSessionApi implements SessionApiLike {
       'items': itemsByCursor[cursor] ?? items,
       'cursor': pageCursors.containsKey(cursor) ? pageCursors[cursor] : cursor,
       'has_more': pageHasMore[cursor] ?? false,
+    };
+  }
+
+  @override
+  Future<Map<String, dynamic>> getItemsSnapshot(String sessionId) async {
+    itemRequestCursors.add(null);
+    return {'items': itemsByCursor[null] ?? items, 'revision': revision};
+  }
+
+  @override
+  Future<Map<String, dynamic>> getItemChanges(
+    String sessionId, {
+    required int afterRevision,
+    int limit = 500,
+    bool reconcile = false,
+  }) async {
+    itemChangeRequestRevisions.add(afterRevision);
+    itemChangeRequestReconciles.add(reconcile);
+    return {
+      'changes': changes,
+      'to_revision': revision,
+      'has_more': false,
+      'reset_required': false,
     };
   }
 

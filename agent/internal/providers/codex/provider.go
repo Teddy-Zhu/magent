@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -563,6 +564,40 @@ func (p *CodexProvider) ReadThreadItems(ctx context.Context, threadID, cursor st
 	}, nil
 }
 
+func (p *CodexProvider) ReadThreadItemsSnapshot(ctx context.Context, threadID string, limit int) (*provider.ItemPage, error) {
+	client, err := p.appServerClient(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 {
+		limit = 500
+	}
+
+	var allTurns []ThreadTurn
+	cursor := ""
+	seenCursors := map[string]bool{}
+	for {
+		page, err := client.ListThreadTurns(ctx, threadID, cursor, limit, "desc")
+		if err != nil {
+			return nil, err
+		}
+		allTurns = append(allTurns, page.Turns...)
+		next := page.NextCursor
+		if next == "" || seenCursors[next] {
+			break
+		}
+		seenCursors[next] = true
+		cursor = next
+	}
+	reverseThreadTurns(allTurns)
+	items := codexTurnsToItems(allTurns)
+	log.Debug("codex", "ReadThreadItemsSnapshot: thread=%s turns=%d items=%d tail=%s", threadID, len(allTurns), len(items), codexSessionItemTailSummary(items, 8))
+	return &provider.ItemPage{
+		SessionID: threadID,
+		Items:     items,
+	}, nil
+}
+
 func codexSessionItemTailSummary(items []provider.SessionItem, limit int) string {
 	if len(items) == 0 {
 		return "[]"
@@ -624,9 +659,9 @@ func reverseThreadTurns(turns []ThreadTurn) {
 func codexTurnsToEvents(threadID string, turns []ThreadTurn) []provider.ProviderEvent {
 	var events []provider.ProviderEvent
 	for turnIndex, turn := range turns {
-		ts := codexTurnTime(turn)
+		ts := codexTurnTime(turn, turnIndex)
 		for itemIndex, item := range turn.Items {
-			events = append(events, codexItemToEvent(threadID, turn.ID, item, ts, codexItemIndex(turnIndex, itemIndex)))
+			events = append(events, codexItemToEvent(threadID, turn.ID, item, ts, codexStableItemIndex(turn, turnIndex, itemIndex)))
 		}
 	}
 	return events
@@ -678,8 +713,8 @@ func codexItemToEvent(threadID, turnID string, item TurnItem, ts time.Time, inde
 func codexTurnsToItems(turns []ThreadTurn) []provider.SessionItem {
 	var items []provider.SessionItem
 	for turnIndex, turn := range turns {
-		createdAt := codexTurnTime(turn)
-		updatedAt := codexTurnUpdatedTime(turn)
+		createdAt := codexTurnTime(turn, turnIndex)
+		updatedAt := codexTurnUpdatedTime(turn, createdAt)
 		for itemIndex, item := range turn.Items {
 			itemType := normalizeCodexItemType(item.Type)
 			items = append(items, provider.SessionItem{
@@ -708,21 +743,45 @@ func codexStableItemIndex(turn ThreadTurn, fallbackTurnIndex, itemIndex int) int
 	if turn.StartedAt > 0 {
 		return int(turn.StartedAt)*100000 + itemIndex
 	}
+	if turn.CompletedAt > 0 {
+		return int(turn.CompletedAt)*100000 + itemIndex
+	}
+	if millis, ok := codexUUIDv7Millis(turn.ID); ok {
+		return int(millis)*100 + itemIndex
+	}
 	return codexItemIndex(fallbackTurnIndex, itemIndex)
 }
 
-func codexTurnTime(turn ThreadTurn) time.Time {
+func codexTurnTime(turn ThreadTurn, fallbackTurnIndex int) time.Time {
 	if turn.StartedAt > 0 {
 		return time.Unix(turn.StartedAt, 0)
 	}
-	return time.Now()
-}
-
-func codexTurnUpdatedTime(turn ThreadTurn) time.Time {
 	if turn.CompletedAt > 0 {
 		return time.Unix(turn.CompletedAt, 0)
 	}
-	return codexTurnTime(turn)
+	if millis, ok := codexUUIDv7Millis(turn.ID); ok {
+		return time.UnixMilli(int64(millis))
+	}
+	return time.Unix(int64(fallbackTurnIndex), 0)
+}
+
+func codexTurnUpdatedTime(turn ThreadTurn, createdAt time.Time) time.Time {
+	if turn.CompletedAt > 0 {
+		return time.Unix(turn.CompletedAt, 0)
+	}
+	return createdAt
+}
+
+func codexUUIDv7Millis(id string) (uint64, bool) {
+	cleaned := strings.ReplaceAll(id, "-", "")
+	if len(cleaned) < 12 {
+		return 0, false
+	}
+	millis, err := strconv.ParseUint(cleaned[:12], 16, 64)
+	if err != nil || millis == 0 {
+		return 0, false
+	}
+	return millis, true
 }
 
 func codexItemCursor(turnID, itemID string) string {
@@ -799,6 +858,7 @@ func codexItemSummary(item TurnItem) string {
 
 func codexItemContent(item TurnItem) any {
 	content := codexItemPayload(item)
+	content["type"] = normalizeCodexItemType(item.Type)
 	if text := codexItemText(item); text != "" {
 		content["text"] = text
 	}

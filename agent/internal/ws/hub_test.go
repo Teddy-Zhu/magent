@@ -107,6 +107,26 @@ func TestReplaySessionReportsEpochChange(t *testing.T) {
 	}
 }
 
+func TestReplaySessionItemsCursorCompletesWithoutReplay(t *testing.T) {
+	hub := NewHub()
+	hub.prepareBroadcast(map[string]any{"type": "session.event", "session_id": "s1"})
+
+	client := NewClient(hub, nil, "test")
+	hub.ReplaySession(client, "s1", "items:12")
+
+	messages := drainClientMessages(client)
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want replay_complete", len(messages))
+	}
+	var event map[string]any
+	if err := json.Unmarshal(messages[0], &event); err != nil {
+		t.Fatalf("unmarshal replay_complete: %v", err)
+	}
+	if event["type"] != "session.replay_complete" || event["replayed"].(float64) != 0 {
+		t.Fatalf("unexpected replay_complete: %#v", event)
+	}
+}
+
 func TestClientSendQueueFullUnregistersClient(t *testing.T) {
 	hub := NewHub()
 	client := NewClient(hub, nil, "test")

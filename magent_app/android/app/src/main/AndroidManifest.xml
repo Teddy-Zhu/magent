@@ -1,6 +1,6 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <application
-        android:label="magent_app"
+        android:label="Magent"
         android:name="${applicationName}"
         android:icon="@mipmap/launcher_icon">
         <activity

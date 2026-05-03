@@ -434,7 +434,8 @@ class AppDatabase extends _$AppDatabase {
               t.agentId.equals(agentId) &
               (t.scope.equals('session_events') |
                   t.scope.equals('session_items') |
-                  t.scope.equals('session_ws')),
+                  t.scope.equals('session_ws') |
+                  t.scope.equals('session_ws_epoch')),
         ))
         .go();
   }
@@ -612,7 +613,8 @@ class AppDatabase extends _$AppDatabase {
                 t.key.equals(sessionId) &
                 (t.scope.equals('session_events') |
                     t.scope.equals('session_items') |
-                    t.scope.equals('session_ws')),
+                    t.scope.equals('session_ws') |
+                    t.scope.equals('session_ws_epoch')),
           ))
           .go();
       await deleteSession(agentId, sessionId);
@@ -789,6 +791,18 @@ class AppDatabase extends _$AppDatabase {
             ))
             .getSingleOrNull();
     return row?.cursor;
+  }
+
+  Future<int?> getSyncRevision(String agentId, String scope, String key) async {
+    final row =
+        await (select(syncStateEntries)..where(
+              (t) =>
+                  t.agentId.equals(agentId) &
+                  t.scope.equals(scope) &
+                  t.key.equals(key),
+            ))
+            .getSingleOrNull();
+    return row?.revision;
   }
 
   Future<void> setSyncCursor(

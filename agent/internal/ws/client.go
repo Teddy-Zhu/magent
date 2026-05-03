@@ -117,12 +117,14 @@ func (c *Client) handleMessage(data []byte) {
 
 	switch msg.Type {
 	case "client.hello":
-		c.sessionsMu.Lock()
+		nextSessions := make(map[string]string, len(msg.OpenSessions))
 		for _, session := range msg.OpenSessions {
 			if session.SessionID != "" {
-				c.sessions[session.SessionID] = session.Cursor
+				nextSessions[session.SessionID] = session.Cursor
 			}
 		}
+		c.sessionsMu.Lock()
+		c.sessions = nextSessions
 		c.sessionsMu.Unlock()
 		c.sendJSON(map[string]any{
 			"type":          "server.hello",

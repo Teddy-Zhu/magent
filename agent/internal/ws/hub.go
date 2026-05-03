@@ -140,6 +140,15 @@ func (h *Hub) ReplaySession(client *Client, sessionID, cursor string) {
 	if sessionID == "" || cursor == "" {
 		return
 	}
+	if strings.HasPrefix(cursor, "items:") {
+		client.sendJSON(map[string]any{
+			"type":       "session.replay_complete",
+			"session_id": sessionID,
+			"ws_epoch":   h.replayID,
+			"replayed":   0,
+		})
+		return
+	}
 
 	epoch, seq, err := h.parseReplayCursor(cursor)
 	if err != nil {

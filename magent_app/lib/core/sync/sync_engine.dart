@@ -117,6 +117,11 @@ class SyncEngine {
       gate.buffer.add(event);
       return;
     }
+    if (type == 'session.items.changed') {
+      _beginSessionCatchUp(sessionId, reconcile: false);
+      _sessionEvents.add(event);
+      return;
+    }
     _enqueueSessionEvent(sessionId, event);
   }
 
@@ -154,13 +159,8 @@ class SyncEngine {
     _SessionRealtimeGate gate,
   ) async {
     if (gate.subscriptionSent) return;
-    final cursor = await sessions.getRealtimeCursor(sessionId);
-    final epoch = await sessions.getRealtimeEpoch(sessionId);
-    if (epoch != null && epoch.isNotEmpty) {
-      debugPrint(
-        'SyncEngine: subscribing session=$sessionId cursor=$cursor epoch=$epoch',
-      );
-    }
+    final revision = await sessions.getItemRevision(sessionId);
+    final cursor = revision > 0 ? 'items:$revision' : null;
     if (!gate.subscribed) return;
     realtime.subscribeSession(sessionId, cursor: cursor);
     gate.subscriptionSent = true;
@@ -169,9 +169,13 @@ class SyncEngine {
   Future<void> _beginSessionCatchUp(
     String sessionId, {
     Future<void> Function()? beforeRefresh,
+    bool reconcile = true,
   }) {
     final gate = _gateFor(sessionId);
     if (gate.syncing) {
+      if (reconcile) {
+        gate.pendingReconcile = true;
+      }
       if (beforeRefresh != null && !gate.subscriptionSent) {
         beforeRefresh().catchError((error) {
           debugPrint('SyncEngine: session subscribe failed: $error');
@@ -185,6 +189,7 @@ class SyncEngine {
       sessionId,
       gate,
       beforeRefresh: beforeRefresh,
+      reconcile: reconcile,
     );
     gate.syncFuture = sync;
     return sync;
@@ -194,33 +199,58 @@ class SyncEngine {
     String sessionId,
     _SessionRealtimeGate gate, {
     Future<void> Function()? beforeRefresh,
+    bool reconcile = true,
   }) async {
     var refreshed = false;
+    var startRevision = 0;
+    var endRevision = 0;
     try {
       if (beforeRefresh != null) {
         await beforeRefresh();
       }
+      startRevision = await sessions.getItemRevision(sessionId);
       await gate.applyTail;
-      await sessions.refreshItems(sessionId);
+      await sessions.refreshItems(sessionId, reconcile: reconcile);
+      endRevision = await sessions.getItemRevision(sessionId);
       refreshed = true;
     } catch (error) {
       debugPrint('SyncEngine: session catch-up failed: $error');
     }
 
     if (!refreshed) {
-      _retrySessionCatchUp(sessionId, gate);
+      _retrySessionCatchUp(sessionId, gate, reconcile: reconcile);
       return;
     }
 
+    var runPendingReconcile = false;
     try {
-      await _drainBufferedSessionEvents(sessionId, gate);
+      await _drainBufferedSessionEvents(
+        sessionId,
+        gate,
+        startRevision: startRevision,
+        endRevision: endRevision,
+      );
     } finally {
-      gate.syncing = false;
-      gate.syncFuture = null;
+      if (gate.pendingReconcile && !reconcile) {
+        gate.pendingReconcile = false;
+        runPendingReconcile = true;
+      } else {
+        gate.syncing = false;
+        gate.syncFuture = null;
+      }
+    }
+    if (runPendingReconcile) {
+      final sync = _runSessionCatchUp(sessionId, gate, reconcile: true);
+      gate.syncFuture = sync;
+      await sync;
     }
   }
 
-  void _retrySessionCatchUp(String sessionId, _SessionRealtimeGate gate) {
+  void _retrySessionCatchUp(
+    String sessionId,
+    _SessionRealtimeGate gate, {
+    required bool reconcile,
+  }) {
     if (!gate.subscribed && gate.buffer.isEmpty) {
       gate.syncing = false;
       gate.syncFuture = null;
@@ -234,19 +264,31 @@ class SyncEngine {
         gate.syncFuture = null;
         return Future<void>.value();
       }
-      return _runSessionCatchUp(sessionId, gate);
+      final nextReconcile = reconcile || gate.pendingReconcile;
+      gate.pendingReconcile = false;
+      return _runSessionCatchUp(sessionId, gate, reconcile: nextReconcile);
     });
   }
 
   Future<void> _drainBufferedSessionEvents(
     String sessionId,
-    _SessionRealtimeGate gate,
-  ) async {
+    _SessionRealtimeGate gate, {
+    required int startRevision,
+    required int endRevision,
+  }) async {
+    var currentRevision = endRevision;
     while (gate.buffer.isNotEmpty) {
       final buffered = List<Map<String, dynamic>>.of(gate.buffer);
       gate.buffer.clear();
       for (final event in buffered) {
-        await _applySessionEvent(sessionId, event);
+        final itemRevisionAdvanced = currentRevision > startRevision;
+        await _applySessionEvent(
+          sessionId,
+          event,
+          currentRevision: currentRevision,
+          dropCoveredItemHints: itemRevisionAdvanced,
+        );
+        currentRevision = await sessions.getItemRevision(sessionId);
       }
     }
   }
@@ -263,10 +305,28 @@ class SyncEngine {
 
   Future<void> _applySessionEvent(
     String sessionId,
-    Map<String, dynamic> event,
-  ) async {
+    Map<String, dynamic> event, {
+    int? currentRevision,
+    bool dropCoveredItemHints = false,
+  }) async {
     if (_isSessionTransportEvent(event)) {
       _sessionEvents.add(event);
+      return;
+    }
+    if (event['type'] == 'session.items.changed') {
+      final toRevision = _eventInt(event['to_revision'] ?? event['toRevision']);
+      if (currentRevision != null &&
+          toRevision != null &&
+          currentRevision >= toRevision) {
+        return;
+      }
+      await sessions.refreshItems(sessionId, reconcile: false);
+      _sessionEvents.add(event);
+      return;
+    }
+    if (_isItemProjectionHintEvent(event)) {
+      if (dropCoveredItemHints) return;
+      _sessionEvents.add(_uiSessionEvent(event));
       return;
     }
 
@@ -302,13 +362,9 @@ class SyncEngine {
     String sessionId,
     Map<String, dynamic> event,
   ) async {
-    final storedCursor = await sessions.getRealtimeCursor(sessionId);
-    final eventCursor =
-        event['ws_cursor']?.toString() ?? event['ws_seq']?.toString();
-    final cursor = (storedCursor != null && storedCursor.isNotEmpty)
-        ? storedCursor
-        : eventCursor;
-    if (cursor == null || cursor.isEmpty) return;
+    final revision = await sessions.getItemRevision(sessionId);
+    if (revision <= 0) return;
+    final cursor = 'items:$revision';
     realtime.updateSessionCursor(sessionId, cursor);
   }
 
@@ -322,6 +378,40 @@ class SyncEngine {
       default:
         return false;
     }
+  }
+
+  bool _isItemProjectionHintEvent(Map<String, dynamic> event) {
+    switch (event['event_type']?.toString() ?? event['type']?.toString()) {
+      case 'session.user_message':
+      case 'session.message':
+      case 'session.message_delta':
+      case 'session.output':
+      case 'session.plan':
+      case 'session.plan_delta':
+      case 'session.plan_updated':
+      case 'session.reasoning':
+      case 'session.reasoning_summary_delta':
+      case 'session.reasoning_text_delta':
+      case 'session.reasoning_summary_part':
+      case 'session.diff_updated':
+      case 'session.command_completed':
+      case 'session.command_output_delta':
+      case 'session.file_write':
+      case 'session.file_read':
+      case 'session.file_change_output_delta':
+      case 'session.mcp_tool_completed':
+      case 'session.item_started':
+      case 'session.item_completed':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  int? _eventInt(Object? value) {
+    if (value is int) return value;
+    if (value is num) return value.round();
+    return int.tryParse(value?.toString() ?? '');
   }
 
   void dispose() {
@@ -338,4 +428,5 @@ class _SessionRealtimeGate {
   bool subscribed = false;
   bool subscriptionSent = false;
   bool syncing = false;
+  bool pendingReconcile = false;
 }

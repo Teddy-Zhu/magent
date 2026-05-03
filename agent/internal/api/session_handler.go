@@ -265,10 +265,8 @@ func (h *SessionHandler) GetEvents(c *gin.Context) {
 
 func (h *SessionHandler) GetItems(c *gin.Context) {
 	id := c.Param("id")
-	cursor := c.Query("cursor")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "200"))
 
-	page, err := h.manager.GetItems(c.Request.Context(), id, cursor, limit)
+	snapshot, err := h.manager.GetItemSnapshot(c.Request.Context(), id)
 	if err != nil {
 		log.Error("session", "getItems id=%s error: %v", id, err)
 		Fail(c, 500, ErrInternalError, err.Error())
@@ -276,10 +274,47 @@ func (h *SessionHandler) GetItems(c *gin.Context) {
 	}
 
 	OK(c, gin.H{
-		"session_id": id,
-		"cursor":     page.Cursor,
-		"has_more":   page.HasMore,
-		"items":      itemsToAPIItems(page.Items),
+		"session_id": snapshot.SessionID,
+		"revision":   snapshot.Revision,
+		"cursor":     strconv.FormatInt(snapshot.Revision, 10),
+		"has_more":   false,
+		"items":      itemsToAPIItems(snapshot.Items),
+	})
+}
+
+func (h *SessionHandler) GetItemSnapshot(c *gin.Context) {
+	id := c.Param("id")
+	snapshot, err := h.manager.GetItemSnapshot(c.Request.Context(), id)
+	if err != nil {
+		log.Error("session", "getItemSnapshot id=%s error: %v", id, err)
+		Fail(c, 500, ErrInternalError, err.Error())
+		return
+	}
+	OK(c, gin.H{
+		"session_id": snapshot.SessionID,
+		"revision":   snapshot.Revision,
+		"items":      itemsToAPIItems(snapshot.Items),
+	})
+}
+
+func (h *SessionHandler) GetItemChanges(c *gin.Context) {
+	id := c.Param("id")
+	afterRevision, _ := strconv.ParseInt(c.DefaultQuery("after_revision", "0"), 10, 64)
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "500"))
+	reconcile, _ := strconv.ParseBool(c.DefaultQuery("reconcile", "false"))
+	page, err := h.manager.GetItemChanges(c.Request.Context(), id, afterRevision, limit, reconcile)
+	if err != nil {
+		log.Error("session", "getItemChanges id=%s error: %v", id, err)
+		Fail(c, 500, ErrInternalError, err.Error())
+		return
+	}
+	OK(c, gin.H{
+		"session_id":     page.SessionID,
+		"from_revision":  page.FromRevision,
+		"to_revision":    page.ToRevision,
+		"reset_required": page.ResetRequired,
+		"has_more":       page.HasMore,
+		"changes":        itemChangesToAPIChanges(page.Changes),
 	})
 }
 
@@ -310,6 +345,7 @@ func itemsToAPIItems(items []provider.SessionItem) []gin.H {
 			"item_id":    item.ItemID,
 			"turn_id":    item.TurnID,
 			"index":      item.Index,
+			"revision":   item.Revision,
 			"type":       item.Type,
 			"status":     item.Status,
 			"role":       item.Role,
@@ -318,6 +354,22 @@ func itemsToAPIItems(items []provider.SessionItem) []gin.H {
 			"created_at": item.CreatedAt.Unix(),
 			"updated_at": item.UpdatedAt.Unix(),
 		})
+	}
+	return result
+}
+
+func itemChangesToAPIChanges(changes []session.ItemChange) []gin.H {
+	result := make([]gin.H, 0, len(changes))
+	for _, change := range changes {
+		entry := gin.H{
+			"revision": change.Revision,
+			"op":       change.Op,
+			"item_id":  change.ItemID,
+		}
+		if change.Item != nil {
+			entry["item"] = itemsToAPIItems([]provider.SessionItem{*change.Item})[0]
+		}
+		result = append(result, entry)
 	}
 	return result
 }

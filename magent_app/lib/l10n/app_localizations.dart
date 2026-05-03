@@ -578,6 +578,18 @@ abstract class AppLocalizations {
   /// **'Stop'**
   String get chatStop;
 
+  /// No description provided for @chatSyncingTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing conversation'**
+  String get chatSyncingTitle;
+
+  /// No description provided for @chatSyncingSubtitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Loading the latest messages...'**
+  String get chatSyncingSubtitle;
+
   /// No description provided for @chatApprove.
   ///
   /// In en, this message translates to:

@@ -2,26 +2,39 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/Teddy-Zhu/magent/agent/internal/log"
 	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 	"github.com/Teddy-Zhu/magent/agent/internal/ws"
 )
 
+const (
+	itemReconcileDebounce = 500 * time.Millisecond
+)
+
 type Manager struct {
-	store    *SessionStore
-	registry *provider.Registry
-	wsHub    *ws.Hub
+	store          *SessionStore
+	registry       *provider.Registry
+	wsHub          *ws.Hub
+	itemProjection *itemProjectionStore
+	itemSyncMu     sync.Mutex
+	itemSyncTimers map[string]*time.Timer
 }
 
 func NewManager(store *SessionStore, registry *provider.Registry, hub *ws.Hub) *Manager {
-	return &Manager{
-		store:    store,
-		registry: registry,
-		wsHub:    hub,
+	manager := &Manager{
+		store:          store,
+		registry:       registry,
+		wsHub:          hub,
+		itemProjection: newItemProjectionStore(store),
+		itemSyncTimers: make(map[string]*time.Timer),
 	}
+	return manager
 }
 
 type CreateSessionRequest struct {
@@ -94,6 +107,7 @@ func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (
 
 	// Start live event forwarding to WebSocket
 	go m.forwardEvents(session.ID, p)
+	m.scheduleItemReconcile(session.ID)
 
 	m.wsHub.Broadcast(map[string]any{
 		"type":       "session.created",
@@ -124,6 +138,7 @@ func (m *Manager) forwardEvents(sessionID string, p provider.Provider) {
 			"created_at": event.Timestamp.Unix(),
 			"data":       event.Payload,
 		})
+		m.applyProviderEventProjection(sessionID, event)
 		index++
 	}
 	log.Debug("session", "forwardEvents ended id=%s", sessionID)
@@ -414,18 +429,16 @@ func (m *Manager) GetEvents(ctx context.Context, sessionID, cursor string, limit
 
 // GetItems reads the provider-backed item projection for a session.
 func (m *Manager) GetItems(ctx context.Context, sessionID, cursor string, limit int) (*provider.ItemPage, error) {
-	p, threadID, err := m.getProviderAndThreadForSession(sessionID)
+	snapshot, err := m.GetItemSnapshot(ctx, sessionID)
 	if err != nil {
 		return nil, err
 	}
-	log.Info("session", "GetItems: session=%s provider=%s thread=%s cursor=%q limit=%d", sessionID, p.Name(), threadID, cursor, limit)
-	page, err := p.ReadThreadItems(ctx, threadID, cursor, limit)
-	if err != nil {
-		log.Error("session", "GetItems: session=%s provider=%s thread=%s error=%v", sessionID, p.Name(), threadID, err)
-		return nil, err
-	}
-	log.Info("session", "GetItems: session=%s items=%d next=%q has_more=%t tail=%s", sessionID, len(page.Items), page.Cursor, page.HasMore, sessionItemTailSummary(page.Items, 8))
-	return page, nil
+	return &provider.ItemPage{
+		SessionID: sessionID,
+		Cursor:    fmt.Sprintf("%d", snapshot.Revision),
+		HasMore:   false,
+		Items:     snapshot.Items,
+	}, nil
 }
 
 func sessionItemTailSummary(items []provider.SessionItem, limit int) string {
@@ -441,6 +454,446 @@ func sessionItemTailSummary(items []provider.SessionItem, limit int) string {
 		parts = append(parts, fmt.Sprintf("%s:%s:%s:%d", item.ItemID, item.Type, item.Status, item.Index))
 	}
 	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func (m *Manager) GetItemSnapshot(ctx context.Context, sessionID string) (*ItemSnapshot, error) {
+	if _, err := m.ReconcileSessionItems(ctx, sessionID); err != nil {
+		return nil, err
+	}
+	snapshot, err := m.itemProjection.Snapshot(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	log.Debug("session", "GetItemSnapshot: session=%s revision=%d items=%d tail=%s", sessionID, snapshot.Revision, len(snapshot.Items), sessionItemTailSummary(snapshot.Items, 8))
+	return snapshot, nil
+}
+
+func (m *Manager) GetItemChanges(ctx context.Context, sessionID string, afterRevision int64, limit int, reconcile bool) (*ItemChangesPage, error) {
+	if reconcile {
+		if _, err := m.ReconcileSessionItems(ctx, sessionID); err != nil {
+			return nil, err
+		}
+	}
+	page, err := m.itemProjection.Changes(ctx, sessionID, afterRevision, limit)
+	if err != nil {
+		return nil, err
+	}
+	log.Debug("session", "GetItemChanges: session=%s after=%d to=%d changes=%d reset=%t reconcile=%t", sessionID, afterRevision, page.ToRevision, len(page.Changes), page.ResetRequired, reconcile)
+	return page, nil
+}
+
+func (m *Manager) ReconcileSessionItems(ctx context.Context, sessionID string) (*ItemChangesPage, error) {
+	p, threadID, err := m.getProviderAndThreadForSession(sessionID)
+	if err != nil {
+		return nil, err
+	}
+	var page *provider.ItemPage
+	if reader, ok := p.(provider.ThreadItemSnapshotReader); ok {
+		page, err = reader.ReadThreadItemsSnapshot(ctx, threadID, 500)
+	} else {
+		page, err = p.ReadThreadItems(ctx, threadID, "", 500)
+	}
+	if err != nil {
+		log.Error("session", "ReconcileSessionItems: session=%s provider=%s thread=%s error=%v", sessionID, p.Name(), threadID, err)
+		return nil, err
+	}
+	changes, err := m.itemProjection.Reconcile(ctx, sessionID, page.Items)
+	if err != nil {
+		return nil, err
+	}
+	if len(changes.Changes) > 0 {
+		log.Info("session", "ReconcileSessionItems: session=%s provider=%s items=%d changes=%d revision=%d tail=%s", sessionID, p.Name(), len(page.Items), len(changes.Changes), changes.ToRevision, sessionItemTailSummary(page.Items, 8))
+	}
+	return changes, nil
+}
+
+func (m *Manager) scheduleItemReconcile(sessionID string) {
+	if sessionID == "" {
+		return
+	}
+	m.itemSyncMu.Lock()
+	if timer := m.itemSyncTimers[sessionID]; timer != nil {
+		timer.Reset(itemReconcileDebounce)
+		m.itemSyncMu.Unlock()
+		return
+	}
+	m.itemSyncTimers[sessionID] = time.AfterFunc(itemReconcileDebounce, func() {
+		m.itemSyncMu.Lock()
+		delete(m.itemSyncTimers, sessionID)
+		m.itemSyncMu.Unlock()
+		m.reconcileSessionItemsAndBroadcast(context.Background(), sessionID)
+	})
+	m.itemSyncMu.Unlock()
+}
+
+func (m *Manager) reconcileSessionItemsAndBroadcast(ctx context.Context, sessionID string) {
+	changes, err := m.ReconcileSessionItems(ctx, sessionID)
+	if err != nil {
+		log.Warn("session", "reconcile scheduled items failed session=%s: %v", sessionID, err)
+		return
+	}
+	m.broadcastItemChanges(sessionID, changes)
+}
+
+func (m *Manager) applyProviderEventProjection(sessionID string, event provider.ProviderEvent) {
+	if !isItemProjectionProviderEvent(event.Type) {
+		return
+	}
+	if isRealtimeOnlyProjectionEvent(event.Type) {
+		return
+	}
+	item, ok := m.sessionItemFromProviderEvent(context.Background(), sessionID, event)
+	if !ok {
+		if requiresProjectionReconcile(event.Type) {
+			m.scheduleItemReconcile(sessionID)
+		}
+		return
+	}
+	changes, err := m.itemProjection.Upsert(context.Background(), sessionID, item)
+	if err != nil {
+		log.Warn("session", "upsert runtime item failed session=%s item=%s type=%s: %v", sessionID, item.ItemID, event.Type, err)
+		if requiresProjectionReconcile(event.Type) {
+			m.scheduleItemReconcile(sessionID)
+		}
+		return
+	}
+	m.broadcastItemChanges(sessionID, changes)
+}
+
+func (m *Manager) broadcastItemChanges(sessionID string, changes *ItemChangesPage) {
+	if changes == nil || len(changes.Changes) == 0 {
+		return
+	}
+	m.wsHub.Broadcast(map[string]any{
+		"type":          "session.items.changed",
+		"session_id":    sessionID,
+		"from_revision": changes.FromRevision,
+		"to_revision":   changes.ToRevision,
+		"changes":       changes.Changes,
+	})
+}
+
+func isItemProjectionProviderEvent(eventType string) bool {
+	switch eventType {
+	case string(provider.EventUserMessage),
+		string(provider.EventMessage),
+		string(provider.EventMessageDelta),
+		string(provider.EventOutput),
+		string(provider.EventPlan),
+		string(provider.EventPlanDelta),
+		string(provider.EventPlanUpdated),
+		string(provider.EventReasoning),
+		string(provider.EventReasoningSummaryDelta),
+		string(provider.EventReasoningTextDelta),
+		string(provider.EventReasoningSummaryPart),
+		string(provider.EventDiffUpdated),
+		string(provider.EventCommandCompleted),
+		string(provider.EventCommandOutputDelta),
+		string(provider.EventFileWrite),
+		string(provider.EventFileRead),
+		string(provider.EventFileChangeOutputDelta),
+		string(provider.EventMCPToolCompleted),
+		string(provider.EventItemStarted),
+		string(provider.EventItemCompleted),
+		string(provider.EventTurnStarted),
+		string(provider.EventTurnCompleted),
+		string(provider.EventTurnFailed):
+		return true
+	default:
+		return false
+	}
+}
+
+func isRealtimeOnlyProjectionEvent(eventType string) bool {
+	switch eventType {
+	case string(provider.EventMessageDelta),
+		string(provider.EventPlanDelta),
+		string(provider.EventReasoningSummaryDelta),
+		string(provider.EventReasoningTextDelta),
+		string(provider.EventCommandOutputDelta),
+		string(provider.EventFileChangeOutputDelta),
+		string(provider.EventItemStarted),
+		string(provider.EventTurnStarted),
+		string(provider.EventTurnCompleted):
+		return true
+	default:
+		return false
+	}
+}
+
+func requiresProjectionReconcile(eventType string) bool {
+	switch eventType {
+	case string(provider.EventTurnFailed):
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *Manager) sessionItemFromProviderEvent(ctx context.Context, sessionID string, event provider.ProviderEvent) (provider.SessionItem, bool) {
+	data, ok := event.Payload.(map[string]any)
+	if !ok {
+		return provider.SessionItem{}, false
+	}
+	itemID := firstPayloadString(data, "id", "item_id", "itemId")
+	if itemID == "" {
+		itemID = event.ItemID
+	}
+	turnID := firstPayloadString(data, "turnId", "turn_id")
+	if turnID == "" {
+		turnID = event.TurnID
+	}
+	itemType := provider.NormalizeItemType(firstPayloadString(data, "type", "item_type", "itemType"))
+	if itemType == "" {
+		itemType = itemTypeFromProviderEvent(event.Type)
+	}
+	if itemType == "" {
+		return provider.SessionItem{}, false
+	}
+	if itemID == "" {
+		itemID = syntheticRuntimeItemID(event.Type, turnID)
+	}
+	if itemID == "" {
+		return provider.SessionItem{}, false
+	}
+	index, ok := intFromPayload(data, "index")
+	if !ok {
+		if existingOrderKey, exists, err := m.itemProjection.ItemOrderKey(ctx, sessionID, itemID); err != nil {
+			log.Warn("session", "read runtime item order failed session=%s item=%s: %v", sessionID, itemID, err)
+			return provider.SessionItem{}, false
+		} else if exists {
+			index = existingOrderKey
+			ok = true
+		}
+	}
+	if !ok {
+		nextIndex, err := m.itemProjection.NextOrderKey(ctx, sessionID)
+		if err != nil {
+			log.Warn("session", "next runtime item order failed session=%s item=%s: %v", sessionID, itemID, err)
+			return provider.SessionItem{}, false
+		}
+		index = nextIndex
+	}
+	createdAt := event.Timestamp
+	if createdAt.IsZero() {
+		createdAt = time.Now()
+	}
+	if value := firstPayloadTime(data, "created_at", "createdAt", "timestamp"); !value.IsZero() {
+		createdAt = value
+	}
+	updatedAt := createdAt
+	if value := firstPayloadTime(data, "updated_at", "updatedAt"); !value.IsZero() {
+		updatedAt = value
+	}
+	content := clonePayload(data)
+	content["type"] = itemType
+	content["id"] = itemID
+	if _, exists := content["status"]; !exists {
+		content["status"] = provider.SessionStatusCompleted
+	}
+	normalizeRuntimeContentAliases(content)
+	status := firstPayloadString(content, "status")
+	if status == "" {
+		status = string(provider.SessionStatusCompleted)
+	}
+	return provider.SessionItem{
+		Cursor:    firstNonEmpty(event.Cursor, firstPayloadString(data, "cursor", "provider_cursor")),
+		ItemID:    itemID,
+		TurnID:    turnID,
+		Index:     index,
+		Type:      itemType,
+		Status:    status,
+		Role:      itemRole(itemType),
+		Summary:   itemSummary(itemType, content),
+		Content:   content,
+		CreatedAt: createdAt,
+		UpdatedAt: updatedAt,
+	}, true
+}
+
+func syntheticRuntimeItemID(eventType, turnID string) string {
+	if turnID == "" {
+		return ""
+	}
+	switch eventType {
+	case string(provider.EventPlan), string(provider.EventPlanUpdated):
+		return turnID + ":plan"
+	case string(provider.EventDiffUpdated):
+		return turnID + ":diff"
+	case string(provider.EventReasoning), string(provider.EventReasoningSummaryPart):
+		return turnID + ":reasoning"
+	default:
+		return ""
+	}
+}
+
+func itemTypeFromProviderEvent(eventType string) string {
+	switch eventType {
+	case string(provider.EventUserMessage):
+		return string(provider.ItemTypeUserMessage)
+	case string(provider.EventMessage), string(provider.EventOutput):
+		return string(provider.ItemTypeAgentMessage)
+	case string(provider.EventPlan), string(provider.EventPlanUpdated):
+		return string(provider.ItemTypePlan)
+	case string(provider.EventReasoning), string(provider.EventReasoningSummaryPart):
+		return string(provider.ItemTypeReasoning)
+	case string(provider.EventDiffUpdated):
+		return string(provider.ItemTypeDiff)
+	case string(provider.EventCommandCompleted):
+		return string(provider.ItemTypeCommandExecution)
+	case string(provider.EventFileWrite):
+		return string(provider.ItemTypeFileChange)
+	case string(provider.EventFileRead):
+		return string(provider.ItemTypeFileRead)
+	case string(provider.EventMCPToolCompleted):
+		return string(provider.ItemTypeMCPToolCall)
+	default:
+		return ""
+	}
+}
+
+func itemRole(itemType string) string {
+	switch itemType {
+	case string(provider.ItemTypeUserMessage):
+		return "user"
+	case string(provider.ItemTypeAgentMessage):
+		return "assistant"
+	default:
+		return ""
+	}
+}
+
+func itemSummary(itemType string, content map[string]any) string {
+	if itemType == string(provider.ItemTypeReasoning) {
+		if text := firstPayloadString(content, "text", "summary", "content", "delta"); text != "" {
+			return truncateSummary(text)
+		}
+		return ""
+	}
+	if text := firstPayloadString(content, "text", "content", "delta"); text != "" {
+		return truncateSummary(text)
+	}
+	if output := firstPayloadString(content, "output", "aggregatedOutput", "stdout", "stderr", "result", "error"); output != "" {
+		return truncateSummary(output)
+	}
+	if command := payloadValueString(content["command"]); command != "" {
+		return truncateSummary(command)
+	}
+	if path := firstPayloadString(content, "path"); path != "" {
+		return path
+	}
+	if changes, ok := content["changes"].([]any); ok && len(changes) > 0 {
+		if first, ok := changes[0].(map[string]any); ok {
+			if path := firstPayloadString(first, "path"); path != "" {
+				return path
+			}
+		}
+	}
+	return itemType
+}
+
+func truncateSummary(value string) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) <= 160 {
+		return string(runes)
+	}
+	return string(runes[:160])
+}
+
+func normalizeRuntimeContentAliases(content map[string]any) {
+	if content["output"] == nil {
+		for _, key := range []string{"aggregatedOutput", "stdout", "stderr"} {
+			if content[key] != nil {
+				content["output"] = content[key]
+				break
+			}
+		}
+	}
+	if content["exit_code"] == nil && content["exitCode"] != nil {
+		content["exit_code"] = content["exitCode"]
+	}
+}
+
+func clonePayload(data map[string]any) map[string]any {
+	clone := make(map[string]any, len(data)+2)
+	for key, value := range data {
+		clone[key] = value
+	}
+	return clone
+}
+
+func firstPayloadString(data map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := payloadValueString(data[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func payloadValueString(value any) string {
+	switch v := value.(type) {
+	case nil:
+		return ""
+	case string:
+		return v
+	case fmt.Stringer:
+		return v.String()
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+func intFromPayload(data map[string]any, key string) (int, bool) {
+	switch value := data[key].(type) {
+	case int:
+		return value, true
+	case int64:
+		return int(value), true
+	case float64:
+		return int(value), true
+	case json.Number:
+		parsed, err := value.Int64()
+		return int(parsed), err == nil
+	case string:
+		var parsed int
+		if _, err := fmt.Sscanf(value, "%d", &parsed); err == nil {
+			return parsed, true
+		}
+	}
+	return 0, false
+}
+
+func firstPayloadTime(data map[string]any, keys ...string) time.Time {
+	for _, key := range keys {
+		if value := payloadTime(data[key]); !value.IsZero() {
+			return value
+		}
+	}
+	return time.Time{}
+}
+
+func payloadTime(value any) time.Time {
+	switch v := value.(type) {
+	case time.Time:
+		return v
+	case int64:
+		return time.Unix(v, 0)
+	case int:
+		return time.Unix(int64(v), 0)
+	case float64:
+		return time.Unix(int64(v), 0)
+	case json.Number:
+		parsed, err := v.Int64()
+		if err == nil {
+			return time.Unix(parsed, 0)
+		}
+	case string:
+		if parsed, err := time.Parse(time.RFC3339Nano, v); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }
 
 // ResumeSession activates a session in its provider.

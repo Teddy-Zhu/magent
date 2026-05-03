@@ -222,6 +222,7 @@ class SessionItemTypes {
   static const plan = 'plan';
   static const reasoning = 'reasoning';
   static const diff = 'diff';
+  static const webSearch = 'web_search';
   static const contextCompaction = 'context_compaction';
 
   const SessionItemTypes._();

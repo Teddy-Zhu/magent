@@ -29,6 +29,10 @@ type Provider interface {
 	Close() error
 }
 
+type ThreadItemSnapshotReader interface {
+	ReadThreadItemsSnapshot(ctx context.Context, threadID string, limit int) (*ItemPage, error)
+}
+
 type SessionMetadataUpdater interface {
 	UpdateSessionMetadata(session Session)
 }
@@ -138,6 +142,7 @@ type SessionItem struct {
 	ItemID    string    `json:"item_id"`
 	TurnID    string    `json:"turn_id,omitempty"`
 	Index     int       `json:"index"`
+	Revision  int64     `json:"revision,omitempty"`
 	Type      string    `json:"type"`
 	Status    string    `json:"status,omitempty"`
 	Role      string    `json:"role,omitempty"`

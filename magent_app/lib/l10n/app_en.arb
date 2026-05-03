@@ -90,6 +90,8 @@
   "chatSend": "Send",
   "chatInterrupt": "Interrupt",
   "chatStop": "Stop",
+  "chatSyncingTitle": "Syncing conversation",
+  "chatSyncingSubtitle": "Loading the latest messages...",
   "chatApprove": "Approve",
   "chatDeny": "Deny",
 

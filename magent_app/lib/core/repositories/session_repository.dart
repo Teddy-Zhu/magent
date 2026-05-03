@@ -53,6 +53,15 @@ abstract class SessionApiLike {
     int limit = 200,
   });
 
+  Future<Map<String, dynamic>> getItemsSnapshot(String sessionId);
+
+  Future<Map<String, dynamic>> getItemChanges(
+    String sessionId, {
+    required int afterRevision,
+    int limit = 500,
+    bool reconcile = false,
+  });
+
   Future<void> approve(String sessionId, String approvalId, String action);
 }
 
@@ -63,9 +72,12 @@ abstract class SessionSyncStore {
 
   Future<String?> getRealtimeEpoch(String sessionId);
 
+  Future<int> getItemRevision(String sessionId);
+
   Future<List<Map<String, dynamic>>> refreshItems(
     String sessionId, {
     bool forceFull = false,
+    bool reconcile = true,
   });
 
   Future<List<Map<String, dynamic>>> refreshSessions(
@@ -78,11 +90,13 @@ class _ItemSyncPage {
   final List<Map<String, dynamic>> items;
   final String? cursor;
   final bool hasMore;
+  final int revision;
 
   const _ItemSyncPage({
     required this.items,
     required this.cursor,
     required this.hasMore,
+    this.revision = 0,
   });
 }
 
@@ -353,13 +367,7 @@ class SessionRepository implements SessionSyncStore {
       await _advanceRealtimeCursor(sessionId, event);
       return true;
     }
-    final projectsItem = _isRealtimeItemProjectionEvent(eventType);
-    final itemChanged = await _applyRealtimeItemProjection(
-      sessionId,
-      eventType,
-      event,
-    );
-    if (projectsItem && !itemChanged) {
+    if (_isRealtimeItemProjectionEvent(eventType)) {
       await _advanceRealtimeCursor(sessionId, event);
       return false;
     }
@@ -622,214 +630,6 @@ class SessionRepository implements SessionSyncStore {
     return _db.getSyncCursor(agentId, 'session_ws_epoch', sessionId);
   }
 
-  Future<bool> _applyRealtimeItemProjection(
-    String sessionId,
-    String eventType,
-    Map<String, dynamic> event,
-  ) async {
-    final data = _eventData(event);
-    final itemData = _eventItemData(data);
-    final itemId = _realtimeItemId(eventType, event, data, itemData);
-    if (itemId == null || itemId.isEmpty) return false;
-
-    final existing = await _db.getItem(agentId, sessionId, itemId);
-    if (existing?.status == 'completed' && _isRealtimeDeltaEvent(eventType)) {
-      return false;
-    }
-    final currentContent = _storedItemContent(existing);
-    final nextContent = Map<String, dynamic>.from(currentContent);
-    final now = _parseDateTime(event['created_at']);
-    final cursor =
-        event['cursor']?.toString() ?? event['provider_cursor']?.toString();
-    var type = existing?.type ?? _itemTypeFromEvent(eventType, data);
-    var status = existing?.status ?? 'in_progress';
-    var role = existing?.role ?? _roleForType(type);
-    var summary = existing?.summary;
-    var createdAt = existing?.createdAt ?? now;
-    var itemIndex =
-        _parseInt(itemData['index']) ??
-        _parseInt(data['index']) ??
-        existing?.itemIndex ??
-        now.microsecondsSinceEpoch;
-
-    switch (eventType) {
-      case SessionEventTypes.messageDelta:
-      case SessionEventTypes.output:
-        type = 'agent_message';
-        role = 'assistant';
-        status = 'in_progress';
-        nextContent['text'] = '${nextContent['text'] ?? ''}${_deltaText(data)}';
-        summary = _truncate(nextContent['text']?.toString() ?? '', 160);
-      case SessionEventTypes.planDelta:
-        type = 'plan';
-        status = 'in_progress';
-        nextContent['text'] = '${nextContent['text'] ?? ''}${_deltaText(data)}';
-        summary = _truncate(nextContent['text']?.toString() ?? '', 160);
-      case SessionEventTypes.reasoningSummaryDelta:
-        type = 'reasoning';
-        status = 'in_progress';
-        nextContent['summary'] =
-            '${_messageContentText(nextContent['summary'])}${_deltaText(data)}';
-        summary = _truncate(_messageContentText(nextContent['summary']), 160);
-      case SessionEventTypes.reasoningTextDelta:
-        type = 'reasoning';
-        status = 'in_progress';
-        nextContent['content'] =
-            '${_messageContentText(nextContent['content'])}${_deltaText(data)}';
-        summary = _contentSummary(type, nextContent);
-      case SessionEventTypes.reasoningSummaryPart:
-        type = 'reasoning';
-        status = 'in_progress';
-        final parts = List<dynamic>.from(
-          nextContent['summary_parts'] as List? ?? [],
-        );
-        parts.add(data);
-        nextContent['summary_parts'] = parts;
-        summary ??= 'Reasoning';
-      case SessionEventTypes.commandOutputDelta:
-        type = 'command_execution';
-        status = 'in_progress';
-        nextContent['output'] =
-            '${nextContent['output'] ?? ''}${_deltaText(data)}';
-        summary = _commandSummary(data, nextContent);
-      case SessionEventTypes.fileChangeOutputDelta:
-        type = 'file_change';
-        status = 'in_progress';
-        nextContent['output'] =
-            '${nextContent['output'] ?? ''}${_deltaText(data)}';
-        summary = _contentSummary(type, nextContent);
-      case SessionEventTypes.planUpdated:
-      case SessionEventTypes.plan:
-        type = 'plan';
-        status = 'in_progress';
-        nextContent.addAll(data);
-        summary = _planSummary(data);
-      case SessionEventTypes.reasoning:
-        type = 'reasoning';
-        status = data['status']?.toString() ?? 'completed';
-        nextContent.addAll(data);
-        summary = _contentSummary(type, nextContent);
-      case SessionEventTypes.diffUpdated:
-        type = 'diff';
-        status = 'in_progress';
-        nextContent.addAll(data);
-        summary = 'Diff updated';
-      case SessionEventTypes.itemStarted:
-        type = _itemTypeFromEvent(eventType, itemData);
-        status = itemData['status']?.toString() ?? 'in_progress';
-        nextContent.addAll(itemData);
-        summary = _contentSummary(type, nextContent);
-      case SessionEventTypes.approvalRequest:
-        type = _itemTypeFromEvent(eventType, itemData);
-        status = itemData['status']?.toString() ?? 'pending';
-        nextContent.addAll(itemData);
-        summary = _contentSummary(type, nextContent);
-      default:
-        final completed = _completedItemFromEvent(eventType, data);
-        if (completed == null) return false;
-        type = _normalizeItemType(completed['type']?.toString() ?? type);
-        status = completed['status']?.toString() ?? 'completed';
-        role = _roleForType(type);
-        nextContent
-          ..clear()
-          ..addAll(_mergeItemContent(currentContent, completed));
-        summary = _contentSummary(type, nextContent);
-        createdAt = existing?.createdAt ?? now;
-        itemIndex =
-            _parseInt(completed['index']) ??
-            _parseInt(data['index']) ??
-            itemIndex;
-    }
-    if (type == SessionItemTypes.reasoning &&
-        !_hasVisibleReasoningContent(nextContent)) {
-      if (existing != null) {
-        await _db.deleteItem(agentId, sessionId, itemId);
-        return true;
-      }
-      return false;
-    }
-
-    final next = SessionItemEntriesCompanion(
-      agentId: Value(agentId),
-      sessionId: Value(sessionId),
-      itemId: Value(itemId),
-      turnId: Value(
-        event['turn_id']?.toString() ??
-            event['turnId']?.toString() ??
-            data['turn_id']?.toString() ??
-            data['turnId']?.toString(),
-      ),
-      type: Value(type),
-      status: Value(status),
-      role: Value(role),
-      summary: Value(summary),
-      content: Value(_encodeJson(nextContent)),
-      providerCursor: Value(cursor),
-      itemIndex: Value(itemIndex),
-      createdAt: Value(createdAt),
-      updatedAt: Value(now),
-    );
-    if (_sessionItemMatchesExisting(existing, next)) return false;
-
-    await _db.insertOrUpdateItem(next);
-    if (type == SessionItemTypes.userMessage && !itemId.startsWith('local-')) {
-      await _removeMatchingPendingUserMessage(sessionId, nextContent);
-    }
-    return true;
-  }
-
-  String? _realtimeItemId(
-    String eventType,
-    Map<String, dynamic> event,
-    Map<String, dynamic> data,
-    Map<String, dynamic> itemData,
-  ) {
-    for (final source in [event, data, itemData]) {
-      for (final key in ['item_id', 'itemId', 'id']) {
-        final value = source[key]?.toString();
-        if (value != null && value.isNotEmpty) return value;
-      }
-    }
-
-    final turnId =
-        event['turn_id']?.toString() ??
-        event['turnId']?.toString() ??
-        data['turn_id']?.toString() ??
-        data['turnId']?.toString() ??
-        itemData['turn_id']?.toString() ??
-        itemData['turnId']?.toString();
-    if (turnId == null || turnId.isEmpty) return null;
-
-    switch (eventType) {
-      case SessionEventTypes.plan:
-      case SessionEventTypes.planDelta:
-      case SessionEventTypes.planUpdated:
-        return 'plan:$turnId';
-      case SessionEventTypes.diffUpdated:
-        return 'diff:$turnId';
-      case SessionEventTypes.output:
-        return 'output:$turnId';
-      default:
-        return null;
-    }
-  }
-
-  bool _isRealtimeDeltaEvent(String eventType) {
-    switch (eventType) {
-      case SessionEventTypes.messageDelta:
-      case SessionEventTypes.planDelta:
-      case SessionEventTypes.reasoningSummaryDelta:
-      case SessionEventTypes.reasoningTextDelta:
-      case SessionEventTypes.reasoningSummaryPart:
-      case SessionEventTypes.commandOutputDelta:
-      case SessionEventTypes.fileChangeOutputDelta:
-      case SessionEventTypes.output:
-        return true;
-      default:
-        return false;
-    }
-  }
-
   // --- Items ---
 
   Future<List<Map<String, dynamic>>> getItems(
@@ -853,70 +653,31 @@ class SessionRepository implements SessionSyncStore {
   Future<List<Map<String, dynamic>>> refreshItems(
     String sessionId, {
     bool forceFull = false,
+    bool reconcile = true,
   }) async {
-    if (forceFull) {
-      return (await _syncItemsPageFromApi(
-        sessionId,
-        cursor: null,
-        replaceSnapshot: true,
-      )).items;
-    }
+    if (forceFull) return _syncItemSnapshot(sessionId);
 
-    final cursor = await _db.getSyncCursor(agentId, 'session_items', sessionId);
-    if (cursor == null || cursor.isEmpty) {
-      return (await _syncItemsPageFromApi(
-        sessionId,
-        cursor: null,
-        replaceSnapshot: true,
-      )).items;
-    }
+    final revision = await getItemRevision(sessionId);
+    if (revision <= 0) return _syncItemSnapshot(sessionId);
 
-    final synced = <Map<String, dynamic>>[];
     try {
-      synced.addAll(await _syncItemPagesFromCursor(sessionId, cursor));
+      return await _syncItemChanges(sessionId, revision, reconcile: reconcile);
     } catch (error) {
       debugPrint(
-        'SessionRepository: incremental item sync failed, falling back to latest page: $error',
+        'SessionRepository: item change sync failed, falling back to snapshot: $error',
       );
-      return (await _syncItemsPageFromApi(
-        sessionId,
-        cursor: null,
-        replaceSnapshot: true,
-      )).items;
+      return _syncItemSnapshot(sessionId);
     }
-    synced.addAll(
-      (await _syncItemsPageFromApi(
-        sessionId,
-        cursor: null,
-        replaceSnapshot: false,
-      )).items,
-    );
-    return synced;
   }
 
-  Future<List<Map<String, dynamic>>> _syncItemPagesFromCursor(
-    String sessionId,
-    String initialCursor,
-  ) async {
-    final synced = <Map<String, dynamic>>[];
-    var cursor = initialCursor;
-    while (cursor.isNotEmpty) {
-      final page = await _syncItemsPageFromApi(sessionId, cursor: cursor);
-      synced.addAll(page.items);
-      final nextCursor = page.cursor;
-      if (!page.hasMore || nextCursor == null || nextCursor.isEmpty) break;
-      if (nextCursor == cursor) break;
-      cursor = nextCursor;
-    }
-    return synced;
+  @override
+  Future<int> getItemRevision(String sessionId) async {
+    return await _db.getSyncRevision(agentId, 'session_items', sessionId) ?? 0;
   }
 
-  Future<_ItemSyncPage> _syncItemsPageFromApi(
-    String sessionId, {
-    required String? cursor,
-    bool replaceSnapshot = false,
-  }) async {
-    final page = await _api.getItemsPage(sessionId, cursor: cursor);
+  Future<List<Map<String, dynamic>>> _syncItemSnapshot(String sessionId) async {
+    final page = await _api.getItemsSnapshot(sessionId);
+    final revision = _parseInt(page['revision']) ?? 0;
     final newItems = page['items'] as List<dynamic>? ?? [];
     final snapshotItemIds = <String>{};
     final realUserMessageContents = <dynamic>[];
@@ -927,9 +688,8 @@ class SessionRepository implements SessionSyncStore {
       if (itemId.isEmpty) continue;
       final type = SessionItemTypes.normalize(map['type']?.toString() ?? '');
       final existing = await _db.getItem(agentId, sessionId, itemId);
-      final existingContent = _storedItemContent(existing);
       final incomingContent = _apiItemContent(map, type);
-      final content = _mergeItemContent(existingContent, incomingContent);
+      final content = incomingContent;
       if (type == SessionItemTypes.reasoning &&
           !_hasVisibleReasoningContent(content)) {
         if (existing != null) {
@@ -954,26 +714,121 @@ class SessionRepository implements SessionSyncStore {
         entries.add(next);
       }
     }
-    if (entries.isNotEmpty) {
-      await _db.insertOrUpdateItems(entries);
-    }
+    await _db.transaction(() async {
+      if (entries.isNotEmpty) {
+        await _db.insertOrUpdateItems(entries);
+      }
+      await _pruneItemsMissingFromSnapshot(sessionId, snapshotItemIds);
+      await _db.setSyncState(
+        agentId,
+        'session_items',
+        sessionId,
+        revision: revision,
+      );
+    });
     for (final content in realUserMessageContents) {
       await _removeMatchingPendingUserMessage(sessionId, content);
     }
-    final nextCursor = page['cursor']?.toString();
-    final hasMore = page['has_more'] == true || page['hasMore'] == true;
-    if (replaceSnapshot && !hasMore) {
-      await _pruneItemsMissingFromSnapshot(sessionId, snapshotItemIds);
-    }
-    if (nextCursor != null && nextCursor.isNotEmpty) {
-      await _db.setSyncCursor(agentId, 'session_items', sessionId, nextCursor);
-    }
+    return entries.map(_itemCompanionToMap).toList(growable: false);
+  }
 
+  Future<List<Map<String, dynamic>>> _syncItemChanges(
+    String sessionId,
+    int initialRevision, {
+    required bool reconcile,
+  }) async {
+    final synced = <Map<String, dynamic>>[];
+    var afterRevision = initialRevision;
+    while (true) {
+      final page = await _api.getItemChanges(
+        sessionId,
+        afterRevision: afterRevision,
+        reconcile: reconcile && afterRevision == initialRevision,
+      );
+      if (page['reset_required'] == true || page['resetRequired'] == true) {
+        return _syncItemSnapshot(sessionId);
+      }
+      final result = await _applyItemChangesPage(sessionId, page);
+      synced.addAll(result.items);
+      if (!result.hasMore) break;
+      if (result.revision <= afterRevision) break;
+      afterRevision = result.revision;
+    }
+    return synced;
+  }
+
+  Future<_ItemSyncPage> _applyItemChangesPage(
+    String sessionId,
+    Map<String, dynamic> page,
+  ) async {
+    final changes = page['changes'] as List<dynamic>? ?? [];
+    final changed = <Map<String, dynamic>>[];
+    var revision = _parseInt(page['to_revision'] ?? page['toRevision']) ?? 0;
+    await _db.transaction(() async {
+      for (final rawChange in changes) {
+        final change = Map<String, dynamic>.from(rawChange as Map);
+        revision = _parseInt(change['revision']) ?? revision;
+        final op = change['op']?.toString() ?? '';
+        final itemId = change['item_id']?.toString() ?? '';
+        if (itemId.isEmpty) continue;
+        if (op == 'delete') {
+          await _db.deleteItem(agentId, sessionId, itemId);
+          continue;
+        }
+        final rawItem = change['item'];
+        if (rawItem is! Map) continue;
+        final applied = await _upsertApiItem(
+          sessionId,
+          Map<String, dynamic>.from(rawItem),
+        );
+        if (applied != null) changed.add(applied);
+      }
+      await _db.setSyncState(
+        agentId,
+        'session_items',
+        sessionId,
+        revision: revision,
+      );
+    });
     return _ItemSyncPage(
-      items: entries.map(_itemCompanionToMap).toList(growable: false),
-      cursor: nextCursor,
-      hasMore: hasMore,
+      items: changed,
+      cursor: null,
+      hasMore: page['has_more'] == true || page['hasMore'] == true,
+      revision: revision,
     );
+  }
+
+  Future<Map<String, dynamic>?> _upsertApiItem(
+    String sessionId,
+    Map<String, dynamic> map,
+  ) async {
+    final itemId = map['item_id']?.toString() ?? map['id']?.toString() ?? '';
+    if (itemId.isEmpty) return null;
+    final type = SessionItemTypes.normalize(map['type']?.toString() ?? '');
+    final existing = await _db.getItem(agentId, sessionId, itemId);
+    final incomingContent = _apiItemContent(map, type);
+    if (type == SessionItemTypes.reasoning &&
+        !_hasVisibleReasoningContent(incomingContent)) {
+      if (existing != null) {
+        await _db.deleteItem(agentId, sessionId, itemId);
+      }
+      return null;
+    }
+    final next = _sessionItemCompanion(
+      sessionId: sessionId,
+      itemId: itemId,
+      type: type,
+      map: map,
+      content: incomingContent,
+      existing: existing,
+    );
+    if (!_sessionItemMatchesExisting(existing, next)) {
+      await _db.insertOrUpdateItem(next);
+    }
+    if (type == SessionItemTypes.userMessage && !itemId.startsWith('local-')) {
+      await _removeMatchingPendingUserMessage(sessionId, incomingContent);
+    }
+    return _itemCompanionToMap(next);
   }
 
   Future<void> _pruneItemsMissingFromSnapshot(
@@ -1230,93 +1085,6 @@ class SessionRepository implements SessionSyncStore {
     return <String, dynamic>{};
   }
 
-  Map<String, dynamic>? _completedItemFromEvent(
-    String eventType,
-    Map<String, dynamic> data,
-  ) {
-    switch (eventType) {
-      case SessionEventTypes.message:
-      case SessionEventTypes.commandCompleted:
-      case SessionEventTypes.fileWrite:
-      case SessionEventTypes.fileRead:
-      case SessionEventTypes.mcpToolCompleted:
-      case SessionEventTypes.itemCompleted:
-      case SessionEventTypes.userMessage:
-        return _eventItemData(data);
-      default:
-        return null;
-    }
-  }
-
-  Map<String, dynamic> _eventItemData(Map<String, dynamic> data) {
-    final item = data['item'];
-    if (item is Map) {
-      final map = Map<String, dynamic>.from(item);
-      for (final key in ['threadId', 'thread_id', 'turnId', 'turn_id']) {
-        map.putIfAbsent(key, () => data[key]);
-      }
-      return map;
-    }
-    return data;
-  }
-
-  String _itemTypeFromEvent(String eventType, Map<String, dynamic> data) {
-    final rawType = data['type']?.toString() ?? data['item_type']?.toString();
-    if (rawType != null && rawType.isNotEmpty) {
-      return _normalizeItemType(rawType);
-    }
-    switch (eventType) {
-      case SessionEventTypes.message:
-      case SessionEventTypes.messageDelta:
-      case SessionEventTypes.output:
-        return 'agent_message';
-      case SessionEventTypes.userMessage:
-        return 'user_message';
-      case SessionEventTypes.commandCompleted:
-      case SessionEventTypes.commandOutputDelta:
-        return 'command_execution';
-      case SessionEventTypes.fileWrite:
-      case SessionEventTypes.fileChangeOutputDelta:
-        return 'file_change';
-      case SessionEventTypes.fileRead:
-        return 'file_read';
-      case SessionEventTypes.mcpToolCompleted:
-      case SessionEventTypes.approvalRequest:
-        return 'mcp_tool_call';
-      case SessionEventTypes.plan:
-      case SessionEventTypes.planDelta:
-      case SessionEventTypes.planUpdated:
-        return 'plan';
-      case SessionEventTypes.diffUpdated:
-        return 'diff';
-      default:
-        return 'event';
-    }
-  }
-
-  String _normalizeItemType(String itemType) {
-    return SessionItemTypes.normalize(itemType);
-  }
-
-  String? _roleForType(String type) {
-    switch (type) {
-      case 'user_message':
-        return 'user';
-      case 'agent_message':
-        return 'assistant';
-      default:
-        return null;
-    }
-  }
-
-  String _deltaText(Map<String, dynamic> data) {
-    for (final key in ['delta', 'text', 'content', 'output']) {
-      final value = data[key];
-      if (value != null) return value.toString();
-    }
-    return '';
-  }
-
   String _contentSummary(String type, Map<String, dynamic> content) {
     if (type == SessionItemTypes.reasoning) {
       final reasoning = _reasoningContentText(content);
@@ -1345,14 +1113,6 @@ class SessionRepository implements SessionSyncStore {
       if (changePath != null && changePath.isNotEmpty) return changePath;
     }
     return type;
-  }
-
-  Map<String, dynamic> _storedItemContent(SessionItemEntry? item) {
-    if (item == null) return <String, dynamic>{};
-    final decoded = _decodeJson(item.content);
-    if (decoded is Map) return Map<String, dynamic>.from(decoded);
-    if (decoded == null) return <String, dynamic>{};
-    return <String, dynamic>{'value': decoded};
   }
 
   Map<String, dynamic> _apiItemContent(Map<String, dynamic> item, String type) {
@@ -1424,20 +1184,6 @@ class SessionRepository implements SessionSyncStore {
     }
   }
 
-  Map<String, dynamic> _mergeItemContent(
-    Map<String, dynamic> existing,
-    Map<String, dynamic> incoming,
-  ) {
-    final merged = Map<String, dynamic>.from(existing);
-    incoming.forEach((key, value) {
-      if (_hasMeaningfulValue(value) || !_hasMeaningfulValue(merged[key])) {
-        merged[key] = value;
-      }
-    });
-    _normalizeContentAliases(merged);
-    return merged;
-  }
-
   bool _hasMeaningfulValue(dynamic value) {
     if (value == null) return false;
     if (value is String) return value.trim().isNotEmpty;
@@ -1469,25 +1215,6 @@ class SessionRepository implements SessionSyncStore {
           .join('\n');
     }
     return '';
-  }
-
-  String _commandSummary(
-    Map<String, dynamic> data,
-    Map<String, dynamic> content,
-  ) {
-    final command = _commandContentText({...content, ...data});
-    if (command.isNotEmpty) return _truncate(command, 160);
-    return 'Command output';
-  }
-
-  String _planSummary(Map<String, dynamic> data) {
-    final explanation = data['explanation']?.toString();
-    if (explanation != null && explanation.isNotEmpty) {
-      return _truncate(explanation, 160);
-    }
-    final plan = data['plan'];
-    if (plan is List && plan.isNotEmpty) return 'Plan updated';
-    return 'Plan';
   }
 
   String _messageContentText(dynamic value) {

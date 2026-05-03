@@ -61,6 +61,48 @@ func (s *SQLite) migrate() error {
 			created_at INTEGER NOT NULL,
 			resolved_at INTEGER
 		);
+
+		CREATE TABLE IF NOT EXISTS session_items (
+			session_id TEXT NOT NULL,
+			item_id TEXT NOT NULL,
+			turn_id TEXT,
+			order_key INTEGER NOT NULL,
+			revision INTEGER NOT NULL,
+			type TEXT NOT NULL,
+			status TEXT,
+			role TEXT,
+			summary TEXT,
+			content_json TEXT NOT NULL,
+			provider_cursor TEXT,
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			deleted_at INTEGER,
+			PRIMARY KEY(session_id, item_id)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_session_items_order
+			ON session_items(session_id, deleted_at, order_key, created_at, item_id);
+
+		CREATE TABLE IF NOT EXISTS session_item_changes (
+			session_id TEXT NOT NULL,
+			revision INTEGER NOT NULL,
+			op TEXT NOT NULL,
+			item_id TEXT NOT NULL,
+			item_json TEXT,
+			created_at INTEGER NOT NULL,
+			PRIMARY KEY(session_id, revision)
+		);
+
+		CREATE INDEX IF NOT EXISTS idx_session_item_changes_session_revision
+			ON session_item_changes(session_id, revision);
+
+		CREATE TABLE IF NOT EXISTS session_item_sync_state (
+			session_id TEXT PRIMARY KEY,
+			revision INTEGER NOT NULL DEFAULT 0,
+			provider_tail_hash TEXT,
+			provider_tail_item_count INTEGER NOT NULL DEFAULT 0,
+			last_reconciled_at INTEGER
+		);
 	`)
 	if err != nil {
 		return err

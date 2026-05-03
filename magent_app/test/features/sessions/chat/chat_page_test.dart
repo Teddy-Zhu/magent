@@ -114,4 +114,29 @@ diff --git a/lib/b.dart b/lib/b.dart
     expect(files.last.additions, 1);
     expect(files.last.deletions, 1);
   });
+
+  test('web search item is summarized as readable text', () {
+    final data = {
+      'type': 'web_search',
+      'query': 'Flutter ListView jump to bottom',
+      'results': [
+        {
+          'title': 'ScrollController class',
+          'url':
+              'https://api.flutter.dev/flutter/widgets/ScrollController-class.html',
+          'snippet': 'Controls a scrollable widget.',
+        },
+      ],
+    };
+
+    expect(
+      chatWebSearchTitle(data),
+      'Web search: Flutter ListView jump to bottom',
+    );
+    expect(chatWebSearchSummary(data), '1 result');
+    final detail = chatWebSearchDetail(data);
+    expect(detail, contains('Query: Flutter ListView jump to bottom'));
+    expect(detail, contains('ScrollController class'));
+    expect(detail, contains('https://api.flutter.dev'));
+  });
 }

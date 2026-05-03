@@ -54,11 +54,13 @@ void main() {
     },
   );
 
-  test('session event is applied and emitted', () async {
+  test('item projection delta is dispatched without item catch-up', () async {
     final events = <Map<String, dynamic>>[];
     engine.start();
     final sub = engine.sessionEvents.listen(events.add);
     await engine.subscribeSession('s1');
+    sessions.refreshedItems.clear();
+    sessions.refreshReconciles.clear();
 
     final event = {
       'type': 'session.message_delta',
@@ -69,38 +71,44 @@ void main() {
     realtime.emit(event);
     await Future<void>.delayed(Duration.zero);
 
-    expect(sessions.appliedEvents, [event]);
-    expect(events, [event]);
-    await sub.cancel();
-  });
-
-  test('wrapped session event is emitted with provider event type', () async {
-    final events = <Map<String, dynamic>>[];
-    engine.start();
-    final sub = engine.sessionEvents.listen(events.add);
-    await engine.subscribeSession('s1');
-
-    final event = {
-      'type': 'session.event',
-      'event_type': 'session.message_delta',
-      'session_id': 's1',
-      'item_id': 'i1',
-      'data': {'delta': 'hello'},
-    };
-    realtime.emit(event);
-    await Future<void>.delayed(Duration.zero);
-
-    expect(sessions.appliedEvents, [event]);
+    expect(sessions.appliedEvents, isEmpty);
+    expect(sessions.refreshedItems, isEmpty);
     expect(events.single['type'], 'session.message_delta');
-    expect(events.single['_envelope_type'], 'session.event');
     await sub.cancel();
   });
 
-  test('subscribe uses stored realtime cursor', () async {
-    sessions.cursors['s1'] = 'ws:10';
+  test(
+    'wrapped item projection delta is dispatched without catch-up',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      engine.start();
+      final sub = engine.sessionEvents.listen(events.add);
+      await engine.subscribeSession('s1');
+      sessions.refreshedItems.clear();
+
+      final event = {
+        'type': 'session.event',
+        'event_type': 'session.message_delta',
+        'session_id': 's1',
+        'item_id': 'i1',
+        'data': {'delta': 'hello'},
+      };
+      realtime.emit(event);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(sessions.appliedEvents, isEmpty);
+      expect(sessions.refreshedItems, isEmpty);
+      expect(events.single['type'], 'session.message_delta');
+      expect(events.single['_envelope_type'], 'session.event');
+      await sub.cancel();
+    },
+  );
+
+  test('subscribe uses stored item revision cursor', () async {
+    sessions.revisions['s1'] = 10;
     await engine.subscribeSession('s1');
 
-    expect(realtime.subscriptions, {'s1': 'ws:10'});
+    expect(realtime.subscriptions, {'s1': 'items:10'});
     expect(sessions.refreshedItems, ['s1']);
   });
 
@@ -129,11 +137,41 @@ void main() {
     await subscribe;
     await Future<void>.delayed(Duration.zero);
 
-    expect(sessions.appliedEvents, [event]);
-    expect(events, [event]);
-    expect(realtime.subscriptions['s1'], '11');
+    expect(sessions.appliedEvents, isEmpty);
+    expect(sessions.refreshedItems, ['s1']);
+    expect(events.single['type'], 'session.message_delta');
     await sub.cancel();
   });
+
+  test(
+    'buffered projection event is dropped when catch-up advances revision',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      final refresh = Completer<List<Map<String, dynamic>>>();
+      sessions.refreshCompleters.add(refresh);
+      final sub = engine.sessionEvents.listen(events.add);
+
+      final subscribe = engine.subscribeSession('s1');
+      await Future<void>.delayed(Duration.zero);
+      realtime.emit({
+        'type': 'session.message_delta',
+        'session_id': 's1',
+        'item_id': 'i1',
+        'ws_cursor': '11',
+        'data': {'delta': 'hello'},
+      });
+      await Future<void>.delayed(Duration.zero);
+      sessions.revisions['s1'] = 11;
+      refresh.complete([]);
+      await subscribe;
+      await Future<void>.delayed(Duration.zero);
+
+      expect(sessions.appliedEvents, isEmpty);
+      expect(sessions.refreshedItems, ['s1']);
+      expect(events, isEmpty);
+      await sub.cancel();
+    },
+  );
 
   test(
     'sync required buffers following session events during catch-up',
@@ -165,7 +203,8 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
-      expect(sessions.appliedEvents, [event]);
+      expect(sessions.appliedEvents, isEmpty);
+      expect(sessions.refreshedItems, ['s1']);
       expect(events.map((event) => event['type']), [
         'session.sync_required',
         'session.message_delta',
@@ -174,39 +213,39 @@ void main() {
     },
   );
 
-  test('duplicate realtime events are not emitted', () async {
+  test('session items changed triggers catch-up once', () async {
     final events = <Map<String, dynamic>>[];
-    sessions.applyResults.addAll([true, false]);
     engine.start();
     final sub = engine.sessionEvents.listen(events.add);
     await engine.subscribeSession('s1');
+    sessions.refreshedItems.clear();
+    sessions.refreshReconciles.clear();
 
     final event = {
-      'type': 'session.message_delta',
+      'type': 'session.items.changed',
       'session_id': 's1',
-      'item_id': 'i1',
-      'ws_cursor': '11',
-      'data': {'delta': 'hello'},
+      'from_revision': 1,
+      'to_revision': 2,
     };
     realtime.emit(event);
-    realtime.emit({...event, 'ws_cursor': '11'});
-    await Future<void>.delayed(Duration.zero);
     await Future<void>.delayed(Duration.zero);
 
-    expect(sessions.appliedEvents, [event, event]);
-    expect(events, [event]);
+    expect(sessions.refreshedItems, ['s1']);
+    expect(sessions.refreshReconciles, [false]);
+    expect(events.single['type'], 'session.items.changed');
     await sub.cancel();
   });
 
   test(
-    'ignored realtime event does not move subscription cursor backward',
+    'ignored projection hint does not move subscription cursor backward',
     () async {
       final events = <Map<String, dynamic>>[];
-      sessions.cursors['s1'] = 'same:24';
-      sessions.applyResults.add(false);
+      sessions.revisions['s1'] = 24;
       engine.start();
       final sub = engine.sessionEvents.listen(events.add);
       await engine.subscribeSession('s1');
+      sessions.refreshedItems.clear();
+      sessions.refreshReconciles.clear();
 
       final event = {
         'type': 'session.message_delta',
@@ -219,9 +258,9 @@ void main() {
       await Future<void>.delayed(Duration.zero);
       await Future<void>.delayed(Duration.zero);
 
-      expect(sessions.appliedEvents, [event]);
-      expect(events, isEmpty);
-      expect(realtime.subscriptions['s1'], 'same:24');
+      expect(sessions.appliedEvents, isEmpty);
+      expect(events.single['type'], 'session.message_delta');
+      expect(realtime.subscriptions['s1'], 'items:24');
       await sub.cancel();
     },
   );
@@ -323,7 +362,9 @@ class _FakeBootstrap implements BootstrapSyncStore {
 
 class _FakeSessions implements SessionSyncStore {
   final cursors = <String, String?>{};
+  final revisions = <String, int>{};
   final refreshedItems = <String>[];
+  final refreshReconciles = <bool>[];
   final refreshedSessions = <String>[];
   final appliedEvents = <Map<String, dynamic>>[];
   final refreshCompleters = <Completer<List<Map<String, dynamic>>>>[];
@@ -347,11 +388,18 @@ class _FakeSessions implements SessionSyncStore {
   }
 
   @override
+  Future<int> getItemRevision(String sessionId) async {
+    return revisions[sessionId] ?? 0;
+  }
+
+  @override
   Future<List<Map<String, dynamic>>> refreshItems(
     String sessionId, {
     bool forceFull = false,
+    bool reconcile = true,
   }) async {
     refreshedItems.add(sessionId);
+    refreshReconciles.add(reconcile);
     if (refreshCompleters.isNotEmpty) {
       return refreshCompleters.removeAt(0).future;
     }

@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 	"github.com/Teddy-Zhu/magent/agent/internal/storage"
@@ -248,6 +250,108 @@ func TestGetSessionFindsProviderSessionWhenDBWorkdirIsStale(t *testing.T) {
 	}
 }
 
+func TestForwardEventsUpsertsCompletedItemWithoutProviderRead(t *testing.T) {
+	db, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	store := NewSessionStore(db)
+	if err := store.Save(&provider.Session{
+		ID:         "s1",
+		ProviderID: "codex",
+		ThreadID:   "s1",
+		ProjectID:  "p1",
+		Status:     string(provider.SessionStatusRunning),
+	}); err != nil {
+		t.Fatalf("save session: %v", err)
+	}
+	events := make(chan provider.ProviderEvent)
+	providerImpl := &managerTestProvider{name: "codex", events: events}
+	registry := provider.NewRegistry()
+	registry.Register("codex", providerImpl)
+	hub := ws.NewHub()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go hub.Run(ctx)
+	manager := NewManager(store, registry, hub)
+	done := make(chan struct{})
+	go func() {
+		manager.forwardEvents("s1", providerImpl)
+		close(done)
+	}()
+
+	events <- provider.ProviderEvent{
+		SessionID: "s1",
+		Type:      string(provider.EventMessage),
+		ItemID:    "msg-1",
+		TurnID:    "turn-1",
+		Timestamp: time.Unix(1777730145, 0),
+		Payload: map[string]any{
+			"id":     "msg-1",
+			"type":   "agentMessage",
+			"turnId": "turn-1",
+			"text":   "hello",
+			"index":  1,
+		},
+	}
+	close(events)
+	<-done
+
+	if providerImpl.readItemsCount != 0 {
+		t.Fatalf("ReadThreadItems called %d times, want 0", providerImpl.readItemsCount)
+	}
+	snapshot, err := manager.itemProjection.Snapshot(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snapshot.Items) != 1 || snapshot.Items[0].ItemID != "msg-1" {
+		t.Fatalf("items = %#v", snapshot.Items)
+	}
+}
+
+func TestForwardEventsIgnoresDeltaProjectionSync(t *testing.T) {
+	db, err := storage.Open(":memory:")
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer db.Close()
+
+	store := NewSessionStore(db)
+	events := make(chan provider.ProviderEvent)
+	providerImpl := &managerTestProvider{name: "codex", events: events}
+	manager := NewManager(store, provider.NewRegistry(), ws.NewHub())
+	done := make(chan struct{})
+	go func() {
+		manager.forwardEvents("s1", providerImpl)
+		close(done)
+	}()
+
+	events <- provider.ProviderEvent{
+		SessionID: "s1",
+		Type:      string(provider.EventMessageDelta),
+		ItemID:    "msg-1",
+		TurnID:    "turn-1",
+		Timestamp: time.Unix(1777730145, 0),
+		Payload: map[string]any{
+			"itemId": "msg-1",
+			"turnId": "turn-1",
+			"delta":  "hello",
+		},
+	}
+	close(events)
+	<-done
+
+	snapshot, err := manager.itemProjection.Snapshot(context.Background(), "s1")
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+	if len(snapshot.Items) != 0 {
+		t.Fatalf("delta should not create projection item: %#v", snapshot.Items)
+	}
+}
+
 func TestResumeSessionDeletesProviderMissingDBMetadata(t *testing.T) {
 	db, err := storage.Open(":memory:")
 	if err != nil {
@@ -384,16 +488,20 @@ func TestForkSessionUpdatesProviderMetadataForNewThread(t *testing.T) {
 }
 
 type managerTestProvider struct {
-	name         string
-	active       map[string]bool
-	threads      []provider.Session
-	archived     []provider.Session
-	resumeErr    error
-	forkID       string
-	archivedIDs  []string
-	unarchivedID string
-	deletedIDs   []string
-	lastMetadata *provider.Session
+	name           string
+	active         map[string]bool
+	threads        []provider.Session
+	archived       []provider.Session
+	items          []provider.SessionItem
+	events         chan provider.ProviderEvent
+	mu             sync.Mutex
+	readItemsCount int
+	resumeErr      error
+	forkID         string
+	archivedIDs    []string
+	unarchivedID   string
+	deletedIDs     []string
+	lastMetadata   *provider.Session
 }
 
 func (p *managerTestProvider) Name() string { return p.name }
@@ -489,7 +597,13 @@ func (p *managerTestProvider) ReadThreadEvents(ctx context.Context, threadID, cu
 }
 
 func (p *managerTestProvider) ReadThreadItems(ctx context.Context, threadID, cursor string, limit int) (*provider.ItemPage, error) {
-	return nil, fmt.Errorf("not implemented")
+	p.mu.Lock()
+	p.readItemsCount++
+	p.mu.Unlock()
+	return &provider.ItemPage{
+		SessionID: threadID,
+		Items:     p.items,
+	}, nil
 }
 
 func (p *managerTestProvider) ResolveApproval(ctx context.Context, sessionID, approvalID string, decision provider.ApprovalDecision) error {
@@ -497,6 +611,9 @@ func (p *managerTestProvider) ResolveApproval(ctx context.Context, sessionID, ap
 }
 
 func (p *managerTestProvider) Subscribe(sessionID string) <-chan provider.ProviderEvent {
+	if p.events != nil {
+		return p.events
+	}
 	return make(chan provider.ProviderEvent)
 }
 

@@ -254,6 +254,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatStop => 'Stop';
 
   @override
+  String get chatSyncingTitle => 'Syncing conversation';
+
+  @override
+  String get chatSyncingSubtitle => 'Loading the latest messages...';
+
+  @override
   String get chatApprove => 'Approve';
 
   @override

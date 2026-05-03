@@ -92,6 +92,140 @@ class ChatDiffFileSummary {
 }
 
 @visibleForTesting
+String chatWebSearchTitle(Object? data) {
+  final map = data is Map ? Map<String, dynamic>.from(data) : null;
+  final query = _chatFirstText(map, const [
+    'query',
+    'search_query',
+    'searchQuery',
+    'q',
+    'text',
+    'content',
+  ]);
+  return query.isEmpty ? 'Web search' : 'Web search: $query';
+}
+
+@visibleForTesting
+String chatWebSearchSummary(Object? data) {
+  final map = data is Map ? Map<String, dynamic>.from(data) : null;
+  if (map == null) return '';
+  final summary = _chatFirstText(map, const ['summary', 'snippet', 'text']);
+  if (summary.isNotEmpty && summary != _chatFirstText(map, const ['query'])) {
+    return _chatSingleLine(summary);
+  }
+  final results = _chatSearchResults(map);
+  if (results.isNotEmpty) {
+    return '${results.length} result${results.length == 1 ? '' : 's'}';
+  }
+  final status = _chatFirstText(map, const ['status']);
+  return status.isEmpty ? 'Search completed' : status;
+}
+
+@visibleForTesting
+String chatWebSearchDetail(Object? data) {
+  final map = data is Map ? Map<String, dynamic>.from(data) : null;
+  if (map == null) return data?.toString() ?? '';
+  final lines = <String>[];
+  final query = _chatFirstText(map, const [
+    'query',
+    'search_query',
+    'searchQuery',
+    'q',
+    'text',
+    'content',
+  ]);
+  if (query.isNotEmpty) {
+    lines.add('Query: $query');
+  }
+  final status = _chatFirstText(map, const ['status']);
+  if (status.isNotEmpty) {
+    lines.add('Status: $status');
+  }
+  final summary = _chatFirstText(map, const ['summary', 'snippet']);
+  if (summary.isNotEmpty) {
+    if (lines.isNotEmpty) lines.add('');
+    lines.add(summary);
+  }
+  final results = _chatSearchResults(map);
+  if (results.isNotEmpty) {
+    if (lines.isNotEmpty) lines.add('');
+    for (var i = 0; i < results.length; i++) {
+      final result = results[i];
+      final title = _chatFirstText(result, const [
+        'title',
+        'name',
+        'source',
+        'url',
+      ]);
+      final url = _chatFirstText(result, const ['url', 'link', 'href']);
+      final snippet = _chatFirstText(result, const [
+        'snippet',
+        'text',
+        'content',
+        'summary',
+      ]);
+      lines.add('${i + 1}. ${title.isEmpty ? 'Result' : title}');
+      if (url.isNotEmpty && url != title) lines.add(url);
+      if (snippet.isNotEmpty) lines.add(snippet);
+      if (i != results.length - 1) lines.add('');
+    }
+  }
+  if (lines.isNotEmpty) return lines.join('\n');
+  return const JsonEncoder.withIndent('  ').convert(map);
+}
+
+String _chatFirstText(Map<String, dynamic>? data, List<String> keys) {
+  if (data == null) return '';
+  for (final key in keys) {
+    final text = _chatText(data[key]);
+    if (text.isNotEmpty) return text;
+  }
+  return '';
+}
+
+String _chatText(Object? value) {
+  if (value == null) return '';
+  if (value is String) return value.trim();
+  if (value is Iterable) {
+    return value.map(_chatText).where((text) => text.isNotEmpty).join('\n');
+  }
+  if (value is Map) {
+    return _chatFirstText(Map<String, dynamic>.from(value), const [
+      'text',
+      'content',
+      'message',
+      'value',
+      'title',
+      'url',
+    ]);
+  }
+  return value.toString().trim();
+}
+
+List<Map<String, dynamic>> _chatSearchResults(Map<String, dynamic> data) {
+  for (final key in const ['results', 'sources', 'items', 'citations']) {
+    final value = data[key];
+    if (value is Iterable) {
+      return value
+          .whereType<Map>()
+          .map((item) => Map<String, dynamic>.from(item))
+          .toList(growable: false);
+    }
+  }
+  return const [];
+}
+
+String _chatSingleLine(String text) {
+  final normalized = text
+      .split('\n')
+      .map((line) => line.trim())
+      .where((line) => line.isNotEmpty)
+      .join(' ');
+  if (normalized.length <= 160) return normalized;
+  return '${normalized.substring(0, 160).trimRight()}...';
+}
+
+@visibleForTesting
 bool chatTurnActiveFromItemSnapshot({
   required bool currentTurnActive,
   required bool snapshotHasActiveItem,
@@ -247,6 +381,7 @@ String _cleanDiffPath(String path) {
 class _ChatPageState extends ConsumerState<ChatPage> {
   static const _initialVisibleEventCount = 80;
   static const _eventPageSize = 80;
+  static const _initialBottomJumpFrames = 8;
   static const _sendModeQueue = 'queue';
   static const _sendModeInterruptThenSend = 'interrupt_then_send';
 
@@ -265,6 +400,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   bool _resuming = false;
   bool _openAtBottom = true;
   bool _didInitialBottomScroll = false;
+  bool _pendingInitialBottomScroll = false;
   bool _pendingScrollToBottom = false;
   bool _pendingJumpToBottom = false;
   bool _turnActive = false;
@@ -360,15 +496,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             sessionStatus: _session?['status'],
           );
           final turnActiveChanged = _turnActive != nextTurnActive;
-          final loadingChanged = _loading;
           final shouldInitialBottomScroll =
               !_didInitialBottomScroll && nextVisibleState.events.isNotEmpty;
           final shouldAutoScroll = visibleEventsChanged && _isNearBottom();
           if (!_isActive) return;
-          if (eventsChanged ||
-              visibleEventsChanged ||
-              turnActiveChanged ||
-              loadingChanged) {
+          if (eventsChanged || visibleEventsChanged || turnActiveChanged) {
             setState(() {
               if (eventsChanged) {
                 _events
@@ -381,16 +513,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               if (turnActiveChanged) {
                 _turnActive = nextTurnActive;
               }
-              if (loadingChanged) {
-                _loading = false;
-              }
             });
           }
           if (shouldInitialBottomScroll) {
-            _didInitialBottomScroll = true;
-            if (_openAtBottom) {
-              _jumpToBottom();
-            }
+            _requestInitialBottomScroll();
           } else if (visibleEventsChanged &&
               (shouldAutoScroll || nextVisibleState.events.length <= 1)) {
             _scrollToBottom();
@@ -400,14 +526,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _connectSessionEvents() async {
     final engine = ref.read(syncEngineProvider);
-    if (engine == null) return;
+    if (engine == null) {
+      _markInitialItemsLoaded();
+      return;
+    }
     _sessionEventsSub = engine.sessionEvents.listen((event) {
       if (!_isActive) return;
       final sessionId = event['session_id']?.toString();
       if (sessionId != null && sessionId != widget.sessionId) return;
       final type = event['type']?.toString() ?? '';
-      if (type == 'session.sync_required') {
-        _loadItems();
+      if (type == 'session.sync_required' || type == 'session.items.changed') {
         return;
       }
       if (type == 'server.hello' ||
@@ -430,7 +558,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _applyTurnRuntimeState(normalizedType, normalized['data']);
       if (!_isRenderableRealtimeEvent(normalizedType)) return;
       if (_isItemProjectionEvent(normalizedType)) {
-        _upsertRealtimeItemEvent(normalizedType, event);
         return;
       }
       final shouldAutoScroll = _isNearBottom();
@@ -444,7 +571,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       });
       if (shouldAutoScroll) _scrollToBottom();
     });
-    await engine.subscribeSession(widget.sessionId);
+    try {
+      await engine.subscribeSession(widget.sessionId);
+    } finally {
+      _markInitialItemsLoaded();
+    }
   }
 
   void _applyTokenUsage(Object? data) {
@@ -489,228 +620,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       default:
         return false;
     }
-  }
-
-  void _upsertRealtimeItemEvent(String type, Map<String, dynamic> event) {
-    final rawData = event['data'];
-    final data = rawData is Map
-        ? Map<String, dynamic>.from(rawData)
-        : <String, dynamic>{};
-    final itemKey = _eventItemKey(event, data);
-    if (itemKey.isEmpty) return;
-
-    final existingIndex = _events.indexWhere(
-      (item) => item['_item_key'] == itemKey,
-    );
-    final existing = existingIndex >= 0 ? _events[existingIndex] : null;
-    final existingData = existing?['data'] is Map
-        ? Map<String, dynamic>.from(existing!['data'] as Map)
-        : <String, dynamic>{};
-    final next = _mergedRealtimeItemEvent(
-      type: type,
-      itemKey: itemKey,
-      data: data,
-      existingData: existingData,
-    );
-    if (next == null) return;
-
-    final hasSameExisting =
-        existingIndex >= 0 && _eventEquals(_events[existingIndex], next);
-    if (hasSameExisting && !_hasMatchingPendingUserEvent(next)) {
-      return;
-    }
-    final shouldAutoScroll = _isNearBottom();
-    if (!_isActive) return;
-    setState(() {
-      _removeMatchingPendingUserEvent(next);
-      final updatedIndex = _events.indexWhere(
-        (item) => item['_item_key'] == itemKey,
-      );
-      if (updatedIndex >= 0) {
-        _events[updatedIndex] = next;
-      } else {
-        _events.add(next);
-      }
-      _recomputeVisibleEventCache();
-    });
-    if (shouldAutoScroll) _scrollToBottom();
-  }
-
-  bool _hasMatchingPendingUserEvent(Map<String, dynamic> next) {
-    final text = _pendingUserMessageText(next);
-    if (text.isEmpty) return false;
-    return _events.any((event) => _isMatchingPendingUserEvent(event, text));
-  }
-
-  void _removeMatchingPendingUserEvent(Map<String, dynamic> next) {
-    final text = _pendingUserMessageText(next);
-    if (text.isEmpty) return;
-    _events.removeWhere((event) => _isMatchingPendingUserEvent(event, text));
-  }
-
-  String _pendingUserMessageText(Map<String, dynamic> next) {
-    if (next['type'] != SessionEventTypes.userMessage) return '';
-    final itemKey = next['_item_key']?.toString() ?? '';
-    if (itemKey.isEmpty || itemKey.startsWith('local-')) return '';
-    final text = _messageText(next['data'], ['content', 'text']).trim();
-    return text;
-  }
-
-  bool _isMatchingPendingUserEvent(Map<String, dynamic> event, String text) {
-    if (event['type'] != SessionEventTypes.userMessage) return false;
-    final pendingKey = event['_item_key']?.toString() ?? '';
-    if (!pendingKey.startsWith('local-')) return false;
-    if (event['status']?.toString() != 'pending') return false;
-    final pendingText = _messageText(event['data'], ['content', 'text']).trim();
-    return pendingText == text;
-  }
-
-  Map<String, dynamic>? _mergedRealtimeItemEvent({
-    required String type,
-    required String itemKey,
-    required Map<String, dynamic> data,
-    required Map<String, dynamic> existingData,
-  }) {
-    final nextData = Map<String, dynamic>.from(existingData);
-    var renderType = type;
-    var status = 'in_progress';
-
-    switch (type) {
-      case SessionEventTypes.messageDelta:
-        renderType = SessionEventTypes.message;
-        nextData['text'] = '${nextData['text'] ?? ''}${_deltaText(data)}';
-      case SessionEventTypes.planDelta:
-        renderType = SessionEventTypes.plan;
-        nextData['text'] = '${nextData['text'] ?? ''}${_deltaText(data)}';
-      case SessionEventTypes.reasoningSummaryDelta:
-        renderType = SessionEventTypes.reasoning;
-        nextData['summary'] = '${nextData['summary'] ?? ''}${_deltaText(data)}';
-      case SessionEventTypes.reasoningTextDelta:
-        renderType = SessionEventTypes.reasoning;
-        nextData['content'] = '${nextData['content'] ?? ''}${_deltaText(data)}';
-      case SessionEventTypes.commandOutputDelta:
-        renderType = SessionEventTypes.commandOutputDelta;
-        nextData.addAll(_withoutDelta(data));
-        nextData['output'] = '${nextData['output'] ?? ''}${_deltaText(data)}';
-      case SessionEventTypes.fileChangeOutputDelta:
-        renderType = SessionEventTypes.fileChangeOutputDelta;
-        nextData.addAll(_withoutDelta(data));
-        nextData['output'] = '${nextData['output'] ?? ''}${_deltaText(data)}';
-      case SessionEventTypes.reasoningSummaryPart:
-        renderType = SessionEventTypes.reasoning;
-        final parts = List<dynamic>.from(
-          nextData['summary_parts'] as List? ?? [],
-        );
-        parts.add(data);
-        nextData['summary_parts'] = parts;
-      case SessionEventTypes.planUpdated:
-      case SessionEventTypes.diffUpdated:
-        nextData.addAll(data);
-      case SessionEventTypes.itemStarted:
-        final item = _eventItemPayload(data);
-        renderType = _eventTypeForItem(item, fallback: type);
-        if (renderType.isEmpty) return null;
-        nextData.addAll(item);
-        _normalizeEventDataAliases(nextData);
-        status = item['status']?.toString() ?? status;
-        if (!_hasVisibleItemContent(renderType, nextData)) return null;
-      case SessionEventTypes.itemCompleted:
-        final item = _eventItemPayload(data);
-        renderType = _eventTypeForItem(item, fallback: type);
-        if (renderType.isEmpty) return null;
-        nextData
-          ..clear()
-          ..addAll(item);
-        _normalizeEventDataAliases(nextData);
-        status = item['status']?.toString() ?? 'completed';
-        if (!_hasVisibleItemContent(renderType, nextData)) return null;
-      case SessionEventTypes.message:
-      case SessionEventTypes.userMessage:
-      case SessionEventTypes.commandCompleted:
-      case SessionEventTypes.fileWrite:
-      case SessionEventTypes.fileRead:
-      case SessionEventTypes.mcpToolCompleted:
-        nextData
-          ..clear()
-          ..addAll(data);
-        _normalizeEventDataAliases(nextData);
-        status = data['status']?.toString() ?? 'completed';
-      default:
-        return null;
-    }
-
-    return {
-      '_item_key': itemKey,
-      'type': renderType,
-      'status': status,
-      'data': nextData,
-    };
-  }
-
-  String _eventItemKey(Map<String, dynamic> event, Map<String, dynamic> data) {
-    for (final source in [event, data, _eventItemPayload(data)]) {
-      for (final key in ['item_id', 'itemId', 'id']) {
-        final value = source[key]?.toString();
-        if (value != null && value.isNotEmpty) return value;
-      }
-    }
-    return '';
-  }
-
-  Map<String, dynamic> _eventItemPayload(Map<String, dynamic> data) {
-    final item = data['item'];
-    if (item is Map) {
-      final map = Map<String, dynamic>.from(item);
-      for (final key in ['threadId', 'thread_id', 'turnId', 'turn_id']) {
-        map.putIfAbsent(key, () => data[key]);
-      }
-      return map;
-    }
-    return data;
-  }
-
-  String _eventTypeForItem(
-    Map<String, dynamic> item, {
-    required String fallback,
-  }) {
-    switch (SessionItemTypes.normalize(item['type']?.toString() ?? '')) {
-      case SessionItemTypes.contextCompaction:
-        return SessionEventTypes.itemCompleted;
-      case SessionItemTypes.userMessage:
-        return SessionEventTypes.userMessage;
-      case SessionItemTypes.agentMessage:
-        return SessionEventTypes.message;
-      case SessionItemTypes.commandExecution:
-        return SessionEventTypes.commandCompleted;
-      case SessionItemTypes.fileChange:
-        return SessionEventTypes.fileWrite;
-      case SessionItemTypes.fileRead:
-        return SessionEventTypes.fileRead;
-      case SessionItemTypes.mcpToolCall:
-        return SessionEventTypes.mcpToolCompleted;
-      case SessionItemTypes.plan:
-        return SessionEventTypes.plan;
-      case SessionItemTypes.reasoning:
-        return SessionEventTypes.reasoning;
-      case SessionItemTypes.diff:
-        return SessionEventTypes.diffUpdated;
-      default:
-        return fallback;
-    }
-  }
-
-  Map<String, dynamic> _withoutDelta(Map<String, dynamic> data) {
-    final copy = Map<String, dynamic>.from(data);
-    copy.remove('delta');
-    return copy;
-  }
-
-  String _deltaText(Map<String, dynamic> data) {
-    for (final key in ['delta', 'text', 'content', 'output']) {
-      final value = data[key];
-      if (value != null) return value.toString();
-    }
-    return '';
   }
 
   bool _hasVisibleItemContent(String type, Map<String, dynamic> data) {
@@ -765,36 +674,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           if (entry.key.startsWith('_')) return false;
           return _isMeaningfulValue(entry.value);
         });
-    }
-  }
-
-  void _normalizeEventDataAliases(Map<String, dynamic> data) {
-    if (data['output'] == null && data['aggregatedOutput'] != null) {
-      data['output'] = data['aggregatedOutput'];
-    }
-    if (data['output'] == null && data['stdout'] != null) {
-      data['output'] = data['stdout'];
-    }
-    if (data['output'] == null && data['stderr'] != null) {
-      data['output'] = data['stderr'];
-    }
-    if (data['exit_code'] == null && data['exitCode'] != null) {
-      data['exit_code'] = data['exitCode'];
-    }
-    if (data['command'] == null) {
-      for (final key in [
-        'cmd',
-        'cmdline',
-        'argv',
-        'args',
-        'program',
-        'script',
-      ]) {
-        if (_isMeaningfulValue(data[key])) {
-          data['command'] = data[key];
-          break;
-        }
-      }
     }
   }
 
@@ -1004,13 +883,20 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _itemsRefreshInFlight = true;
     try {
       await _repo!.refreshItems(widget.sessionId);
-      if (mounted && _loading) setState(() => _loading = false);
     } catch (e) {
       debugPrint('ChatPage: loadEvents error: $e');
-      if (mounted && _loading) setState(() => _loading = false);
+      _markInitialItemsLoaded();
     } finally {
       _itemsRefreshInFlight = false;
     }
+  }
+
+  void _markInitialItemsLoaded() {
+    if (!_isActive) return;
+    if (_loading) {
+      setState(() => _loading = false);
+    }
+    _flushPendingInitialBottomScroll();
   }
 
   Future<void> _refreshItemsFull() async {
@@ -1383,19 +1269,48 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
   }
 
+  void _requestInitialBottomScroll() {
+    if (_didInitialBottomScroll) return;
+    _didInitialBottomScroll = true;
+    if (!_openAtBottom) return;
+    _pendingInitialBottomScroll = true;
+    _flushPendingInitialBottomScroll();
+  }
+
+  void _flushPendingInitialBottomScroll() {
+    if (!_pendingInitialBottomScroll || !_isActive || _loading) return;
+    _pendingInitialBottomScroll = false;
+    _jumpToBottom();
+  }
+
   void _jumpToBottom() {
     if (_pendingJumpToBottom) return;
     _pendingScrollToBottom = false;
     _pendingJumpToBottom = true;
+    _jumpToBottomOnNextFrame(_initialBottomJumpFrames);
+  }
+
+  void _jumpToBottomOnNextFrame(int remainingFrames) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!_pendingJumpToBottom || !_isActive) return;
-      _pendingJumpToBottom = false;
-      if (_scrollController.hasClients) {
-        final position = _scrollController.position;
-        final target = position.maxScrollExtent;
-        if ((position.pixels - target).abs() < 1) return;
+      if (!_scrollController.hasClients) {
+        if (remainingFrames <= 0) {
+          _pendingJumpToBottom = false;
+          return;
+        }
+        _jumpToBottomOnNextFrame(remainingFrames - 1);
+        return;
+      }
+      final position = _scrollController.position;
+      final target = position.maxScrollExtent;
+      if ((position.pixels - target).abs() >= 1) {
         _scrollController.jumpTo(target);
       }
+      if (remainingFrames <= 0) {
+        _pendingJumpToBottom = false;
+        return;
+      }
+      _jumpToBottomOnNextFrame(remainingFrames - 1);
     });
   }
 
@@ -2026,6 +1941,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         return buildEvent(SessionEventTypes.reasoning);
       case SessionItemTypes.diff:
         return buildEvent(SessionEventTypes.diffUpdated);
+      case SessionItemTypes.webSearch:
+        return buildEvent(SessionEventTypes.itemCompleted)
+          ..['data'] = {...data, 'item_type': type};
       default:
         return buildEvent(SessionEventTypes.itemCompleted)
           ..['data'] = {...data, 'item_type': type};
@@ -2105,7 +2023,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             ),
           Expanded(
             child: _loading
-                ? const Center(child: CircularProgressIndicator())
+                ? const _SessionLoadingState()
                 : !hasVisibleContent
                 ? _buildEmptyState()
                 : ListView.builder(
@@ -2440,10 +2358,22 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           success: data?['error'] == null,
         );
       case SessionEventTypes.itemCompleted:
-        if (_itemType(data) == SessionItemTypes.contextCompaction) {
+        final itemType = _itemType(data);
+        if (itemType == SessionItemTypes.contextCompaction) {
           return _InfoChip(
             label: l10n.chatContextCompacted,
             icon: Icons.compress,
+          );
+        }
+        if (itemType == SessionItemTypes.webSearch) {
+          final detail = chatWebSearchDetail(data);
+          return _ToolCallCard(
+            icon: Icons.travel_explore,
+            title: chatWebSearchTitle(data),
+            output: detail,
+            summary: chatWebSearchSummary(data),
+            success: true,
+            monospace: false,
           );
         }
         return _StructuredInfoCard(
@@ -3750,6 +3680,7 @@ class _ToolCallCard extends StatefulWidget {
   final String output;
   final String? summary;
   final bool success;
+  final bool monospace;
 
   const _ToolCallCard({
     required this.icon,
@@ -3757,6 +3688,7 @@ class _ToolCallCard extends StatefulWidget {
     required this.output,
     this.summary,
     required this.success,
+    this.monospace = true,
   });
 
   @override
@@ -3786,8 +3718,10 @@ class _ToolCallCardState extends State<_ToolCallCard> {
               if (output.isNotEmpty) '',
               if (output.isNotEmpty) output,
             ].join('\n'),
-            language: _detailLanguage(title, output),
-            monospace: true,
+            language: widget.monospace
+                ? _detailLanguage(title, output)
+                : 'plaintext',
+            monospace: widget.monospace,
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(10, 8, 8, 8),
@@ -3988,16 +3922,28 @@ class _SessionDetailSheetState extends State<_SessionDetailSheet> {
     if (widget.language == 'diff') {
       return _buildDiffBody(scrollController);
     }
-    final codeView = HighlightView(
-      widget.content,
-      language: widget.language == 'plaintext' ? null : widget.language,
-      theme: githubTheme,
-      padding: const EdgeInsets.all(16),
-      textStyle: TextStyle(
-        fontFamily: widget.monospace ? 'monospace' : null,
-        fontSize: 12,
-      ),
-    );
+    final highlightLanguage = _highlightLanguage(widget.language);
+    final codeView = highlightLanguage == null
+        ? Padding(
+            padding: const EdgeInsets.all(16),
+            child: SelectableText(
+              widget.content,
+              style: TextStyle(
+                fontFamily: widget.monospace ? 'monospace' : null,
+                fontSize: 12,
+              ),
+            ),
+          )
+        : HighlightView(
+            widget.content,
+            language: highlightLanguage,
+            theme: githubTheme,
+            padding: const EdgeInsets.all(16),
+            textStyle: TextStyle(
+              fontFamily: widget.monospace ? 'monospace' : null,
+              fontSize: 12,
+            ),
+          );
     if (_wrap) {
       return SingleChildScrollView(
         controller: scrollController,
@@ -4011,6 +3957,23 @@ class _SessionDetailSheetState extends State<_SessionDetailSheet> {
         child: codeView,
       ),
     );
+  }
+
+  String? _highlightLanguage(String language) {
+    switch (language) {
+      case 'bash':
+      case 'dart':
+      case 'go':
+      case 'javascript':
+      case 'json':
+      case 'markdown':
+      case 'python':
+      case 'typescript':
+      case 'yaml':
+        return language;
+      default:
+        return null;
+    }
   }
 
   Widget _buildDiffBody(ScrollController scrollController) {
@@ -4208,6 +4171,43 @@ class _StructuredInfoCardState extends State<_StructuredInfoCard> {
     final firstLine = text.split('\n').first.trim();
     if (firstLine.length <= 220) return firstLine;
     return '${firstLine.substring(0, 220).trimRight()}...';
+  }
+}
+
+class _SessionLoadingState extends StatelessWidget {
+  const _SessionLoadingState();
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final colorScheme = Theme.of(context).colorScheme;
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2.4),
+          ),
+          const SizedBox(height: 14),
+          Text(
+            l10n.chatSyncingTitle,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+              color: colorScheme.onSurface,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            l10n.chatSyncingSubtitle,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }
 
