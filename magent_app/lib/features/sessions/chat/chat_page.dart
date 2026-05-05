@@ -442,6 +442,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   int _visibleEventCount = _initialVisibleEventCount;
   int _totalEventCount = 0;
 
+  // 用户在设置面板里改过、且**与会话基线（_session 字段）不同**的待发送值。
+  // 发送成功一次后会被"提升"为新基线（写回 _session）并清空，避免每次都重复
+  // 把同一组参数塞进请求里浪费流量；codex 那边只需要一次覆盖就会作为后续
+  // 默认。失败时保留以便下一次发送重试。
+  String? _pendingModel;
+  String? _pendingEffort;
+  String? _pendingApproval;
+  String? _pendingSandbox;
+  Map<String, dynamic>? _providerConfig;
+
   bool get _isRunning {
     return SessionStatuses.isRunning(_session?['status']);
   }
@@ -455,6 +465,40 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (_session == null && !_loading) return true;
     final status = SessionStatuses.normalize(_session?['status']);
     return status == null || SessionStatuses.canResume(status);
+  }
+
+  String _sessionField(String key) {
+    final value = _session?[key]?.toString().trim();
+    return (value == null || value.isEmpty) ? '' : value;
+  }
+
+  String get _activeModel =>
+      (_pendingModel?.isNotEmpty ?? false) ? _pendingModel! : _sessionField('model');
+  String get _activeEffort =>
+      (_pendingEffort?.isNotEmpty ?? false) ? _pendingEffort! : _sessionField('effort');
+  String get _activeApproval => (_pendingApproval?.isNotEmpty ?? false)
+      ? _pendingApproval!
+      : _sessionField('approval_policy');
+  String get _activeSandbox => (_pendingSandbox?.isNotEmpty ?? false)
+      ? _pendingSandbox!
+      : _sessionField('sandbox_mode');
+
+  /// 当 sheet 返回新值时调用：只把"和当前基线不同"的字段记为 pending，
+  /// 相同的清空（不发送）。
+  void _applySettingsResult(_SessionSettingsResult r) {
+    String? diff(String? next, String baseline) {
+      final value = next?.trim();
+      if (value == null || value.isEmpty) return null;
+      if (value == baseline) return null;
+      return value;
+    }
+
+    setState(() {
+      _pendingModel = diff(r.model, _sessionField('model'));
+      _pendingEffort = diff(r.effort, _sessionField('effort'));
+      _pendingApproval = diff(r.approvalPolicy, _sessionField('approval_policy'));
+      _pendingSandbox = diff(r.sandboxMode, _sessionField('sandbox_mode'));
+    });
   }
 
   @override
@@ -490,12 +534,54 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     unawaited(
       _loadSession().then((_) {
         if (_isActive) unawaited(_refreshSkills());
+        if (_isActive) unawaited(_loadProviderConfig());
       }),
     );
     unawaited(_connectSessionEvents());
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (_isActive) unawaited(_loadItems());
     });
+  }
+
+  Future<void> _loadProviderConfig() async {
+    if (_api == null) return;
+    final providerId = _session == null
+        ? 'codex'
+        : (canonicalProviderId(Map<String, dynamic>.from(_session!)) ?? 'codex');
+    try {
+      final resp = await _api!.client.dio.get(
+        '/api/v1/providers/$providerId/config',
+      );
+      if (!_isActive) return;
+      final data = resp.data is Map ? resp.data['data'] : null;
+      if (data is Map) {
+        setState(() => _providerConfig = Map<String, dynamic>.from(data));
+      }
+    } catch (e) {
+      debugPrint('ChatPage: load provider config error: $e');
+    }
+  }
+
+  Future<void> _openSettingsSheet() async {
+    if (_providerConfig == null) {
+      await _loadProviderConfig();
+    }
+    if (!mounted) return;
+    final result = await showModalBottomSheet<_SessionSettingsResult>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(borderRadius: AppRadius.sheetTop),
+      builder: (ctx) => _SessionSettingsSheet(
+        config: _providerConfig,
+        currentModel: _activeModel,
+        currentEffort: _activeEffort,
+        currentApproval: _activeApproval,
+        currentSandbox: _activeSandbox,
+      ),
+    );
+    if (result == null || !mounted) return;
+    _applySettingsResult(result);
   }
 
   void _subscribeItems() {
@@ -977,14 +1063,41 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _templateService.addRecent(input);
 
     try {
+      // 仅在用户改了某项设置后才把它带过去；发送成功后这些 pending 值会被
+      // 提升为新基线，下次发送（如果用户没再改）就不会再传，省流量。
+      final sendModel = _pendingModel;
+      final sendEffort = _pendingEffort;
+      final sendApproval = _pendingApproval;
+      final sendSandbox = _pendingSandbox;
       await _api!.session.sendInput(
         widget.sessionId,
         input,
         items: items,
         mode: mode,
+        model: sendModel,
+        effort: sendEffort,
+        approvalPolicy: sendApproval,
+        sandboxMode: sendSandbox,
       );
       if (!mounted) return;
       setState(() {
+        // 把刚发送的 pending 值"沉淀"为新基线（写回 _session），并清空
+        // pending — 下次发送除非用户再次改设置，否则就不再附带这些字段。
+        if (sendModel != null ||
+            sendEffort != null ||
+            sendApproval != null ||
+            sendSandbox != null) {
+          final next = Map<String, dynamic>.from(_session ?? const {});
+          if (sendModel != null) next['model'] = sendModel;
+          if (sendEffort != null) next['effort'] = sendEffort;
+          if (sendApproval != null) next['approval_policy'] = sendApproval;
+          if (sendSandbox != null) next['sandbox_mode'] = sendSandbox;
+          _session = next;
+          _pendingModel = null;
+          _pendingEffort = null;
+          _pendingApproval = null;
+          _pendingSandbox = null;
+        }
         if (mode == _sendModeQueue ||
             mode == _sendModeInterruptThenSend ||
             _queuedInputCount > 0) {
@@ -2014,6 +2127,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ),
         actions: [
           IconButton(
+            icon: const Icon(Icons.tune),
+            onPressed: _openSettingsSheet,
+            tooltip: l10n.chatSettings,
+          ),
+          IconButton(
             icon: const Icon(Icons.difference_outlined),
             onPressed: _openChanges,
             tooltip: l10n.gitChanges,
@@ -2034,6 +2152,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       ),
       body: Column(
         children: [
+          _SessionStrategyBar(
+            model: _activeModel,
+            effort: _activeEffort,
+            approvalPolicy: _activeApproval,
+            sandboxMode: _activeSandbox,
+            onTap: _openSettingsSheet,
+          ),
           if (_tokenUsage != null)
             _TokenUsagePanel(
               usage: _tokenUsage!,
@@ -4567,5 +4692,369 @@ class _ErrorCard extends StatelessWidget {
         ),
       ),
     );
+  }
+}
+
+/// 顶部常驻的策略信息条：会话当前生效的 model / effort / approval / sandbox。
+/// 即使没有 token usage 也展示。点击触发设置面板。
+class _SessionStrategyBar extends StatelessWidget {
+  final String model;
+  final String effort;
+  final String approvalPolicy;
+  final String sandboxMode;
+  final VoidCallback onTap;
+
+  const _SessionStrategyBar({
+    required this.model,
+    required this.effort,
+    required this.approvalPolicy,
+    required this.sandboxMode,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final l10n = AppLocalizations.of(context)!;
+
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
+      child: InkWell(
+        onTap: onTap,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              Icon(
+                Icons.tune,
+                size: 14,
+                color: scheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    _StrategyChip(
+                      label: model.isEmpty ? '—' : model,
+                      tone: scheme.primary,
+                    ),
+                    if (effort.isNotEmpty)
+                      _StrategyChip(label: effort, tone: scheme.secondary),
+                    if (approvalPolicy.isNotEmpty)
+                      _StrategyChip(
+                        label: _approvalLabel(l10n, approvalPolicy),
+                        tone: scheme.tertiary,
+                      ),
+                    if (sandboxMode.isNotEmpty)
+                      _StrategyChip(
+                        label: _sandboxLabel(l10n, sandboxMode),
+                        tone: scheme.tertiary,
+                      ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 4),
+              Icon(
+                Icons.edit_outlined,
+                size: 14,
+                color: scheme.onSurfaceVariant,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _StrategyChip extends StatelessWidget {
+  final String label;
+  final Color tone;
+
+  const _StrategyChip({required this.label, required this.tone});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: tone.withValues(alpha: 0.10),
+        borderRadius: AppRadius.rxs,
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+          color: tone,
+          fontSize: 11,
+          fontWeight: FontWeight.w600,
+          letterSpacing: 0.1,
+        ),
+      ),
+    );
+  }
+}
+
+String _approvalLabel(AppLocalizations l10n, String value) {
+  switch (SessionApprovalPolicies.normalize(value)) {
+    case SessionApprovalPolicies.onRequest:
+      return l10n.approvalNormal;
+    case SessionApprovalPolicies.onFailure:
+      return l10n.approvalAuto;
+    case SessionApprovalPolicies.untrusted:
+      return l10n.approvalStrict;
+    case SessionApprovalPolicies.never:
+      return l10n.approvalAuto;
+    default:
+      return value;
+  }
+}
+
+String _sandboxLabel(AppLocalizations l10n, String value) {
+  switch (SessionSandboxModes.normalize(value)) {
+    case SessionSandboxModes.readOnly:
+      return l10n.sandboxReadOnly;
+    case SessionSandboxModes.workspaceWrite:
+      return l10n.sandboxWorkspace;
+    case SessionSandboxModes.dangerFullAccess:
+      return l10n.sandboxFull;
+    default:
+      return value;
+  }
+}
+
+/// 设置面板返回值。
+class _SessionSettingsResult {
+  final String? model;
+  final String? effort;
+  final String? approvalPolicy;
+  final String? sandboxMode;
+
+  const _SessionSettingsResult({
+    this.model,
+    this.effort,
+    this.approvalPolicy,
+    this.sandboxMode,
+  });
+}
+
+/// 会话设置弹窗：选择 model / effort / approval / sandbox。返回 null 表示取消。
+class _SessionSettingsSheet extends StatefulWidget {
+  final Map<String, dynamic>? config;
+  final String currentModel;
+  final String currentEffort;
+  final String currentApproval;
+  final String currentSandbox;
+
+  const _SessionSettingsSheet({
+    required this.config,
+    required this.currentModel,
+    required this.currentEffort,
+    required this.currentApproval,
+    required this.currentSandbox,
+  });
+
+  @override
+  State<_SessionSettingsSheet> createState() => _SessionSettingsSheetState();
+}
+
+class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
+  late String _model = widget.currentModel;
+  late String _effort = widget.currentEffort;
+  late String _approval = widget.currentApproval;
+  late String _sandbox = widget.currentSandbox;
+
+  List<Map<String, dynamic>> get _models {
+    final raw = widget.config?['models'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  List<String> get _effortsForCurrentModel {
+    Map<String, dynamic>? match;
+    for (final m in _models) {
+      if (m['id'] == _model) {
+        match = m;
+        break;
+      }
+    }
+    if (match == null) return const [];
+    final raw = match['reasoning_efforts'];
+    if (raw is! List) return const [];
+    return raw.map((e) => e.toString()).toList();
+  }
+
+  List<String> get _approvalPolicies {
+    final raw = widget.config?['approval_policies'];
+    if (raw is! List) return const [];
+    return raw.map((e) => e.toString()).toList();
+  }
+
+  List<String> get _sandboxModes {
+    final raw = widget.config?['sandbox_modes'];
+    if (raw is! List) return const [];
+    return raw.map((e) => e.toString()).toList();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+
+    final modelOptions = <String>{
+      ..._models.map((m) => m['id']?.toString() ?? '').where((s) => s.isNotEmpty),
+      if (_model.isNotEmpty) _model,
+    }.toList();
+    final effortOptions = <String>{
+      ..._effortsForCurrentModel,
+      if (_effort.isNotEmpty) _effort,
+    }.toList();
+    final approvalOptions = <String>{
+      ..._approvalPolicies,
+      if (_approval.isNotEmpty) _approval,
+    }.toList();
+    final sandboxOptions = <String>{
+      ..._sandboxModes,
+      if (_sandbox.isNotEmpty) _sandbox,
+    }.toList();
+
+    String? safeValue(String value, List<String> options) {
+      if (value.isEmpty) return null;
+      return options.contains(value) ? value : null;
+    }
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(
+          left: 16,
+          right: 16,
+          bottom: MediaQuery.of(context).viewInsets.bottom + 16,
+          top: 8,
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            AppSheetHeader(title: l10n.chatSettingsTitle),
+            const SizedBox(height: 4),
+            Text(
+              l10n.chatSettingsHint,
+              style: TextStyle(
+                fontSize: 12,
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<String>(
+              initialValue: safeValue(_model, modelOptions),
+              decoration: InputDecoration(labelText: l10n.chatSettingsModel),
+              items: modelOptions
+                  .map((id) => DropdownMenuItem(value: id, child: Text(id)))
+                  .toList(),
+              onChanged: (value) {
+                if (value == null) return;
+                setState(() {
+                  _model = value;
+                  final supported = _effortsForCurrentModel;
+                  if (_effort.isNotEmpty && !supported.contains(_effort)) {
+                    _effort = supported.isNotEmpty ? supported.first : '';
+                  }
+                });
+              },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: safeValue(_effort, effortOptions),
+              decoration: InputDecoration(labelText: l10n.chatSettingsEffort),
+              items: effortOptions
+                  .map(
+                    (e) => DropdownMenuItem(
+                      value: e,
+                      child: Text(_effortLabel(l10n, e)),
+                    ),
+                  )
+                  .toList(),
+              onChanged: effortOptions.isEmpty
+                  ? null
+                  : (value) {
+                      if (value != null) setState(() => _effort = value);
+                    },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: safeValue(_approval, approvalOptions),
+              decoration: InputDecoration(labelText: l10n.chatSettingsApproval),
+              items: approvalOptions
+                  .map(
+                    (id) => DropdownMenuItem(
+                      value: id,
+                      child: Text(_approvalLabel(l10n, id)),
+                    ),
+                  )
+                  .toList(),
+              onChanged: approvalOptions.isEmpty
+                  ? null
+                  : (value) {
+                      if (value != null) setState(() => _approval = value);
+                    },
+            ),
+            const SizedBox(height: 12),
+            DropdownButtonFormField<String>(
+              initialValue: safeValue(_sandbox, sandboxOptions),
+              decoration: InputDecoration(labelText: l10n.chatSettingsSandbox),
+              items: sandboxOptions
+                  .map(
+                    (id) => DropdownMenuItem(
+                      value: id,
+                      child: Text(_sandboxLabel(l10n, id)),
+                    ),
+                  )
+                  .toList(),
+              onChanged: sandboxOptions.isEmpty
+                  ? null
+                  : (value) {
+                      if (value != null) setState(() => _sandbox = value);
+                    },
+            ),
+            const SizedBox(height: 20),
+            FilledButton(
+              onPressed: () {
+                Navigator.pop(
+                  context,
+                  _SessionSettingsResult(
+                    model: _model.isEmpty ? null : _model,
+                    effort: _effort.isEmpty ? null : _effort,
+                    approvalPolicy: _approval.isEmpty ? null : _approval,
+                    sandboxMode: _sandbox.isEmpty ? null : _sandbox,
+                  ),
+                );
+              },
+              child: Text(l10n.chatSettingsApply),
+            ),
+            const SizedBox(height: 4),
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _effortLabel(AppLocalizations l10n, String effort) {
+    switch (effort.toLowerCase()) {
+      case 'low':
+        return l10n.effortLow;
+      case 'medium':
+        return l10n.effortMedium;
+      case 'high':
+        return l10n.effortHigh;
+      default:
+        return effort;
+    }
   }
 }

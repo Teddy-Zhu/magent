@@ -638,6 +638,30 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatRefresh => '刷新';
 
   @override
+  String get chatSettings => '会话设置';
+
+  @override
+  String get chatSettingsTitle => '会话设置';
+
+  @override
+  String get chatSettingsModel => '模型';
+
+  @override
+  String get chatSettingsEffort => '推理强度';
+
+  @override
+  String get chatSettingsApproval => '审批策略';
+
+  @override
+  String get chatSettingsSandbox => '沙箱模式';
+
+  @override
+  String get chatSettingsApply => '应用';
+
+  @override
+  String get chatSettingsHint => '仅本端生效，下次发送消息时携带；不会修改服务端会话默认设置。';
+
+  @override
   String get chatCreateNewSession => '创建新会话';
 
   @override

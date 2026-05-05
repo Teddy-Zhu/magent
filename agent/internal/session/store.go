@@ -26,9 +26,9 @@ func (s *SessionStore) Save(session *provider.Session) error {
 	_, err := s.db.DB().Exec(`
 		INSERT INTO sessions (
 			id, provider_id, thread_id, project_id, purpose, title, workdir, last_status,
-			runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at, archived_at
+			runner_type, model, effort, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at, archived_at
 		)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(id) DO UPDATE SET
 			provider_id = excluded.provider_id,
 			thread_id = excluded.thread_id,
@@ -39,6 +39,7 @@ func (s *SessionStore) Save(session *provider.Session) error {
 			last_status = excluded.last_status,
 			runner_type = excluded.runner_type,
 			model = excluded.model,
+			effort = COALESCE(NULLIF(excluded.effort, ''), sessions.effort),
 			approval_policy = excluded.approval_policy,
 			sandbox_mode = excluded.sandbox_mode,
 			config = excluded.config,
@@ -47,23 +48,23 @@ func (s *SessionStore) Save(session *provider.Session) error {
 			archived_at = excluded.archived_at`,
 		normalized.ID, normalized.ProviderID, normalized.ThreadID, normalized.ProjectID,
 		nullableString(normalized.Purpose), normalized.Title, normalized.Workdir, nullableString(normalized.Status), defaultString(normalized.RunnerType, "app-server"),
-		normalized.Model, normalized.ApprovalPolicy, normalized.SandboxMode, string(configJSON), now, now, nullableTime(normalized.ExitedAt), nullableTime(normalized.ArchivedAt))
+		normalized.Model, nullableString(normalized.Effort), normalized.ApprovalPolicy, normalized.SandboxMode, string(configJSON), now, now, nullableTime(normalized.ExitedAt), nullableTime(normalized.ArchivedAt))
 	return err
 }
 
 func (s *SessionStore) Get(id string) (*provider.Session, error) {
 	var session provider.Session
 	var createdAt, updatedAt int64
-	var purpose, title, workdir, lastStatus, runnerType, model, approvalMode, sandboxMode sql.NullString
+	var purpose, title, workdir, lastStatus, runnerType, model, effort, approvalMode, sandboxMode sql.NullString
 	var configRaw sql.NullString
 	var exitedAt, archivedAt sql.NullInt64
 
 	err := s.db.DB().QueryRow(`
 		SELECT id, provider_id, thread_id, project_id, purpose, title, workdir, last_status,
-		       runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at, archived_at
+		       runner_type, model, effort, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at, archived_at
 		FROM sessions WHERE id = ?`, id).Scan(
 		&session.ID, &session.ProviderID, &session.ThreadID, &session.ProjectID,
-		&purpose, &title, &workdir, &lastStatus, &runnerType, &model, &approvalMode, &sandboxMode,
+		&purpose, &title, &workdir, &lastStatus, &runnerType, &model, &effort, &approvalMode, &sandboxMode,
 		&configRaw, &createdAt, &updatedAt, &exitedAt, &archivedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -78,6 +79,7 @@ func (s *SessionStore) Get(id string) (*provider.Session, error) {
 	session.Status = lastStatus.String
 	session.RunnerType = runnerType.String
 	session.Model = model.String
+	session.Effort = effort.String
 	session.ApprovalPolicy = approvalMode.String
 	session.SandboxMode = sandboxMode.String
 	normalizeSessionControlPlane(&session)
@@ -100,7 +102,7 @@ func (s *SessionStore) Get(id string) (*provider.Session, error) {
 func (s *SessionStore) ListByProject(projectID string) ([]provider.Session, error) {
 	rows, err := s.db.DB().Query(`
 		SELECT id, provider_id, thread_id, project_id, purpose, title, workdir, last_status,
-		       runner_type, model, approval_policy, sandbox_mode, created_at, updated_at, archived_at
+		       runner_type, model, effort, approval_policy, sandbox_mode, created_at, updated_at, archived_at
 		FROM sessions WHERE project_id = ? ORDER BY created_at DESC`, projectID)
 	if err != nil {
 		return nil, err
@@ -111,12 +113,12 @@ func (s *SessionStore) ListByProject(projectID string) ([]provider.Session, erro
 	for rows.Next() {
 		var session provider.Session
 		var createdAt, updatedAt int64
-		var purpose, title, workdir, lastStatus, runnerType, model, approvalMode, sandboxMode sql.NullString
+		var purpose, title, workdir, lastStatus, runnerType, model, effort, approvalMode, sandboxMode sql.NullString
 		var archivedAt sql.NullInt64
 
 		if err := rows.Scan(
 			&session.ID, &session.ProviderID, &session.ThreadID, &session.ProjectID,
-			&purpose, &title, &workdir, &lastStatus, &runnerType, &model, &approvalMode, &sandboxMode,
+			&purpose, &title, &workdir, &lastStatus, &runnerType, &model, &effort, &approvalMode, &sandboxMode,
 			&createdAt, &updatedAt, &archivedAt); err != nil {
 			return nil, err
 		}
@@ -127,6 +129,7 @@ func (s *SessionStore) ListByProject(projectID string) ([]provider.Session, erro
 		session.Status = lastStatus.String
 		session.RunnerType = runnerType.String
 		session.Model = model.String
+		session.Effort = effort.String
 		session.ApprovalPolicy = approvalMode.String
 		session.SandboxMode = sandboxMode.String
 		normalizeSessionControlPlane(&session)
@@ -145,8 +148,8 @@ func (s *SessionStore) ListByProject(projectID string) ([]provider.Session, erro
 func (s *SessionStore) Update(session *provider.Session) error {
 	status := provider.NormalizeSessionStatus(session.Status)
 	_, err := s.db.DB().Exec(`
-		UPDATE sessions SET model = ?, last_status = ?, updated_at = ? WHERE id = ?`,
-		session.Model, nullableString(status), time.Now().Unix(), session.ID)
+		UPDATE sessions SET model = ?, effort = COALESCE(NULLIF(?, ''), effort), last_status = ?, updated_at = ? WHERE id = ?`,
+		session.Model, session.Effort, nullableString(status), time.Now().Unix(), session.ID)
 	return err
 }
 

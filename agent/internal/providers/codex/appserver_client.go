@@ -496,6 +496,17 @@ type ThreadInfo struct {
 	Status        ThreadStatus `json:"status"`
 	CreatedAt     int64        `json:"createdAt"`
 	UpdatedAt     int64        `json:"updatedAt"`
+
+	// 以下字段 codex appserver thread/list 不返回。
+	// 它们由 local thread store（~/.codex/state_5.sqlite）填充，
+	// 让 UI 能展示来源/模型/推理强度/沙箱/审批等真实信息。
+	Source         string `json:"source,omitempty"`
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	SandboxPolicy  string `json:"sandbox_policy,omitempty"`
+	ApprovalMode   string `json:"approval_mode,omitempty"`
+	Archived       bool   `json:"archived,omitempty"`
+	ArchivedAt     int64  `json:"archived_at,omitempty"`
 }
 
 type ListThreadsOptions struct {

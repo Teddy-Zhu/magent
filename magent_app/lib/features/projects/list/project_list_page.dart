@@ -26,6 +26,7 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
   bool _loading = true;
   AppApiClient? _api;
   BootstrapRepository? _bootstrap;
+  String _activeAgentName = '';
   StreamSubscription<List<Map<String, dynamic>>>? _projectsSub;
 
   @override
@@ -39,6 +40,15 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
     if (_api == null) {
       if (mounted) setState(() => _loading = false);
       return;
+    }
+    final activeAgent = await ref.read(secureStorageProvider).getActiveAgent();
+    final agentName = activeAgent?['name']?.trim() ?? '';
+    if (mounted) {
+      setState(() {
+        _activeAgentName = agentName.isEmpty
+            ? (activeAgent?['url'] ?? '')
+            : agentName;
+      });
     }
     ref.read(syncEngineProvider)?.start();
     _bootstrap = createBootstrapRepository(ref, _api!);
@@ -192,6 +202,7 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
                       name: name,
                       path: path,
                       provider: provider,
+                      agentName: _activeAgentName,
                       onTap: () => context.push('/projects/$id'),
                     ),
                   );
@@ -206,12 +217,14 @@ class _ProjectCard extends StatelessWidget {
   final String name;
   final String path;
   final String provider;
+  final String agentName;
   final VoidCallback onTap;
 
   const _ProjectCard({
     required this.name,
     required this.path,
     required this.provider,
+    required this.agentName,
     required this.onTap,
   });
 
@@ -221,15 +234,19 @@ class _ProjectCard extends StatelessWidget {
     final l10n = AppLocalizations.of(context)!;
     final title = name.isEmpty ? l10n.untitledProject : name;
     final providerLabel = provider.isEmpty ? 'default' : provider;
+    final hasAgent = agentName.isNotEmpty;
 
     return Card(
       child: AppListTile(
         onTap: onTap,
         tone: AppListTileTone.tertiary,
-        leadingIcon: Icons.folder,
         showChevron: true,
         title: Row(
           children: [
+            if (hasAgent) ...[
+              _AgentBadge(name: agentName),
+              const SizedBox(width: 8),
+            ],
             Expanded(
               child: Text(
                 title,
@@ -259,6 +276,52 @@ class _ProjectCard extends StatelessWidget {
                 path,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 项目卡片左侧的 agent 标签：用 hub icon + 文字显示当前激活 agent 的名字。
+class _AgentBadge extends StatelessWidget {
+  final String name;
+
+  const _AgentBadge({required this.name});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(maxWidth: 110),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+        decoration: BoxDecoration(
+          color: scheme.primaryContainer.withValues(alpha: 0.7),
+          borderRadius: AppRadius.rxs,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              Icons.hub_outlined,
+              size: 11,
+              color: scheme.onPrimaryContainer,
+            ),
+            const SizedBox(width: 3),
+            Flexible(
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: scheme.onPrimaryContainer,
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 0.1,
+                ),
               ),
             ),
           ],

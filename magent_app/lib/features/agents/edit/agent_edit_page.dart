@@ -1,20 +1,22 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:magent_app/core/api/api_client.dart';
 import 'package:magent_app/core/api/error_messages.dart';
+import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
 import 'package:magent_app/shared/widgets/app_loading.dart';
 
-class AgentEditPage extends StatefulWidget {
+class AgentEditPage extends ConsumerStatefulWidget {
   final String agentId;
 
   const AgentEditPage({super.key, required this.agentId});
 
   @override
-  State<AgentEditPage> createState() => _AgentEditPageState();
+  ConsumerState<AgentEditPage> createState() => _AgentEditPageState();
 }
 
-class _AgentEditPageState extends State<AgentEditPage> {
+class _AgentEditPageState extends ConsumerState<AgentEditPage> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _urlController = TextEditingController();
@@ -61,6 +63,8 @@ class _AgentEditPageState extends State<AgentEditPage> {
         _tokenController.text,
         _nameController.text,
       );
+      // 重建已缓存的 ApiClient（url/token 可能改变了）
+      ref.invalidate(activeApiProvider);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

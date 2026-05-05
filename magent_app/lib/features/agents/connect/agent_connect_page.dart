@@ -1,19 +1,21 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:uuid/uuid.dart';
 import 'package:magent_app/core/api/api_client.dart';
 import 'package:magent_app/core/api/error_messages.dart';
+import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
 
-class AgentConnectPage extends StatefulWidget {
+class AgentConnectPage extends ConsumerStatefulWidget {
   const AgentConnectPage({super.key});
 
   @override
-  State<AgentConnectPage> createState() => _AgentConnectPageState();
+  ConsumerState<AgentConnectPage> createState() => _AgentConnectPageState();
 }
 
-class _AgentConnectPageState extends State<AgentConnectPage> {
+class _AgentConnectPageState extends ConsumerState<AgentConnectPage> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _urlController = TextEditingController(text: 'http://');
@@ -43,6 +45,10 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
         _tokenController.text,
         _nameController.text,
       );
+      // 新加入的 agent 自动设为激活，避免 activeApiProvider 仍指向 null。
+      await _storage.setActiveAgent(id);
+      // 让所有依赖 activeApiProvider 的页面（项目列表等）刷新。
+      ref.invalidate(activeApiProvider);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -62,7 +68,7 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
         );
       }
     } finally {
-      setState(() => _connecting = false);
+      if (mounted) setState(() => _connecting = false);
     }
   }
 

@@ -55,6 +55,10 @@ class SessionApi implements SessionApiLike {
     String input, {
     List<Map<String, dynamic>> items = const [],
     String? mode,
+    String? model,
+    String? effort,
+    String? approvalPolicy,
+    String? sandboxMode,
   }) async {
     await _dio.post(
       '$_apiPrefix/sessions/$sessionId/input',
@@ -62,6 +66,12 @@ class SessionApi implements SessionApiLike {
         'input': input,
         if (items.isNotEmpty) 'items': items,
         if (mode != null && mode.isNotEmpty) 'mode': mode,
+        if (model != null && model.isNotEmpty) 'model': model,
+        if (effort != null && effort.isNotEmpty) 'effort': effort,
+        if (approvalPolicy != null && approvalPolicy.isNotEmpty)
+          'approval_policy': approvalPolicy,
+        if (sandboxMode != null && sandboxMode.isNotEmpty)
+          'sandbox_mode': sandboxMode,
       },
     );
   }

@@ -173,9 +173,13 @@ func (h *SessionHandler) Resume(c *gin.Context) {
 func (h *SessionHandler) SendInput(c *gin.Context) {
 	id := c.Param("id")
 	var req struct {
-		Input string               `json:"input" binding:"required"`
-		Items []provider.InputItem `json:"items"`
-		Mode  string               `json:"mode"`
+		Input          string               `json:"input" binding:"required"`
+		Items          []provider.InputItem `json:"items"`
+		Mode           string               `json:"mode"`
+		Model          string               `json:"model"`
+		Effort         string               `json:"effort"`
+		ApprovalPolicy string               `json:"approval_policy"`
+		SandboxMode    string               `json:"sandbox_mode"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		Fail(c, 400, ErrInvalidRequest, err.Error())
@@ -187,11 +191,15 @@ func (h *SessionHandler) SendInput(c *gin.Context) {
 		return
 	}
 
-	log.Debug("session", "input id=%s len=%d mode=%s", id, len(req.Input), req.Mode)
+	log.Debug("session", "input id=%s len=%d mode=%s model=%s effort=%s", id, len(req.Input), req.Mode, req.Model, req.Effort)
 	if err := h.manager.SendInput(c.Request.Context(), id, provider.SendInputRequest{
-		Input: req.Input,
-		Items: req.Items,
-		Mode:  req.Mode,
+		Input:          req.Input,
+		Items:          req.Items,
+		Mode:           req.Mode,
+		Model:          req.Model,
+		Effort:         req.Effort,
+		ApprovalPolicy: req.ApprovalPolicy,
+		SandboxMode:    req.SandboxMode,
 	}); err != nil {
 		log.Error("session", "send input failed id=%s: %v", id, err)
 		// Return 404 if session not found so client can handle it

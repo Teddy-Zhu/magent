@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
@@ -8,14 +10,14 @@ import 'package:magent_app/shared/widgets/app_list_tile.dart';
 import 'package:magent_app/shared/widgets/app_loading.dart';
 import 'package:magent_app/shared/widgets/app_pill.dart';
 
-class AgentListPage extends StatefulWidget {
+class AgentListPage extends ConsumerStatefulWidget {
   const AgentListPage({super.key});
 
   @override
-  State<AgentListPage> createState() => _AgentListPageState();
+  ConsumerState<AgentListPage> createState() => _AgentListPageState();
 }
 
-class _AgentListPageState extends State<AgentListPage> {
+class _AgentListPageState extends ConsumerState<AgentListPage> {
   final _storage = AgentStorage();
   List<Map<String, String>> _agents = [];
   String? _activeAgentId;
@@ -41,6 +43,8 @@ class _AgentListPageState extends State<AgentListPage> {
 
   Future<void> _selectAgent(String id) async {
     await _storage.setActiveAgent(id);
+    // 切换 agent 后必须 invalidate，否则项目列表仍指向旧 agent。
+    ref.invalidate(activeApiProvider);
     if (mounted) {
       setState(() => _activeAgentId = id);
       ScaffoldMessenger.of(context).showSnackBar(
@@ -75,6 +79,8 @@ class _AgentListPageState extends State<AgentListPage> {
 
     if (confirmed == true) {
       await _storage.deleteAgent(id);
+      // 删除后激活态可能已被清空，统一重置依赖。
+      ref.invalidate(activeApiProvider);
       await _loadAgents();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

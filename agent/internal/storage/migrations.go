@@ -22,6 +22,7 @@ func (s *SQLite) migrate() error {
 			last_status TEXT,
 			runner_type TEXT NOT NULL,
 			model TEXT,
+			effort TEXT,
 			approval_policy TEXT,
 			sandbox_mode TEXT,
 			config TEXT,
@@ -110,6 +111,9 @@ func (s *SQLite) migrate() error {
 	if err := s.migrateSessionControlPlaneSchema(); err != nil {
 		return err
 	}
+	if err := s.migrateSessionsAddEffortColumn(); err != nil {
+		return err
+	}
 	return s.dropContentCacheTables()
 }
 
@@ -194,6 +198,7 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 			last_status TEXT,
 			runner_type TEXT NOT NULL,
 			model TEXT,
+			effort TEXT,
 			approval_policy TEXT,
 			sandbox_mode TEXT,
 			config TEXT,
@@ -205,7 +210,7 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 
 		INSERT OR REPLACE INTO sessions_new (
 			id, provider_id, thread_id, project_id, purpose, title, workdir, last_status,
-			runner_type, model, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at, archived_at
+			runner_type, model, effort, approval_policy, sandbox_mode, config, created_at, updated_at, exited_at, archived_at
 		)
 		SELECT
 			id,
@@ -218,6 +223,7 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 			` + lastStatusExpr + `,
 			COALESCE(runner_type, 'app-server'),
 			model,
+			NULL,
 			` + approvalPolicyExpr + `,
 			sandbox_mode,
 			config,
@@ -230,6 +236,37 @@ func (s *SQLite) migrateSessionControlPlaneSchema() error {
 		DROP TABLE sessions;
 		ALTER TABLE sessions_new RENAME TO sessions;
 	`)
+	return err
+}
+
+func (s *SQLite) migrateSessionsAddEffortColumn() error {
+	rows, err := s.db.Query(`PRAGMA table_info(sessions)`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	hasEffort := false
+	for rows.Next() {
+		var cid int
+		var name, typ string
+		var notNull int
+		var defaultValue any
+		var pk int
+		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
+			return err
+		}
+		if name == "effort" {
+			hasEffort = true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	if hasEffort {
+		return nil
+	}
+	_, err = s.db.Exec(`ALTER TABLE sessions ADD COLUMN effort TEXT`)
 	return err
 }
 

@@ -652,6 +652,31 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatRefresh => 'Refresh';
 
   @override
+  String get chatSettings => 'Session settings';
+
+  @override
+  String get chatSettingsTitle => 'Session settings';
+
+  @override
+  String get chatSettingsModel => 'Model';
+
+  @override
+  String get chatSettingsEffort => 'Reasoning effort';
+
+  @override
+  String get chatSettingsApproval => 'Approval policy';
+
+  @override
+  String get chatSettingsSandbox => 'Sandbox mode';
+
+  @override
+  String get chatSettingsApply => 'Apply';
+
+  @override
+  String get chatSettingsHint =>
+      'Client-only override applied to your next send; the server does not persist these.';
+
+  @override
   String get chatCreateNewSession => 'Create new session';
 
   @override

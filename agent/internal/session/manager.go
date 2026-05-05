@@ -373,6 +373,7 @@ func (m *Manager) providerListedSession(ctx context.Context, sessionID, provider
 
 func mergeProviderSessionMetadata(ps, db provider.Session) provider.Session {
 	ps.Model = firstNonEmpty(db.Model, ps.Model)
+	ps.Effort = firstNonEmpty(db.Effort, ps.Effort)
 	ps.ProjectID = db.ProjectID
 	ps.Purpose = db.Purpose
 	ps.Workdir = firstNonEmpty(ps.Workdir, db.Workdir)

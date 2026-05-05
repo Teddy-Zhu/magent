@@ -54,6 +54,9 @@ type CodexProvider struct {
 	queuedInputs  map[string][]queuedInput
 	queueDraining map[string]bool
 	queueMu       sync.Mutex
+	// localStore 直接读 codex 的 ~/.codex/state_5.sqlite，包含 source / model /
+	// reasoning_effort 等 thread/list API 不返回的字段。可能为 nil（未配置 HOME 等）。
+	localStore *LocalThreadStore
 }
 
 func New(cfg CodexConfig, hub *ws.Hub, store *storage.SQLite) *CodexProvider {
@@ -65,6 +68,7 @@ func New(cfg CodexConfig, hub *ws.Hub, store *storage.SQLite) *CodexProvider {
 		queueDraining: make(map[string]bool),
 		approval:      NewApprovalProxy(hub, store),
 		cfg:           cfg,
+		localStore:    newLocalThreadStore(),
 	}
 }
 
@@ -183,7 +187,10 @@ func (p *CodexProvider) CreateSession(ctx context.Context, req provider.CreateSe
 		Workdir:        req.Workdir,
 		Status:         string(provider.SessionStatusRunning),
 		RunnerType:     "app-server",
+		// magent 通过 codex app-server 创建的会话在 codex 那边记成 sourceKind=appServer.
+		Source:         "appServer",
 		Model:          req.Model,
+		Effort:         req.Effort,
 		ApprovalPolicy: req.ApprovalPolicy,
 		SandboxMode:    req.SandboxMode,
 	}, nil
@@ -1293,36 +1300,43 @@ func (p *CodexProvider) startInputTurn(ctx context.Context, client *AppServerCli
 
 	// No active turn — start a new one.
 	log.Debug("codex", "SendInput: starting new turn thread=%s", threadID)
-	p.metaMu.RLock()
-	m := p.meta[sessionID]
-	p.metaMu.RUnlock()
 
-	model, workdir, effort := "", "", ""
-	approvalPolicy, sandboxMode := string(provider.ApprovalPolicyOnRequest), string(provider.SandboxModeWorkspaceWrite)
-	if m != nil {
-		model = m.Model
-		workdir = m.Workdir
-		effort = m.Effort
-		if m.ApprovalPolicy != "" {
-			approvalPolicy = m.ApprovalPolicy
-		}
-		if m.SandboxMode != "" {
-			sandboxMode = m.SandboxMode
-		}
+	// 客户端可在每次发送时覆盖 model / effort / approval / sandbox。
+	// 我们写回 in-memory sessionMeta 让 enqueue/重试路径继承同一组设置。
+	p.metaMu.Lock()
+	current := p.meta[sessionID]
+	if current == nil {
+		current = &sessionMeta{}
+		p.meta[sessionID] = current
+	}
+	if input.Model != "" {
+		current.Model = input.Model
+	}
+	if input.Effort != "" {
+		current.Effort = input.Effort
+	}
+	if input.ApprovalPolicy != "" {
+		current.ApprovalPolicy = provider.NormalizeApprovalPolicy(input.ApprovalPolicy)
+	}
+	if input.SandboxMode != "" {
+		current.SandboxMode = provider.NormalizeSandboxMode(input.SandboxMode)
+	}
+	model, workdir, effort := current.Model, current.Workdir, current.Effort
+	approvalPolicy := current.ApprovalPolicy
+	sandboxMode := current.SandboxMode
+	p.metaMu.Unlock()
+
+	if approvalPolicy == "" {
+		approvalPolicy = string(provider.ApprovalPolicyOnRequest)
+	}
+	if sandboxMode == "" {
+		sandboxMode = string(provider.SandboxModeWorkspaceWrite)
 	}
 	if model == "" {
 		model = p.defaultModel()
 		p.metaMu.Lock()
-		if current := p.meta[sessionID]; current != nil {
-			current.Model = model
-		} else {
-			p.meta[sessionID] = &sessionMeta{
-				Model:          model,
-				Workdir:        workdir,
-				ApprovalPolicy: approvalPolicy,
-				SandboxMode:    sandboxMode,
-				Effort:         effort,
-			}
+		if cur := p.meta[sessionID]; cur != nil {
+			cur.Model = model
 		}
 		p.metaMu.Unlock()
 	}
@@ -1355,6 +1369,7 @@ func (p *CodexProvider) defaultModel() string {
 	}
 	return "gpt-5.5"
 }
+
 
 func (p *CodexProvider) InterruptSession(ctx context.Context, sessionID string) error {
 	client, err := p.appServerClient(ctx)
@@ -1449,16 +1464,26 @@ func (p *CodexProvider) ListThreadInfos(ctx context.Context, cwd string, limit i
 }
 
 func (p *CodexProvider) ListThreadInfosWithOptions(ctx context.Context, opts provider.ThreadListOptions) ([]ThreadInfo, error) {
+	listOpts := ListThreadsOptions{
+		CWD:      opts.CWD,
+		Limit:    opts.Limit,
+		Archived: opts.Archived,
+	}
+	// 优先 codex 本地 sqlite — 它能提供 source / model / reasoning_effort
+	// 等 app-server thread/list 不返回的字段。
+	if p.localStore != nil && p.localStore.Available() {
+		threads, err := p.localStore.ListThreads(ctx, listOpts)
+		if err == nil {
+			return threads, nil
+		}
+		log.Warn("codex", "local thread store unavailable, falling back to appserver: %v", err)
+	}
+
 	client, err := p.appServerClient(ctx)
 	if err != nil {
 		return nil, err
 	}
-
-	return client.ListThreadsWithOptions(ctx, ListThreadsOptions{
-		CWD:      opts.CWD,
-		Limit:    opts.Limit,
-		Archived: opts.Archived,
-	})
+	return client.ListThreadsWithOptions(ctx, listOpts)
 }
 
 // ListThreads queries codex for threads and converts them to provider.Session.
@@ -1478,7 +1503,24 @@ func (p *CodexProvider) ListThreadsWithOptions(ctx context.Context, opts provide
 
 	var sessions []provider.Session
 	for _, t := range threads {
-		sessions = append(sessions, p.threadInfoToSession(t, opts.Archived))
+		s := p.threadInfoToSession(t, opts.Archived)
+		// 列表里 model/effort 如果 ThreadInfo 没带（fallback appserver 路径），
+		// 用进程内 sessionMeta（活跃会话）兜底；如果连这也没有就保持空，让
+		// 前端自己决定如何展示——避免显示假的默认值。
+		if s.Model == "" || s.Effort == "" {
+			p.metaMu.RLock()
+			meta := p.meta[s.ID]
+			p.metaMu.RUnlock()
+			if meta != nil {
+				if s.Model == "" {
+					s.Model = meta.Model
+				}
+				if s.Effort == "" {
+					s.Effort = meta.Effort
+				}
+			}
+		}
+		sessions = append(sessions, s)
 	}
 
 	return sessions, nil
@@ -1558,19 +1600,30 @@ func (p *CodexProvider) threadInfoToSession(t ThreadInfo, archived bool) provide
 	updatedAt := time.Unix(t.UpdatedAt, 0)
 	var archivedAt *time.Time
 	if archived {
-		archivedAt = &updatedAt
+		// Local store records the actual archived_at timestamp; prefer that
+		// when present, otherwise fall back to updated_at.
+		ts := updatedAt
+		if t.ArchivedAt > 0 {
+			ts = time.Unix(t.ArchivedAt, 0)
+		}
+		archivedAt = &ts
 	}
 	return provider.Session{
-		ID:         t.ID,
-		ProviderID: "codex",
-		ThreadID:   t.ID,
-		Title:      title,
-		Workdir:    t.CWD,
-		Status:     status,
-		RunnerType: "app-server",
-		CreatedAt:  createdAt,
-		UpdatedAt:  updatedAt,
-		ArchivedAt: archivedAt,
+		ID:             t.ID,
+		ProviderID:     "codex",
+		ThreadID:       t.ID,
+		Title:          title,
+		Workdir:        t.CWD,
+		Status:         status,
+		RunnerType:     "app-server",
+		Source:         t.Source,
+		Model:          t.Model,
+		Effort:         t.Effort,
+		ApprovalPolicy: provider.NormalizeApprovalPolicy(t.ApprovalMode),
+		SandboxMode:    provider.NormalizeSandboxMode(t.SandboxPolicy),
+		CreatedAt:      createdAt,
+		UpdatedAt:      updatedAt,
+		ArchivedAt:     archivedAt,
 	}
 }
 

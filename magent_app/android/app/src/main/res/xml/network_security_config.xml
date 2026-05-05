@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 允许全部 cleartext 明文流量 (HTTP / WS)。
+         Magent 是局域网远程控制台，需要直接连接用户在局域网内的 Go Agent 服务器，
+         这些服务器通常使用 http:// 与 ws:// 而非 TLS。-->
+    <base-config cleartextTrafficPermitted="true">
+        <trust-anchors>
+            <certificates src="system" />
+            <certificates src="user" />
+        </trust-anchors>
+    </base-config>
+</network-security-config>

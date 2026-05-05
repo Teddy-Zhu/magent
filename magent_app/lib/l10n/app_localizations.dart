@@ -1316,6 +1316,54 @@ abstract class AppLocalizations {
   /// **'Refresh'**
   String get chatRefresh;
 
+  /// No description provided for @chatSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Session settings'**
+  String get chatSettings;
+
+  /// No description provided for @chatSettingsTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Session settings'**
+  String get chatSettingsTitle;
+
+  /// No description provided for @chatSettingsModel.
+  ///
+  /// In en, this message translates to:
+  /// **'Model'**
+  String get chatSettingsModel;
+
+  /// No description provided for @chatSettingsEffort.
+  ///
+  /// In en, this message translates to:
+  /// **'Reasoning effort'**
+  String get chatSettingsEffort;
+
+  /// No description provided for @chatSettingsApproval.
+  ///
+  /// In en, this message translates to:
+  /// **'Approval policy'**
+  String get chatSettingsApproval;
+
+  /// No description provided for @chatSettingsSandbox.
+  ///
+  /// In en, this message translates to:
+  /// **'Sandbox mode'**
+  String get chatSettingsSandbox;
+
+  /// No description provided for @chatSettingsApply.
+  ///
+  /// In en, this message translates to:
+  /// **'Apply'**
+  String get chatSettingsApply;
+
+  /// No description provided for @chatSettingsHint.
+  ///
+  /// In en, this message translates to:
+  /// **'Client-only override applied to your next send; the server does not persist these.'**
+  String get chatSettingsHint;
+
   /// No description provided for @chatCreateNewSession.
   ///
   /// In en, this message translates to:

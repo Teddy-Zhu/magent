@@ -90,6 +90,14 @@ type SendInputRequest struct {
 	Input string      `json:"input"`
 	Items []InputItem `json:"items,omitempty"`
 	Mode  string      `json:"mode,omitempty"`
+
+	// 以下字段用于"per-send 设置覆盖"。客户端持有当前会话的 model / effort /
+	// approval / sandbox 选择并随每次发送上传；后端不持久化，仅作用于本次启动
+	// 的 turn。空字符串表示"按 provider 既有设置（sessionMeta）"。
+	Model          string `json:"model,omitempty"`
+	Effort         string `json:"effort,omitempty"`
+	ApprovalPolicy string `json:"approval_policy,omitempty"`
+	SandboxMode    string `json:"sandbox_mode,omitempty"`
 }
 
 func (r *CreateSessionRequest) ApplyDefaults(cfg ProviderConfig) {
@@ -205,7 +213,9 @@ type Session struct {
 	Workdir        string         `json:"workdir"`
 	Status         string         `json:"status"`
 	RunnerType     string         `json:"runner_type"`
+	Source         string         `json:"source,omitempty"`
 	Model          string         `json:"model"`
+	Effort         string         `json:"effort,omitempty"`
 	ApprovalPolicy string         `json:"approval_policy"`
 	SandboxMode    string         `json:"sandbox_mode"`
 	Config         map[string]any `json:"config,omitempty"`
