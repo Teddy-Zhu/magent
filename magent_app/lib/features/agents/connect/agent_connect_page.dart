@@ -82,10 +82,7 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
             children: [
               TextFormField(
                 controller: _nameController,
-                decoration: InputDecoration(
-                  labelText: l10n.agentsName,
-                  border: const OutlineInputBorder(),
-                ),
+                decoration: InputDecoration(labelText: l10n.agentsName),
                 validator: (v) =>
                     v?.isEmpty ?? true ? l10n.fieldRequired : null,
               ),
@@ -95,7 +92,6 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
                 decoration: InputDecoration(
                   labelText: l10n.agentsUrl,
                   hintText: 'http://192.168.1.100:9000',
-                  border: const OutlineInputBorder(),
                 ),
                 validator: (v) =>
                     v?.isEmpty ?? true ? l10n.fieldRequired : null,
@@ -103,10 +99,7 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
               const SizedBox(height: 16),
               TextFormField(
                 controller: _tokenController,
-                decoration: InputDecoration(
-                  labelText: l10n.agentsToken,
-                  border: const OutlineInputBorder(),
-                ),
+                decoration: InputDecoration(labelText: l10n.agentsToken),
                 obscureText: true,
                 validator: (v) =>
                     v?.isEmpty ?? true ? l10n.fieldRequired : null,
@@ -114,11 +107,17 @@ class _AgentConnectPageState extends State<AgentConnectPage> {
               const SizedBox(height: 24),
               SizedBox(
                 width: double.infinity,
-                height: 48,
-                child: ElevatedButton(
+                child: FilledButton(
                   onPressed: _connecting ? null : _connect,
+                  style: FilledButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                  ),
                   child: _connecting
-                      ? const CircularProgressIndicator()
+                      ? const SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(strokeWidth: 2.4),
+                        )
                       : Text(l10n.agentsConnect),
                 ),
               ),

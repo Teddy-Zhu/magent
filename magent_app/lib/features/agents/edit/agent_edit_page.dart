@@ -3,6 +3,7 @@ import 'package:magent_app/core/api/api_client.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
 
 class AgentEditPage extends StatefulWidget {
   final String agentId;
@@ -89,7 +90,7 @@ class _AgentEditPageState extends State<AgentEditPage> {
     return Scaffold(
       appBar: AppBar(title: Text(l10n.agentsEdit)),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppLoading()
           : Padding(
               padding: const EdgeInsets.all(16),
               child: Form(
@@ -100,7 +101,6 @@ class _AgentEditPageState extends State<AgentEditPage> {
                       controller: _nameController,
                       decoration: InputDecoration(
                         labelText: l10n.agentsName,
-                        border: const OutlineInputBorder(),
                         prefixIcon: const Icon(Icons.label),
                       ),
                       validator: (v) =>
@@ -112,7 +112,6 @@ class _AgentEditPageState extends State<AgentEditPage> {
                       decoration: InputDecoration(
                         labelText: l10n.agentsUrl,
                         hintText: 'http://192.168.1.100:9000',
-                        border: const OutlineInputBorder(),
                         prefixIcon: const Icon(Icons.link),
                       ),
                       validator: (v) =>
@@ -123,7 +122,6 @@ class _AgentEditPageState extends State<AgentEditPage> {
                       controller: _tokenController,
                       decoration: InputDecoration(
                         labelText: l10n.agentsToken,
-                        border: const OutlineInputBorder(),
                         prefixIcon: const Icon(Icons.key),
                         suffixIcon: IconButton(
                           icon: Icon(
@@ -142,11 +140,19 @@ class _AgentEditPageState extends State<AgentEditPage> {
                     const SizedBox(height: 24),
                     SizedBox(
                       width: double.infinity,
-                      height: 48,
-                      child: ElevatedButton(
+                      child: FilledButton(
                         onPressed: _saving ? null : _save,
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size.fromHeight(48),
+                        ),
                         child: _saving
-                            ? const CircularProgressIndicator()
+                            ? const SizedBox(
+                                width: 20,
+                                height: 20,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.4,
+                                ),
+                              )
                             : Text(l10n.agentsSaveVerify),
                       ),
                     ),

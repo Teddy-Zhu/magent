@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_empty_state.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
+import 'package:magent_app/shared/widgets/app_pill.dart';
+import 'package:magent_app/shared/widgets/app_sheet_header.dart';
 
 class ProvidersPage extends ConsumerStatefulWidget {
   const ProvidersPage({super.key});
@@ -48,11 +53,16 @@ class _ProvidersPageState extends ConsumerState<ProvidersPage> {
     return Scaffold(
       appBar: AppBar(title: Text(l10n.providersTitle)),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppLoading()
           : _providers.isEmpty
-          ? Center(child: Text(l10n.providersEmpty))
-          : ListView.builder(
+          ? AppEmptyState(
+              icon: Icons.extension_outlined,
+              title: l10n.providersEmpty,
+            )
+          : ListView.separated(
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
               itemCount: _providers.length,
+              separatorBuilder: (_, _) => const SizedBox(height: 8),
               itemBuilder: (context, index) => _ProviderTile(
                 provider: _providers[index],
                 onTap: () => _showProviderDetail(_providers[index]),
@@ -78,6 +88,8 @@ class _ProviderTile extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     final name = provider['name'] as String? ?? 'unknown';
     final status = provider['status'] as String? ?? 'unknown';
     final version = provider['version'] as String? ?? '';
@@ -85,52 +97,88 @@ class _ProviderTile extends StatelessWidget {
     final available = status == 'available';
     final l10n = AppLocalizations.of(context)!;
 
-    return ListTile(
-      leading: _buildIcon(name, available),
-      title: Text(name[0].toUpperCase() + name.substring(1)),
-      subtitle: Text(
-        [
-          if (version.isNotEmpty) 'v$version',
-          if (runMode.isNotEmpty) runMode,
-          if (!available) provider['error'] ?? l10n.providersNotAvailable,
-        ].join(' · '),
-        style: TextStyle(color: available ? null : Colors.grey),
-      ),
-      trailing: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: available ? Colors.green[50] : Colors.grey[100],
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Text(
-          available ? l10n.providersAvailable : l10n.providersUnavailable,
-          style: TextStyle(
-            fontSize: 12,
-            color: available ? Colors.green[700] : Colors.grey,
-            fontWeight: FontWeight.w500,
+    return Card(
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: AppRadius.rmd,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          child: Row(
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: available
+                      ? scheme.primaryContainer.withValues(alpha: 0.6)
+                      : scheme.surfaceContainerHigh,
+                  borderRadius: AppRadius.rsm,
+                ),
+                child: Icon(
+                  _iconFor(name),
+                  size: 20,
+                  color: available
+                      ? scheme.onPrimaryContainer
+                      : scheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      name[0].toUpperCase() + name.substring(1),
+                      style: Theme.of(context).textTheme.bodyLarge?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      [
+                        if (version.isNotEmpty) 'v$version',
+                        if (runMode.isNotEmpty) runMode,
+                        if (!available)
+                          provider['error'] ?? l10n.providersNotAvailable,
+                      ].join(' · '),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              AppPill.status(
+                label: available
+                    ? l10n.providersAvailable
+                    : l10n.providersUnavailable,
+                palette: available
+                    ? statusColors.running
+                    : statusColors.neutral,
+                maxWidth: 84,
+              ),
+            ],
           ),
         ),
       ),
-      onTap: onTap,
     );
   }
 
-  Widget _buildIcon(String name, bool available) {
-    IconData icon;
+  IconData _iconFor(String name) {
     switch (name) {
       case 'codex':
-        icon = Icons.smart_toy;
-        break;
+        return Icons.smart_toy;
       case 'claude':
-        icon = Icons.psychology;
-        break;
+        return Icons.psychology;
       case 'aider':
-        icon = Icons.code;
-        break;
+        return Icons.code;
       default:
-        icon = Icons.extension;
+        return Icons.extension;
     }
-    return Icon(icon, color: available ? Colors.blue : Colors.grey);
   }
 }
 
@@ -142,7 +190,9 @@ class _ProviderDetailSheet extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final caps = provider['capabilities'] as Map<String, dynamic>? ?? {};
+    final scheme = Theme.of(context).colorScheme;
     final l10n = AppLocalizations.of(context)!;
+    final name = provider['name']?.toString() ?? l10n.providersUnknown;
 
     return DraggableScrollableSheet(
       initialChildSize: 0.6,
@@ -150,80 +200,90 @@ class _ProviderDetailSheet extends StatelessWidget {
       minChildSize: 0.3,
       expand: false,
       builder: (context, scrollController) {
-        return ListView(
-          controller: scrollController,
-          padding: const EdgeInsets.all(16),
+        return Column(
+          mainAxisSize: MainAxisSize.min,
           children: [
-            Center(
-              child: Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
-                ),
+            AppSheetHeader(
+              title: name,
+              icon: Icons.extension,
+            ),
+            Expanded(
+              child: ListView(
+                controller: scrollController,
+                padding: const EdgeInsets.fromLTRB(20, 12, 20, 24),
+                children: [
+                  if (provider['binary'] != null)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 4),
+                      child: Text(
+                        '${l10n.providersBinary}: ${provider['binary']}',
+                        style: TextStyle(color: scheme.onSurfaceVariant),
+                      ),
+                    ),
+                  if (provider['run_mode'] != null)
+                    Text(
+                      '${l10n.providersMode}: ${provider['run_mode']}',
+                      style: TextStyle(color: scheme.onSurfaceVariant),
+                    ),
+                  const Divider(height: 24),
+                  Text(
+                    l10n.providersCapabilities,
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  _buildCapTile(
+                    context,
+                    l10n.capabilityResume,
+                    caps['supports_resume'] ?? false,
+                  ),
+                  _buildCapTile(context, l10n.capabilityFork,
+                      caps['supports_fork'] ?? false),
+                  _buildCapTile(
+                    context,
+                    l10n.capabilitySteer,
+                    caps['supports_steer'] ?? false,
+                  ),
+                  _buildCapTile(
+                    context,
+                    l10n.capabilityInterrupt,
+                    caps['supports_interrupt'] ?? false,
+                  ),
+                  _buildCapTile(
+                    context,
+                    l10n.capabilityCompact,
+                    caps['supports_compact'] ?? false,
+                  ),
+                  _buildCapTile(
+                    context,
+                    l10n.capabilityRollback,
+                    caps['supports_rollback'] ?? false,
+                  ),
+                  _buildCapTile(
+                    context,
+                    l10n.capabilityApproval,
+                    caps['supports_approval'] ?? false,
+                  ),
+                  _buildCapTile(
+                    context,
+                    l10n.capabilityFileSystem,
+                    caps['supports_file_system'] ?? false,
+                  ),
+                  _buildCapTile(context, l10n.capabilityMcp,
+                      caps['supports_mcp'] ?? false),
+                  _buildCapTile(context, l10n.capabilityPty,
+                      caps['supports_pty'] ?? false),
+                  _buildCapTile(
+                    context,
+                    l10n.capabilityStreaming,
+                    caps['streaming_output'] ?? false,
+                  ),
+                  _buildCapTile(
+                    context,
+                    l10n.capabilityStructuredOutput,
+                    caps['structured_output'] ?? false,
+                  ),
+                ],
               ),
-            ),
-            Text(
-              provider['name'] ?? l10n.providersUnknown,
-              style: Theme.of(context).textTheme.headlineSmall,
-            ),
-            const SizedBox(height: 8),
-            if (provider['binary'] != null)
-              Text(
-                '${l10n.providersBinary}: ${provider['binary']}',
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-            if (provider['run_mode'] != null)
-              Text(
-                '${l10n.providersMode}: ${provider['run_mode']}',
-                style: TextStyle(color: Colors.grey[600]),
-              ),
-            const Divider(height: 24),
-            Text(
-              l10n.providersCapabilities,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 8),
-            _buildCapTile(
-              l10n.capabilityResume,
-              caps['supports_resume'] ?? false,
-            ),
-            _buildCapTile(l10n.capabilityFork, caps['supports_fork'] ?? false),
-            _buildCapTile(
-              l10n.capabilitySteer,
-              caps['supports_steer'] ?? false,
-            ),
-            _buildCapTile(
-              l10n.capabilityInterrupt,
-              caps['supports_interrupt'] ?? false,
-            ),
-            _buildCapTile(
-              l10n.capabilityCompact,
-              caps['supports_compact'] ?? false,
-            ),
-            _buildCapTile(
-              l10n.capabilityRollback,
-              caps['supports_rollback'] ?? false,
-            ),
-            _buildCapTile(
-              l10n.capabilityApproval,
-              caps['supports_approval'] ?? false,
-            ),
-            _buildCapTile(
-              l10n.capabilityFileSystem,
-              caps['supports_file_system'] ?? false,
-            ),
-            _buildCapTile(l10n.capabilityMcp, caps['supports_mcp'] ?? false),
-            _buildCapTile(l10n.capabilityPty, caps['supports_pty'] ?? false),
-            _buildCapTile(
-              l10n.capabilityStreaming,
-              caps['streaming_output'] ?? false,
-            ),
-            _buildCapTile(
-              l10n.capabilityStructuredOutput,
-              caps['structured_output'] ?? false,
             ),
           ],
         );
@@ -231,12 +291,16 @@ class _ProviderDetailSheet extends StatelessWidget {
     );
   }
 
-  Widget _buildCapTile(String label, bool supported) {
+  Widget _buildCapTile(BuildContext context, String label, bool supported) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     return ListTile(
       dense: true,
       leading: Icon(
         supported ? Icons.check_circle : Icons.cancel,
-        color: supported ? Colors.green : Colors.grey[400],
+        color: supported
+            ? statusColors.running.foreground
+            : scheme.onSurfaceVariant.withValues(alpha: 0.6),
         size: 20,
       ),
       title: Text(label),

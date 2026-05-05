@@ -6,7 +6,12 @@ import 'package:go_router/go_router.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/repositories/bootstrap_repository.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_empty_state.dart';
+import 'package:magent_app/shared/widgets/app_list_tile.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
+import 'package:magent_app/shared/widgets/app_pill.dart';
 import 'package:magent_app/shared/widgets/dir_picker.dart';
 
 class ProjectListPage extends ConsumerStatefulWidget {
@@ -73,23 +78,23 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
   }
 
   Future<void> _deleteProject(String id, String name) async {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.of(context)!.projectsDelete),
-        content: Text(
-          AppLocalizations.of(context)!.projectsDeleteConfirm(name),
-        ),
+        title: Text(l10n.projectsDelete),
+        content: Text(l10n.projectsDeleteConfirm(name)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text(AppLocalizations.of(context)!.cancel),
+            child: Text(l10n.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text(
-              AppLocalizations.of(context)!.delete,
-              style: const TextStyle(color: Colors.red),
+              l10n.delete,
+              style: TextStyle(color: scheme.error),
             ),
           ),
         ],
@@ -127,6 +132,7 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -139,9 +145,18 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppLoading()
           : _projects.isEmpty
-          ? _ProjectEmptyState(onCreate: _api == null ? null : _createProject)
+          ? AppEmptyState(
+              icon: Icons.folder_open,
+              title: l10n.projectsEmpty,
+              subtitle: l10n.projectsEmptySub,
+              action: FilledButton.icon(
+                onPressed: _api == null ? null : _createProject,
+                icon: const Icon(Icons.add),
+                label: Text(l10n.projectsCreate),
+              ),
+            )
           : RefreshIndicator(
               onRefresh: _loadProjects,
               child: ListView.separated(
@@ -164,16 +179,16 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
                       alignment: Alignment.centerRight,
                       padding: const EdgeInsets.only(right: 16),
                       decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.error,
-                        borderRadius: BorderRadius.circular(8),
+                        color: scheme.errorContainer,
+                        borderRadius: AppRadius.rmd,
                       ),
-                      child: const Icon(Icons.delete, color: Colors.white),
+                      child: Icon(Icons.delete, color: scheme.onErrorContainer),
                     ),
                     confirmDismiss: (_) async {
                       await _deleteProject(id, name);
                       return false;
                     },
-                    child: _ProjectListItem(
+                    child: _ProjectCard(
                       name: name,
                       path: path,
                       provider: provider,
@@ -187,70 +202,13 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
   }
 }
 
-class _ProjectEmptyState extends StatelessWidget {
-  final VoidCallback? onCreate;
-
-  const _ProjectEmptyState({required this.onCreate});
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final scheme = Theme.of(context).colorScheme;
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: scheme.primaryContainer.withValues(alpha: 0.65),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                Icons.folder_open,
-                size: 34,
-                color: scheme.onPrimaryContainer,
-              ),
-            ),
-            const SizedBox(height: 18),
-            Text(
-              l10n.projectsEmpty,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              l10n.projectsEmptySub,
-              textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: onCreate,
-              icon: const Icon(Icons.add),
-              label: Text(l10n.projectsCreate),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _ProjectListItem extends StatelessWidget {
+class _ProjectCard extends StatelessWidget {
   final String name;
   final String path;
   final String provider;
   final VoidCallback onTap;
 
-  const _ProjectListItem({
+  const _ProjectCard({
     required this.name,
     required this.path,
     required this.provider,
@@ -260,114 +218,50 @@ class _ProjectListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    final title = name.isEmpty
-        ? AppLocalizations.of(context)!.untitledProject
-        : name;
+    final l10n = AppLocalizations.of(context)!;
+    final title = name.isEmpty ? l10n.untitledProject : name;
+    final providerLabel = provider.isEmpty ? 'default' : provider;
 
     return Card(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+      child: AppListTile(
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: scheme.tertiaryContainer.withValues(alpha: 0.72),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(
-                  Icons.folder,
-                  color: scheme.onTertiaryContainer,
-                  size: 22,
-                ),
+        tone: AppListTileTone.tertiary,
+        leadingIcon: Icons.folder,
+        showChevron: true,
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        _ProviderPill(provider: provider),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Row(
-                      children: [
-                        Icon(
-                          Icons.account_tree_outlined,
-                          size: 14,
-                          color: scheme.onSurfaceVariant,
-                        ),
-                        const SizedBox(width: 5),
-                        Expanded(
-                          child: Text(
-                            path,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: scheme.onSurfaceVariant),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: scheme.onSurfaceVariant,
-              ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 8),
+            AppPill(
+              label: providerLabel,
+              color: scheme.secondary,
+              variant: AppPillVariant.tonal,
+              maxWidth: 96,
+            ),
+          ],
         ),
-      ),
-    );
-  }
-}
-
-class _ProviderPill extends StatelessWidget {
-  final String provider;
-
-  const _ProviderPill({required this.provider});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final text = provider.isEmpty ? 'default' : provider;
-
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 96),
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: scheme.secondaryContainer.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        text,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: scheme.onSecondaryContainer,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
+        subtitle: Row(
+          children: [
+            Icon(
+              Icons.account_tree_outlined,
+              size: 14,
+              color: scheme.onSurfaceVariant,
+            ),
+            const SizedBox(width: 5),
+            Expanded(
+              child: Text(
+                path,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -410,7 +304,6 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
     final path = await showDirPicker(context, initialPath: _selectedPath);
     if (path != null) {
       setState(() => _selectedPath = path);
-      // Auto-fill name from directory name
       if (_nameController.text.isEmpty) {
         final parts = path.split('/');
         if (parts.isNotEmpty) {
@@ -452,6 +345,7 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
     return AlertDialog(
       title: Text(l10n.projectsCreate),
       content: Column(
@@ -459,24 +353,23 @@ class _CreateProjectDialogState extends State<_CreateProjectDialog> {
         children: [
           TextField(
             controller: _nameController,
-            decoration: InputDecoration(
-              labelText: l10n.projectsName,
-              border: const OutlineInputBorder(),
-            ),
+            decoration: InputDecoration(labelText: l10n.projectsName),
           ),
           const SizedBox(height: 16),
           InkWell(
             onTap: _pickDir,
+            borderRadius: AppRadius.rmd,
             child: InputDecorator(
               decoration: InputDecoration(
                 labelText: l10n.projectsDirectory,
-                border: const OutlineInputBorder(),
                 suffixIcon: const Icon(Icons.folder_open),
               ),
               child: Text(
                 _selectedPath.isEmpty ? l10n.projectsSelectDir : _selectedPath,
                 style: TextStyle(
-                  color: _selectedPath.isEmpty ? Colors.grey : null,
+                  color: _selectedPath.isEmpty
+                      ? scheme.onSurfaceVariant
+                      : scheme.onSurface,
                   fontSize: 13,
                 ),
                 overflow: TextOverflow.ellipsis,

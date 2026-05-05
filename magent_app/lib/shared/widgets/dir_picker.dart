@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
+import 'package:magent_app/shared/widgets/app_sheet_header.dart';
 
 class DirPickerSheet extends StatefulWidget {
   final String? initialPath;
@@ -84,6 +86,8 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
 
   @override
   Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
     return DraggableScrollableSheet(
       initialChildSize: 0.7,
       maxChildSize: 0.9,
@@ -92,43 +96,10 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
       builder: (context, scrollController) {
         return Column(
           children: [
-            // Header
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Container(
-                      width: 40,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 12),
-                      decoration: BoxDecoration(
-                        color: Colors.grey[300],
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                  ),
-                  Row(
-                    children: [
-                      const Icon(Icons.folder, size: 20),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          _currentPath,
-                          style: const TextStyle(fontWeight: FontWeight.w500),
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
+            AppSheetHeader(
+              title: _currentPath.isEmpty ? l10n.filesTitle : _currentPath,
+              icon: Icons.folder_outlined,
             ),
-            // Navigation
             if (_parentPath.isNotEmpty && _parentPath != _currentPath)
               ListTile(
                 leading: const Icon(Icons.arrow_upward, size: 20),
@@ -136,14 +107,14 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
                 dense: true,
                 onTap: () => _loadDir(_parentPath),
               ),
-            // Entries
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const AppLoading()
                   : _entries.isEmpty
                   ? Center(
                       child: Text(
-                        AppLocalizations.of(context)!.filesNoSubdirectories,
+                        l10n.filesNoSubdirectories,
+                        style: TextStyle(color: scheme.onSurfaceVariant),
                       ),
                     )
                   : ListView.builder(
@@ -152,9 +123,9 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
                       itemBuilder: (context, index) {
                         final entry = _entries[index];
                         return ListTile(
-                          leading: const Icon(
+                          leading: Icon(
                             Icons.folder,
-                            color: Colors.amber,
+                            color: scheme.tertiary,
                             size: 20,
                           ),
                           title: Text(entry['name'] ?? ''),
@@ -164,16 +135,13 @@ class _DirPickerSheetState extends State<DirPickerSheet> {
                       },
                     ),
             ),
-            // Select button
             Padding(
-              padding: const EdgeInsets.all(16),
+              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
               child: SizedBox(
                 width: double.infinity,
                 child: FilledButton(
                   onPressed: () => Navigator.pop(context, _currentPath),
-                  child: Text(
-                    AppLocalizations.of(context)!.filesSelectPath(_currentPath),
-                  ),
+                  child: Text(l10n.filesSelectPath(_currentPath)),
                 ),
               ),
             ),

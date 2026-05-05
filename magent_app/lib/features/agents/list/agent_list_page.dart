@@ -1,7 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_empty_state.dart';
+import 'package:magent_app/shared/widgets/app_list_tile.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
+import 'package:magent_app/shared/widgets/app_pill.dart';
 
 class AgentListPage extends StatefulWidget {
   const AgentListPage({super.key});
@@ -45,21 +50,23 @@ class _AgentListPageState extends State<AgentListPage> {
   }
 
   Future<void> _deleteAgent(String id, String name) async {
+    final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text(AppLocalizations.of(context)!.agentsRemove),
-        content: Text(AppLocalizations.of(context)!.agentsRemoveConfirm(name)),
+        title: Text(l10n.agentsRemove),
+        content: Text(l10n.agentsRemoveConfirm(name)),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
-            child: Text(AppLocalizations.of(context)!.cancel),
+            child: Text(l10n.cancel),
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
             child: Text(
-              AppLocalizations.of(context)!.agentsRemoveAction,
-              style: const TextStyle(color: Colors.red),
+              l10n.agentsRemoveAction,
+              style: TextStyle(color: scheme.error),
             ),
           ),
         ],
@@ -86,6 +93,7 @@ class _AgentListPageState extends State<AgentListPage> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
 
     return Scaffold(
       appBar: AppBar(
@@ -101,13 +109,20 @@ class _AgentListPageState extends State<AgentListPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppLoading()
           : _agents.isEmpty
-          ? _AgentEmptyState(
-              onAdd: () async {
-                await context.push('/agents/connect');
-                _loadAgents();
-              },
+          ? AppEmptyState(
+              icon: Icons.dns_outlined,
+              title: l10n.agentsEmpty,
+              subtitle: l10n.agentsEmptySub,
+              action: FilledButton.icon(
+                onPressed: () async {
+                  await context.push('/agents/connect');
+                  _loadAgents();
+                },
+                icon: const Icon(Icons.add),
+                label: Text(l10n.agentsAdd),
+              ),
             )
           : ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 20),
@@ -128,16 +143,16 @@ class _AgentListPageState extends State<AgentListPage> {
                     alignment: Alignment.centerRight,
                     padding: const EdgeInsets.only(right: 16),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.error,
-                      borderRadius: BorderRadius.circular(8),
+                      color: scheme.errorContainer,
+                      borderRadius: AppRadius.rmd,
                     ),
-                    child: const Icon(Icons.delete, color: Colors.white),
+                    child: Icon(Icons.delete, color: scheme.onErrorContainer),
                   ),
                   confirmDismiss: (_) async {
                     await _deleteAgent(id, name);
                     return false;
                   },
-                  child: _AgentListItem(
+                  child: _AgentCard(
                     name: name,
                     url: url,
                     isActive: isActive,
@@ -159,64 +174,7 @@ class _AgentListPageState extends State<AgentListPage> {
   }
 }
 
-class _AgentEmptyState extends StatelessWidget {
-  final VoidCallback onAdd;
-
-  const _AgentEmptyState({required this.onAdd});
-
-  @override
-  Widget build(BuildContext context) {
-    final l10n = AppLocalizations.of(context)!;
-    final scheme = Theme.of(context).colorScheme;
-
-    return Center(
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 32),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 64,
-              height: 64,
-              decoration: BoxDecoration(
-                color: scheme.primaryContainer.withValues(alpha: 0.65),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(
-                Icons.dns_outlined,
-                size: 34,
-                color: scheme.onPrimaryContainer,
-              ),
-            ),
-            const SizedBox(height: 18),
-            Text(
-              l10n.agentsEmpty,
-              style: Theme.of(
-                context,
-              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              l10n.agentsEmptySub,
-              textAlign: TextAlign.center,
-              style: Theme.of(
-                context,
-              ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
-            ),
-            const SizedBox(height: 20),
-            FilledButton.icon(
-              onPressed: onAdd,
-              icon: const Icon(Icons.add),
-              label: Text(l10n.agentsAdd),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _AgentListItem extends StatelessWidget {
+class _AgentCard extends StatelessWidget {
   final String name;
   final String url;
   final bool isActive;
@@ -224,7 +182,7 @@ class _AgentListItem extends StatelessWidget {
   final VoidCallback onEdit;
   final VoidCallback onPrimary;
 
-  const _AgentListItem({
+  const _AgentCard({
     required this.name,
     required this.url,
     required this.isActive,
@@ -236,133 +194,87 @@ class _AgentListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     final l10n = AppLocalizations.of(context)!;
 
     return Card(
-      child: InkWell(
-        borderRadius: BorderRadius.circular(8),
+      child: AppListTile(
         onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          child: Row(
-            children: [
-              Stack(
-                clipBehavior: Clip.none,
-                children: [
-                  Container(
-                    width: 42,
-                    height: 42,
-                    decoration: BoxDecoration(
-                      color: scheme.primaryContainer.withValues(alpha: 0.6),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: Icon(
-                      Icons.computer,
-                      size: 22,
-                      color: scheme.onPrimaryContainer,
+        leading: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: scheme.primaryContainer.withValues(alpha: 0.6),
+                borderRadius: AppRadius.rsm,
+              ),
+              child: Icon(
+                Icons.computer,
+                size: 22,
+                color: scheme.onPrimaryContainer,
+              ),
+            ),
+            if (isActive)
+              Positioned(
+                right: -2,
+                bottom: -2,
+                child: Container(
+                  width: 13,
+                  height: 13,
+                  decoration: BoxDecoration(
+                    color: statusColors.running.foreground,
+                    shape: BoxShape.circle,
+                    border: Border.all(
+                      color:
+                          Theme.of(context).cardTheme.color ?? scheme.surface,
+                      width: 2,
                     ),
                   ),
-                  if (isActive)
-                    Positioned(
-                      right: -2,
-                      bottom: -2,
-                      child: Container(
-                        width: 13,
-                        height: 13,
-                        decoration: BoxDecoration(
-                          color: Colors.green,
-                          shape: BoxShape.circle,
-                          border: Border.all(
-                            color:
-                                Theme.of(context).cardTheme.color ??
-                                scheme.surface,
-                            width: 2,
-                          ),
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.titleSmall
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                        if (isActive) ...[
-                          const SizedBox(width: 8),
-                          _ActivePill(label: l10n.agentsActive),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      url,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
                 ),
               ),
-              const SizedBox(width: 6),
-              IconButton(
-                icon: const Icon(Icons.edit_outlined, size: 20),
-                tooltip: l10n.edit,
-                onPressed: onEdit,
+          ],
+        ),
+        title: Row(
+          children: [
+            Expanded(
+              child: Text(
+                name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
-              IconButton.filledTonal(
-                icon: Icon(
-                  isActive ? Icons.arrow_forward : Icons.check,
-                  size: 18,
-                ),
-                tooltip: isActive ? l10n.agentsEnter : l10n.agentsActive,
-                onPressed: onPrimary,
+            ),
+            if (isActive) ...[
+              const SizedBox(width: 8),
+              AppPill.status(
+                label: l10n.agentsActive,
+                palette: statusColors.running,
+                maxWidth: 64,
               ),
             ],
-          ),
+          ],
         ),
-      ),
-    );
-  }
-}
-
-class _ActivePill extends StatelessWidget {
-  final String label;
-
-  const _ActivePill({required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: Colors.green.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        label,
-        style: TextStyle(
-          color: scheme.brightness == Brightness.dark
-              ? Colors.green.shade200
-              : Colors.green.shade700,
-          fontSize: 11,
-          fontWeight: FontWeight.w700,
+        subtitle: Text(url, maxLines: 1, overflow: TextOverflow.ellipsis),
+        trailing: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, size: 20),
+              tooltip: l10n.edit,
+              onPressed: onEdit,
+              visualDensity: VisualDensity.compact,
+            ),
+            IconButton.filledTonal(
+              icon: Icon(
+                isActive ? Icons.arrow_forward : Icons.check,
+                size: 18,
+              ),
+              tooltip: isActive ? l10n.agentsEnter : l10n.agentsActive,
+              onPressed: onPrimary,
+              visualDensity: VisualDensity.compact,
+            ),
+          ],
         ),
       ),
     );

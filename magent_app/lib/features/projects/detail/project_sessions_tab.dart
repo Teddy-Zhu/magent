@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/session/session_language.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_empty_state.dart';
+import 'package:magent_app/shared/widgets/app_pill.dart';
+import 'package:magent_app/shared/widgets/app_status_bar.dart';
 
 class ProjectSessionsTab extends StatefulWidget {
   final String projectId;
@@ -49,6 +53,8 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     final sessions = widget.sessions;
 
     final hidden = sessions.length > _visibleCount
@@ -114,14 +120,14 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
             createdAt = rawCreated as String? ?? '';
           }
           final isRunning = status == SessionStatuses.running;
-          final statusColor = _statusColor(context, status);
+          final palette = _statusPalette(statusColors, status);
 
           return Dismissible(
             key: ValueKey('session-${widget.archived}-$id'),
             direction: DismissDirection.horizontal,
             background: _SwipeActionBackground(
               alignment: Alignment.centerLeft,
-              color: Theme.of(context).colorScheme.primary,
+              color: scheme.primary,
               icon: widget.archived
                   ? Icons.unarchive_outlined
                   : Icons.archive_outlined,
@@ -131,7 +137,7 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
             ),
             secondaryBackground: _SwipeActionBackground(
               alignment: Alignment.centerRight,
-              color: Theme.of(context).colorScheme.error,
+              color: scheme.error,
               icon: Icons.delete_outline,
               label: l10n.delete,
             ),
@@ -156,10 +162,10 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
             child: Card(
               margin: const EdgeInsets.only(bottom: 8),
               color: isRunning
-                  ? statusColor.withValues(alpha: 0.08)
-                  : Theme.of(context).colorScheme.surface,
+                  ? palette.background.withValues(alpha: 0.55)
+                  : scheme.surface,
               child: InkWell(
-                borderRadius: BorderRadius.circular(8),
+                borderRadius: AppRadius.rmd,
                 onTap: () async {
                   await context.push('/sessions/$id');
                   if (mounted) await widget.onRefresh();
@@ -167,13 +173,10 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
                 child: IntrinsicHeight(
                   child: Row(
                     children: [
-                      Container(
-                        width: 4,
-                        decoration: BoxDecoration(
-                          color: statusColor,
-                          borderRadius: const BorderRadius.horizontal(
-                            left: Radius.circular(8),
-                          ),
+                      AppStatusBar(
+                        color: palette.foreground,
+                        borderRadius: const BorderRadius.horizontal(
+                          left: Radius.circular(AppRadius.md),
                         ),
                       ),
                       Expanded(
@@ -207,14 +210,18 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
                                         ),
                                         const SizedBox(width: 8),
                                         if (isAiCommit) ...[
-                                          _PurposePill(
-                                            label: l10n.sessionPurposeAiCommit,
+                                          AppPill.status(
+                                            label:
+                                                l10n.sessionPurposeAiCommit,
+                                            palette: statusColors.info,
+                                            maxWidth: 92,
                                           ),
                                           const SizedBox(width: 6),
                                         ],
-                                        _StatusPill(
+                                        AppPill.status(
                                           label: _statusLabel(l10n, status),
-                                          color: statusColor,
+                                          palette: palette,
+                                          maxWidth: 72,
                                         ),
                                       ],
                                     ),
@@ -232,9 +239,7 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
                                           .textTheme
                                           .bodySmall
                                           ?.copyWith(
-                                            color: Theme.of(
-                                              context,
-                                            ).colorScheme.onSurfaceVariant,
+                                            color: scheme.onSurfaceVariant,
                                           ),
                                     ),
                                   ],
@@ -244,9 +249,7 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
                               Icon(
                                 Icons.chevron_right,
                                 size: 20,
-                                color: Theme.of(
-                                  context,
-                                ).colorScheme.onSurfaceVariant,
+                                color: scheme.onSurfaceVariant,
                               ),
                             ],
                           ),
@@ -296,6 +299,7 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
 
   Future<void> _confirmAndDelete(String sessionId, String title) async {
     final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -309,8 +313,8 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
           FilledButton(
             onPressed: () => Navigator.pop(ctx, true),
             style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-              foregroundColor: Theme.of(context).colorScheme.onError,
+              backgroundColor: scheme.error,
+              foregroundColor: scheme.onError,
             ),
             child: Text(l10n.delete),
           ),
@@ -324,19 +328,18 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
     );
   }
 
-  Color _statusColor(BuildContext context, String status) {
-    final scheme = Theme.of(context).colorScheme;
+  StatusPalette _statusPalette(AppStatusColors colors, String status) {
     switch (status) {
       case 'running':
-        return Colors.green;
+        return colors.running;
       case 'failed':
-        return scheme.error;
+        return colors.error;
       case 'stopped':
-        return Colors.orange;
+        return colors.warning;
       case 'completed':
-        return scheme.primary;
+        return colors.success;
       default:
-        return scheme.onSurfaceVariant;
+        return colors.neutral;
     }
   }
 
@@ -419,38 +422,19 @@ class _EmptySessionsState extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
-    return Padding(
-      padding: EdgeInsets.only(top: MediaQuery.sizeOf(context).height * 0.16),
-      child: Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              archived ? Icons.archive_outlined : Icons.chat_bubble_outline,
-              size: 64,
-              color: Colors.grey[300],
+    return AppEmptyState(
+      icon: archived ? Icons.archive_outlined : Icons.chat_bubble_outline,
+      title: archived ? l10n.sessionsArchivedEmpty : l10n.sessionsEmptyYet,
+      subtitle:
+          archived ? l10n.sessionsArchivedEmptySub : l10n.sessionsEmptySub,
+      topGap: MediaQuery.sizeOf(context).height * 0.06,
+      action: archived
+          ? null
+          : FilledButton.icon(
+              onPressed: onCreate,
+              icon: const Icon(Icons.add),
+              label: Text(l10n.sessionsCreate),
             ),
-            const SizedBox(height: 16),
-            Text(
-              archived ? l10n.sessionsArchivedEmpty : l10n.sessionsEmptyYet,
-              style: TextStyle(color: Colors.grey[500], fontSize: 16),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              archived ? l10n.sessionsArchivedEmptySub : l10n.sessionsEmptySub,
-              style: TextStyle(color: Colors.grey[400], fontSize: 13),
-            ),
-            if (!archived) ...[
-              const SizedBox(height: 24),
-              FilledButton.icon(
-                onPressed: onCreate,
-                icon: const Icon(Icons.add),
-                label: Text(l10n.sessionsCreate),
-              ),
-            ],
-          ],
-        ),
-      ),
     );
   }
 }
@@ -501,84 +485,31 @@ class _SwipeActionBackground extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isLeft = alignment == Alignment.centerLeft;
+    final scheme = Theme.of(context).colorScheme;
+    final onColor = ThemeData.estimateBrightnessForColor(color) == Brightness.dark
+        ? scheme.onPrimary
+        : scheme.onError;
+    final labelStyle = TextStyle(
+      color: onColor,
+      fontWeight: FontWeight.w700,
+    );
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 20),
       alignment: alignment,
       decoration: BoxDecoration(
         color: color,
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: AppRadius.rmd,
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          if (!isLeft) Text(label, style: _labelStyle),
+          if (!isLeft) Text(label, style: labelStyle),
           if (!isLeft) const SizedBox(width: 8),
-          Icon(icon, color: Colors.white, size: 20),
+          Icon(icon, color: onColor, size: 20),
           if (isLeft) const SizedBox(width: 8),
-          if (isLeft) Text(label, style: _labelStyle),
+          if (isLeft) Text(label, style: labelStyle),
         ],
-      ),
-    );
-  }
-
-  static const _labelStyle = TextStyle(
-    color: Colors.white,
-    fontWeight: FontWeight.w700,
-  );
-}
-
-class _PurposePill extends StatelessWidget {
-  final String label;
-
-  const _PurposePill({required this.label});
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: scheme.secondaryContainer.withValues(alpha: 0.7),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-          color: scheme.onSecondaryContainer,
-          fontWeight: FontWeight.w700,
-        ),
-      ),
-    );
-  }
-}
-
-class _StatusPill extends StatelessWidget {
-  final String label;
-  final Color color;
-
-  const _StatusPill({required this.label, required this.color});
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      constraints: const BoxConstraints(maxWidth: 72),
-      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.14),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Text(
-        label,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: color,
-          fontSize: 11,
-          fontWeight: FontWeight.w800,
-        ),
       ),
     );
   }

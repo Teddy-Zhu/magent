@@ -18,9 +18,13 @@ import 'package:magent_app/core/repositories/session_repository.dart';
 import 'package:magent_app/core/session/session_language.dart';
 import 'package:magent_app/core/services/app_settings_service.dart';
 import 'package:magent_app/core/services/message_template_service.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/features/git/widgets/diff_sheet.dart';
 import 'package:magent_app/features/sessions/widgets/message_template_sheet.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
+import 'package:magent_app/shared/widgets/app_sheet_header.dart';
+import 'package:magent_app/shared/widgets/app_status_dot.dart';
 
 class ChatPage extends ConsumerStatefulWidget {
   final String sessionId;
@@ -306,6 +310,23 @@ int _intValue(Object? value) {
 String _trimFixed(double value, int fractionDigits) {
   final text = value.toStringAsFixed(fractionDigits);
   return text.endsWith('.0') ? text.substring(0, text.length - 2) : text;
+}
+
+String _formatDuration(int ms) {
+  if (ms < 1000) return '${ms}ms';
+  final seconds = ms / 1000;
+  if (seconds < 60) {
+    return '${_trimFixed(seconds, seconds >= 10 ? 0 : 1)}s';
+  }
+  final totalSec = ms ~/ 1000;
+  final minutes = totalSec ~/ 60;
+  final remainSec = totalSec - minutes * 60;
+  if (minutes < 60) {
+    return remainSec == 0 ? '${minutes}m' : '${minutes}m${remainSec}s';
+  }
+  final hours = minutes ~/ 60;
+  final remainMin = minutes - hours * 60;
+  return remainMin == 0 ? '${hours}h' : '${hours}h${remainMin}m';
 }
 
 @visibleForTesting
@@ -1196,7 +1217,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(
               l10n.chatStop,
-              style: const TextStyle(color: Colors.red),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
         ],
@@ -1980,11 +2001,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 if (provider != null && provider.isNotEmpty) ...[
                   Text(
                     ' · ',
-                    style: TextStyle(fontSize: 12, color: Colors.grey[400]),
+                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6)),
                   ),
                   Text(
                     provider,
-                    style: TextStyle(fontSize: 12, color: Colors.grey[500]),
+                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                   ),
                 ],
               ],
@@ -2007,7 +2028,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
               icon: const Icon(Icons.stop_circle_outlined),
               onPressed: _stop,
               tooltip: l10n.chatStopSession,
-              color: Colors.red,
+              color: Theme.of(context).colorScheme.error,
             ),
         ],
       ),
@@ -2065,11 +2086,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.chat_bubble_outline, size: 64, color: Colors.grey[300]),
+          Icon(Icons.chat_bubble_outline, size: 64, color: Theme.of(context).colorScheme.outlineVariant),
           const SizedBox(height: 12),
           Text(
             _isExited ? l10n.chatSessionEnded : l10n.chatNoMessages,
-            style: TextStyle(color: Colors.grey[500], fontSize: 15),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 15),
           ),
           if (_isExited) ...[
             const SizedBox(height: 16),
@@ -2093,7 +2114,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         color: Theme.of(context).cardColor,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.05),
             blurRadius: 4,
             offset: const Offset(0, -2),
           ),
@@ -2110,7 +2131,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           const SizedBox(height: 8),
           Text(
             l10n.chatSessionNotStarted,
-            style: TextStyle(color: Colors.grey[600], fontSize: 14),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 14),
           ),
           const SizedBox(height: 12),
           FilledButton.icon(
@@ -2138,7 +2159,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         color: Theme.of(context).cardColor,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.05),
             blurRadius: 4,
             offset: const Offset(0, -2),
           ),
@@ -2146,11 +2167,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       ),
       child: Row(
         children: [
-          Icon(Icons.info_outline, size: 16, color: Colors.grey[500]),
+          Icon(Icons.info_outline, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
           const SizedBox(width: 8),
           Text(
             '${l10n.settingsSession}${_sessionStatusLabel(l10n, status)}',
-            style: TextStyle(color: Colors.grey[600], fontSize: 13),
+            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13),
           ),
           const Spacer(),
           TextButton.icon(
@@ -2174,7 +2195,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         color: Theme.of(context).cardColor,
         boxShadow: [
           BoxShadow(
-            color: Colors.black.withValues(alpha: 0.1),
+            color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.10),
             blurRadius: 4,
             offset: const Offset(0, -2),
           ),
@@ -2254,11 +2275,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       case SessionEventTypes.message:
         return _MessageBubble(
           content: _messageText(data, ['text', 'content']),
+          phase: _messagePhase(data),
           onTapLink: (_, href, _) => _openLinkedFileDiff(href),
         );
       case SessionEventTypes.messageDelta:
         return _MessageBubble(
           content: _messageText(data, ['delta', 'text', 'content']),
+          phase: _messagePhase(data),
           onTapLink: (_, href, _) => _openLinkedFileDiff(href),
         );
       case SessionEventTypes.output:
@@ -2295,11 +2318,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       case SessionEventTypes.commandOutputDelta:
         final output = _toolText(data?['delta'] ?? _commandOutputValue(data));
         return _ToolCallCard(
-          icon: Icons.terminal,
-          title: _commandTitle(
-            _commandValue(data),
-            fallback: l10n.chatCommandOutput,
-          ),
+          icon: _commandIcon(data),
+          title: _commandActionTitle(data) ??
+              _commandTitle(
+                _commandValue(data),
+                fallback: l10n.chatCommandOutput,
+              ),
           output: output,
           summary: _singleLineSummary(output, fallback: l10n.chatCommandOutput),
           success: true,
@@ -2319,8 +2343,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       case SessionEventTypes.commandCompleted:
         final output = _commandCompletedOutput(data);
         return _ToolCallCard(
-          icon: Icons.terminal,
-          title: _commandTitle(_commandValue(data), fallback: l10n.chatCommand),
+          icon: _commandIcon(data),
+          title: _commandActionTitle(data) ??
+              _commandTitle(_commandValue(data), fallback: l10n.chatCommand),
           output: output,
           summary: _commandSummary(data, output),
           success: _commandSuccess(data),
@@ -2427,7 +2452,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           child: Center(
             child: Text(
               l10n.chatExited(data?['exit_code'] ?? 0),
-              style: TextStyle(color: Colors.grey[600]),
+              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
           ),
         );
@@ -2494,6 +2519,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return data.toString();
   }
 
+  String? _messagePhase(dynamic data) {
+    if (data is! Map) return null;
+    final phase = data['phase']?.toString();
+    if (phase == null || phase.isEmpty) return null;
+    return phase;
+  }
+
   String _reasoningText(dynamic data, {String? fallback}) {
     if (data is! Map) return fallback ?? '';
     final summary = _messageText(data['summary'], ['text', 'content']);
@@ -2536,6 +2568,59 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (_isMeaningfulValue(data[key])) return data[key];
     }
     return null;
+  }
+
+  List<dynamic> _commandActions(dynamic data) {
+    if (data is! Map) return const [];
+    final actions = data['commandActions'] ?? data['command_actions'];
+    if (actions is List) return actions;
+    return const [];
+  }
+
+  String? _commandActionTitle(dynamic data) {
+    final actions = _commandActions(data);
+    if (actions.isEmpty) return null;
+    final first = actions.first;
+    if (first is! Map) return null;
+    final command = first['command']?.toString().trim();
+    if (command != null && command.isNotEmpty) return command;
+    final path = first['path']?.toString().trim();
+    final name = first['name']?.toString().trim();
+    if (name != null && name.isNotEmpty) {
+      return path != null && path.isNotEmpty ? '$name  ($path)' : name;
+    }
+    if (path != null && path.isNotEmpty) return path;
+    return null;
+  }
+
+  IconData _commandIcon(dynamic data) {
+    final actions = _commandActions(data);
+    if (actions.isEmpty) return Icons.terminal;
+    final first = actions.first;
+    final type = first is Map ? first['type']?.toString() : null;
+    switch (type) {
+      case 'read':
+      case 'cat':
+      case 'view':
+        return Icons.visibility_outlined;
+      case 'write':
+      case 'edit':
+      case 'modify':
+        return Icons.edit_note;
+      case 'search':
+      case 'grep':
+      case 'find':
+        return Icons.search;
+      case 'list':
+      case 'list_dir':
+      case 'ls':
+        return Icons.folder_open;
+      case 'shell':
+      case 'execute':
+      case 'run':
+      default:
+        return Icons.terminal;
+    }
   }
 
   dynamic _commandOutputValue(dynamic data) {
@@ -2672,6 +2757,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (status.isNotEmpty) details.add(status);
       final exitCode = data['exit_code'] ?? data['exitCode'];
       if (exitCode != null) details.add('exit $exitCode');
+      final durationRaw = data['durationMs'] ?? data['duration_ms'];
+      if (durationRaw != null) {
+        final ms = _intValue(durationRaw) ?? 0;
+        if (ms > 0) details.add(_formatDuration(ms));
+      }
+      final source = _toolText(data['source']);
+      if (source.isNotEmpty) details.add(source);
+      final pidRaw = data['processId'] ?? data['pid'] ?? data['process_id'];
+      if (pidRaw != null) {
+        final pid = _intValue(pidRaw) ?? 0;
+        if (pid > 0) details.add('pid $pid');
+      }
     }
     final outputSummary = _singleLineSummary(output);
     if (outputSummary.isNotEmpty) details.add(outputSummary);
@@ -2759,28 +2856,62 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   String _changeKindText(dynamic value) {
     if (value == null) return '';
-    if (value is String) return value.trim();
+    if (value is String) return _changeKindLabel(value.trim());
     if (value is Map) {
       final type = value['type']?.toString().trim() ?? '';
       final movePath = value['move_path']?.toString().trim() ?? '';
-      if (type.isNotEmpty && movePath.isNotEmpty) return '$type -> $movePath';
-      return type;
+      final label = _changeKindLabel(type);
+      if (label.isNotEmpty && movePath.isNotEmpty) return '$label → $movePath';
+      return label;
     }
-    return value.toString().trim();
+    return _changeKindLabel(value.toString().trim());
+  }
+
+  String _changeKindLabel(String type) {
+    switch (type) {
+      case '':
+        return '';
+      case 'add':
+      case 'added':
+      case 'create':
+      case 'created':
+      case 'new':
+        return '新增';
+      case 'update':
+      case 'updated':
+      case 'modify':
+      case 'modified':
+      case 'change':
+      case 'changed':
+        return '修改';
+      case 'delete':
+      case 'deleted':
+      case 'remove':
+      case 'removed':
+        return '删除';
+      case 'rename':
+      case 'renamed':
+      case 'move':
+      case 'moved':
+        return '重命名';
+      default:
+        return type;
+    }
   }
 
   Color _statusColor(String status) {
+    final statusColors = AppStatusColors.of(context);
     switch (status) {
       case 'running':
-        return Colors.green;
+        return statusColors.running.foreground;
       case 'completed':
-        return Colors.blue;
+        return statusColors.info.foreground;
       case 'stopped':
-        return Colors.orange;
+        return statusColors.warning.foreground;
       case 'failed':
-        return Colors.red;
+        return statusColors.error.foreground;
       default:
-        return Colors.grey;
+        return statusColors.neutral.foreground;
     }
   }
 
@@ -2815,13 +2946,14 @@ class _RunningTurnBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     return Container(
-      height: 36,
-      padding: const EdgeInsets.only(left: 12, right: 4),
+      height: 38,
+      padding: const EdgeInsets.only(left: 14, right: 4),
       decoration: BoxDecoration(
-        color: scheme.primaryContainer.withValues(alpha: 0.42),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: scheme.primary.withValues(alpha: 0.12)),
+        color: statusColors.info.background,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: statusColors.info.border),
       ),
       child: Row(
         children: [
@@ -2833,7 +2965,7 @@ class _RunningTurnBar extends StatelessWidget {
               color: scheme.primary,
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 10),
           Expanded(
             child: Text(
               queuedCount > 0
@@ -2868,13 +3000,14 @@ class _QueuedInputBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     return Container(
-      height: 34,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
+      height: 36,
+      padding: const EdgeInsets.symmetric(horizontal: 14),
       decoration: BoxDecoration(
-        color: scheme.surfaceContainerHighest.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: scheme.outlineVariant),
+        color: statusColors.neutral.background,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: statusColors.neutral.border),
       ),
       child: Row(
         children: [
@@ -3192,7 +3325,7 @@ class _WorkspaceFilePickerSheetState extends State<_WorkspaceFilePickerSheet> {
             if (_loading)
               const Padding(
                 padding: EdgeInsets.all(24),
-                child: CircularProgressIndicator(),
+                child: AppLoading(),
               )
             else if (_error.isNotEmpty)
               Padding(padding: const EdgeInsets.all(24), child: Text(_error))
@@ -3267,27 +3400,37 @@ class _SheetHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 54,
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
-      ),
-      child: Row(
-        children: [
-          if (leading != null) leading! else Icon(icon, size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(fontWeight: FontWeight.w600),
+    if (leading != null) {
+      // 保留 leading 自定义场景（极少用）。
+      final scheme = Theme.of(context).colorScheme;
+      return Container(
+        padding: const EdgeInsets.fromLTRB(20, 4, 12, 12),
+        decoration: BoxDecoration(
+          border: Border(
+            bottom: BorderSide(
+              color: scheme.outlineVariant.withValues(alpha: 0.5),
             ),
           ),
-        ],
-      ),
-    );
+        ),
+        child: Row(
+          children: [
+            leading!,
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return AppSheetHeader(title: title, icon: icon);
   }
 }
 
@@ -3321,30 +3464,29 @@ class _StatusDot extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final statusColors = AppStatusColors.of(context);
     Color color;
+    bool pulse = false;
     switch (status) {
       case 'running':
-        color = Colors.green;
+        color = statusColors.running.foreground;
+        pulse = true;
         break;
       case 'completed':
-        color = Colors.blue;
+        color = statusColors.info.foreground;
         break;
       case 'stopped':
       case 'exited':
-        color = Colors.orange;
+        color = statusColors.warning.foreground;
         break;
       case 'failed':
       case 'lost':
-        color = Colors.red;
+        color = statusColors.error.foreground;
         break;
       default:
-        color = Colors.grey;
+        color = statusColors.neutral.foreground;
     }
-    return Container(
-      width: 8,
-      height: 8,
-      decoration: BoxDecoration(shape: BoxShape.circle, color: color),
-    );
+    return AppStatusDot(color: color, size: 8, pulse: pulse);
   }
 }
 
@@ -3384,7 +3526,7 @@ class _TokenUsagePanel extends StatelessWidget {
             child: Icon(
               Icons.keyboard_arrow_down,
               size: 18,
-              color: Colors.grey[500],
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
         ),
@@ -3418,13 +3560,13 @@ class _TokenUsagePanel extends StatelessWidget {
                       usageText,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: Colors.grey[700]),
+                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
                     ),
                   ),
                   Icon(
                     Icons.keyboard_arrow_up,
                     size: 18,
-                    color: Colors.grey[500],
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
                   ),
                 ],
               ),
@@ -3433,7 +3575,7 @@ class _TokenUsagePanel extends StatelessWidget {
                 detailText,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ],
           ),
@@ -3464,14 +3606,14 @@ class _InfoChip extends StatelessWidget {
           Icon(
             icon,
             size: 14,
-            color: isError ? Colors.red[400] : Colors.grey[500],
+            color: isError ? AppStatusColors.of(context).error.foreground : Theme.of(context).colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 4),
           Text(
             label,
             style: TextStyle(
               fontSize: 12,
-              color: isError ? Colors.red[400] : Colors.grey[500],
+              color: isError ? AppStatusColors.of(context).error.foreground : Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
         ],
@@ -3486,7 +3628,8 @@ class _UserBubble extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final maxWidth = MediaQuery.sizeOf(context).width * 0.72;
+    final scheme = Theme.of(context).colorScheme;
+    final maxWidth = MediaQuery.sizeOf(context).width * 0.74;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
@@ -3499,17 +3642,27 @@ class _UserBubble extends StatelessWidget {
             ),
             child: _ExpandableBubble(
               content: content,
-              backgroundColor: Theme.of(context).colorScheme.primaryContainer,
-              borderRadius: BorderRadius.circular(12),
+              backgroundColor: scheme.primary.withValues(alpha: 0.10),
+              borderColor: scheme.primary.withValues(alpha: 0.28),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(16),
+                topRight: Radius.circular(16),
+                bottomLeft: Radius.circular(16),
+                bottomRight: Radius.circular(4),
+              ),
               childBuilder: (context, text, collapsed, maxLines) =>
-                  SelectableText(text, maxLines: collapsed ? maxLines : null),
+                  SelectableText(
+                    text,
+                    maxLines: collapsed ? maxLines : null,
+                    style: const TextStyle(height: 1.5),
+                  ),
             ),
           ),
           const SizedBox(width: 12),
           CircleAvatar(
-            radius: 14,
-            backgroundColor: Theme.of(context).colorScheme.primary,
-            child: const Icon(Icons.person, color: Colors.white, size: 16),
+            radius: 16,
+            backgroundColor: scheme.primary,
+            child: Icon(Icons.person, color: scheme.onPrimary, size: 16),
           ),
         ],
       ),
@@ -3519,21 +3672,37 @@ class _UserBubble extends StatelessWidget {
 
 class _MessageBubble extends StatelessWidget {
   final String content;
+  final String? phase;
   final MarkdownTapLinkCallback? onTapLink;
 
-  const _MessageBubble({required this.content, this.onTapLink});
+  const _MessageBubble({
+    required this.content,
+    this.phase,
+    this.onTapLink,
+  });
+
+  bool get _isCommentary => phase == 'commentary';
 
   @override
   Widget build(BuildContext context) {
-    final maxWidth = MediaQuery.sizeOf(context).width * 0.82;
+    final scheme = Theme.of(context).colorScheme;
+    if (_isCommentary && content.trim().isNotEmpty) {
+      return _CommentaryLine(content: content);
+    }
+    final maxWidth = MediaQuery.sizeOf(context).width * 0.84;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           CircleAvatar(
-            radius: 14,
-            child: const Icon(Icons.smart_toy, size: 16),
+            radius: 16,
+            backgroundColor: scheme.secondaryContainer,
+            child: Icon(
+              Icons.smart_toy,
+              size: 16,
+              color: scheme.onSecondaryContainer,
+            ),
           ),
           const SizedBox(width: 12),
           Flexible(
@@ -3543,10 +3712,14 @@ class _MessageBubble extends StatelessWidget {
               ),
               child: _ExpandableBubble(
                 content: content,
-                backgroundColor: Theme.of(
-                  context,
-                ).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(12),
+                backgroundColor: scheme.surfaceContainerLow,
+                borderColor: scheme.outlineVariant.withValues(alpha: 0.45),
+                borderRadius: const BorderRadius.only(
+                  topLeft: Radius.circular(16),
+                  topRight: Radius.circular(16),
+                  bottomLeft: Radius.circular(4),
+                  bottomRight: Radius.circular(16),
+                ),
                 childBuilder: (context, text, collapsed, maxLines) =>
                     MarkdownBody(
                       data: text,
@@ -3557,6 +3730,83 @@ class _MessageBubble extends StatelessWidget {
             ),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// commentary 旁白（agentMessage.phase == "commentary"）。
+/// 模型在工具调用之间的简短解说，渲染为左侧缩进的淡色斜体单段，
+/// 默认折到 3 行，超过则点击展开。
+class _CommentaryLine extends StatefulWidget {
+  final String content;
+  const _CommentaryLine({required this.content});
+
+  @override
+  State<_CommentaryLine> createState() => _CommentaryLineState();
+}
+
+class _CommentaryLineState extends State<_CommentaryLine> {
+  static const _collapsedLines = 3;
+  bool _expanded = false;
+
+  bool get _shouldCollapse {
+    final lineCount = '\n'.allMatches(widget.content).length + 1;
+    return widget.content.length > 240 || lineCount > _collapsedLines;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final shouldCollapse = _shouldCollapse;
+    final collapsed = shouldCollapse && !_expanded;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(48, 2, 16, 2),
+      child: InkWell(
+        onTap: shouldCollapse
+            ? () => setState(() => _expanded = !_expanded)
+            : null,
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(
+                  Icons.short_text,
+                  size: 14,
+                  color: scheme.outline,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  widget.content.trim(),
+                  maxLines: collapsed ? _collapsedLines : null,
+                  overflow:
+                      collapsed ? TextOverflow.ellipsis : TextOverflow.clip,
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.4,
+                    fontStyle: FontStyle.italic,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+              if (shouldCollapse)
+                Padding(
+                  padding: const EdgeInsets.only(left: 4, top: 1),
+                  child: Icon(
+                    _expanded ? Icons.unfold_less : Icons.unfold_more,
+                    size: 14,
+                    color: scheme.outline,
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
     );
   }
@@ -3573,6 +3823,7 @@ typedef _ExpandableBubbleChildBuilder =
 class _ExpandableBubble extends StatefulWidget {
   final String content;
   final Color backgroundColor;
+  final Color? borderColor;
   final BorderRadius borderRadius;
   final _ExpandableBubbleChildBuilder childBuilder;
 
@@ -3581,6 +3832,7 @@ class _ExpandableBubble extends StatefulWidget {
     required this.backgroundColor,
     required this.borderRadius,
     required this.childBuilder,
+    this.borderColor,
   });
 
   @override
@@ -3618,10 +3870,13 @@ class _ExpandableBubbleState extends State<_ExpandableBubble> {
           : null,
       borderRadius: widget.borderRadius,
       child: Container(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
         decoration: BoxDecoration(
           color: widget.backgroundColor,
           borderRadius: widget.borderRadius,
+          border: widget.borderColor != null
+              ? Border.all(color: widget.borderColor!)
+              : null,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -3698,7 +3953,7 @@ class _ToolCallCard extends StatefulWidget {
 class _ToolCallCardState extends State<_ToolCallCard> {
   @override
   Widget build(BuildContext context) {
-    final color = widget.success ? Colors.green : Colors.red;
+    final color = widget.success ? AppStatusColors.of(context).running.foreground : Theme.of(context).colorScheme.error;
     final title = widget.title.trim().isEmpty
         ? AppLocalizations.of(context)!.approvalUnknownAction
         : widget.title.trim();
@@ -3751,7 +4006,7 @@ class _ToolCallCardState extends State<_ToolCallCard> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.grey[600],
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -3759,7 +4014,7 @@ class _ToolCallCardState extends State<_ToolCallCard> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(Icons.open_in_full, size: 16, color: Colors.grey[600]),
+                Icon(Icons.open_in_full, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ],
             ),
           ),
@@ -3859,7 +4114,7 @@ class _SessionDetailSheetState extends State<_SessionDetailSheet> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+        border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
       ),
       child: Row(
         children: [
@@ -3879,12 +4134,12 @@ class _SessionDetailSheetState extends State<_SessionDetailSheet> {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
-              color: Colors.blue[50],
+              color: AppStatusColors.of(context).info.background,
               borderRadius: BorderRadius.circular(8),
             ),
             child: Text(
               widget.language,
-              style: TextStyle(fontSize: 10, color: Colors.blue[700]),
+              style: TextStyle(fontSize: 10, color: AppStatusColors.of(context).info.foreground),
             ),
           ),
           Tooltip(
@@ -4031,28 +4286,30 @@ class _DiffDetailLineView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     Color bgColor;
     Color textColor;
     switch (line.type) {
       case 'add':
-        bgColor = Colors.green[50]!;
-        textColor = Colors.green[900]!;
+        bgColor = statusColors.running.background;
+        textColor = statusColors.running.foreground;
         break;
       case 'del':
-        bgColor = Colors.red[50]!;
-        textColor = Colors.red[900]!;
+        bgColor = statusColors.error.background;
+        textColor = statusColors.error.foreground;
         break;
       case 'hunk':
-        bgColor = Colors.blue[50]!;
-        textColor = Colors.blue[900]!;
+        bgColor = statusColors.info.background;
+        textColor = statusColors.info.foreground;
         break;
       case 'meta':
-        bgColor = Colors.grey[100]!;
-        textColor = Colors.grey[800]!;
+        bgColor = scheme.surfaceContainerHigh;
+        textColor = scheme.onSurfaceVariant;
         break;
       default:
         bgColor = Colors.transparent;
-        textColor = Colors.grey[900]!;
+        textColor = scheme.onSurface;
     }
     return Container(
       color: bgColor,
@@ -4143,7 +4400,7 @@ class _StructuredInfoCardState extends State<_StructuredInfoCard> {
                           Icon(
                             Icons.open_in_full,
                             size: 16,
-                            color: Colors.grey[600],
+                            color: Theme.of(context).colorScheme.onSurfaceVariant,
                           ),
                         ],
                       ),
@@ -4153,7 +4410,7 @@ class _StructuredInfoCardState extends State<_StructuredInfoCard> {
                           summary,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: textStyle.copyWith(color: Colors.grey[700]),
+                          style: textStyle.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
                         ),
                       ],
                     ],

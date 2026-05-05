@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_sheet_header.dart';
 
 /// Shared bottom sheet for commit operations.
 class CommitSheet extends StatefulWidget {
@@ -49,17 +51,19 @@ class _CommitSheetState extends State<CommitSheet> {
 
   void _showError(String msg) {
     if (!mounted) return;
+    final scheme = Theme.of(context).colorScheme;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: scheme.error));
   }
 
   void _showSuccess(String msg) {
     if (!mounted) return;
+    final statusColors = AppStatusColors.of(context);
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(msg),
-        backgroundColor: Colors.green,
+        backgroundColor: statusColors.running.foreground,
         duration: const Duration(seconds: 1),
       ),
     );
@@ -132,32 +136,10 @@ class _CommitSheetState extends State<CommitSheet> {
         builder: (context, scrollController) {
           return Column(
             children: [
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 12,
-                ),
-                decoration: BoxDecoration(
-                  border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
-                ),
-                child: Row(
-                  children: [
-                    const Icon(Icons.commit, size: 18),
-                    const SizedBox(width: 8),
-                    Text(
-                      l10n.gitCommit,
-                      style: const TextStyle(
-                        fontWeight: FontWeight.w600,
-                        fontSize: 16,
-                      ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: const Icon(Icons.close),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
-                ),
+              AppSheetHeader(
+                title: l10n.gitCommit,
+                icon: Icons.commit,
+                onClose: () => Navigator.pop(context),
               ),
               Expanded(
                 child: ListView(
@@ -169,7 +151,6 @@ class _CommitSheetState extends State<CommitSheet> {
                       decoration: InputDecoration(
                         labelText: l10n.gitCommitMsg,
                         hintText: l10n.gitCommitMessageHint,
-                        border: const OutlineInputBorder(),
                         suffixIcon: Tooltip(
                           message: l10n.gitAiSuggest,
                           child: IconButton(

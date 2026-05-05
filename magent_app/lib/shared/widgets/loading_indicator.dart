@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
 
+/// 兼容入口，保留旧的引用路径。新代码请直接使用 [AppLoading]。
 class LoadingIndicator extends StatelessWidget {
   final String? message;
 
@@ -7,17 +9,6 @@ class LoadingIndicator extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const CircularProgressIndicator(),
-          if (message != null) ...[
-            const SizedBox(height: 16),
-            Text(message!),
-          ],
-        ],
-      ),
-    );
+    return AppLoading(message: message);
   }
 }

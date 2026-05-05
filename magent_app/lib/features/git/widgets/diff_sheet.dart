@@ -1,14 +1,18 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:magent_app/core/api/error_messages.dart';
+import 'package:magent_app/core/providers/app_settings_provider.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
 
 /// Shared bottom sheet for displaying git diff content.
 /// Handles text diffs, images, and binary files.
-class DiffSheet extends StatefulWidget {
+class DiffSheet extends ConsumerStatefulWidget {
   final GitRepository git;
   final FileRepository? file;
   final String projectId;
@@ -54,10 +58,10 @@ class DiffSheet extends StatefulWidget {
   }
 
   @override
-  State<DiffSheet> createState() => _DiffSheetState();
+  ConsumerState<DiffSheet> createState() => _DiffSheetState();
 }
 
-class _DiffSheetState extends State<DiffSheet> {
+class _DiffSheetState extends ConsumerState<DiffSheet> {
   static const _pageSize = 200;
 
   List<Map<String, dynamic>> _lines = [];
@@ -239,7 +243,7 @@ class _DiffSheetState extends State<DiffSheet> {
             _buildHeader(context),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const AppLoading()
                   : _error.isNotEmpty
                   ? _buildErrorOrInfo()
                   : _imageBytes != null
@@ -253,6 +257,7 @@ class _DiffSheetState extends State<DiffSheet> {
   }
 
   Widget _buildErrorOrInfo() {
+    final scheme = Theme.of(context).colorScheme;
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -260,10 +265,10 @@ class _DiffSheetState extends State<DiffSheet> {
           Icon(
             widget.isBinary ? Icons.insert_drive_file : Icons.error_outline,
             size: 48,
-            color: Colors.grey[400],
+            color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
           ),
           const SizedBox(height: 12),
-          Text(_error, style: TextStyle(color: Colors.grey[600])),
+          Text(_error, style: TextStyle(color: scheme.onSurfaceVariant)),
         ],
       ),
     );
@@ -278,10 +283,15 @@ class _DiffSheetState extends State<DiffSheet> {
   }
 
   Widget _buildHeader(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.5),
+          ),
+        ),
       ),
       child: Row(
         children: [
@@ -290,7 +300,7 @@ class _DiffSheetState extends State<DiffSheet> {
           Expanded(
             child: Text(
               widget.path,
-              style: const TextStyle(fontWeight: FontWeight.w500),
+              style: const TextStyle(fontWeight: FontWeight.w600),
               overflow: TextOverflow.ellipsis,
             ),
           ),
@@ -299,7 +309,7 @@ class _DiffSheetState extends State<DiffSheet> {
               padding: const EdgeInsets.only(right: 8),
               child: Text(
                 '${(_imageBytes!.length / 1024).toStringAsFixed(1)} KB',
-                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
               ),
             ),
           if (_lines.isNotEmpty)
@@ -312,7 +322,7 @@ class _DiffSheetState extends State<DiffSheet> {
               padding: const EdgeInsets.only(right: 4),
               child: Text(
                 '${_lines.length}/$_totalLines',
-                style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 11, color: scheme.onSurfaceVariant),
               ),
             ),
           if (_lines.isNotEmpty)
@@ -367,6 +377,7 @@ class _DiffSheetState extends State<DiffSheet> {
   }
 
   Widget _buildStatBadge() {
+    final statusColors = AppStatusColors.of(context);
     int adds = 0, dels = 0;
     for (final line in _lines) {
       final type = line['type'] as String? ?? '';
@@ -380,8 +391,8 @@ class _DiffSheetState extends State<DiffSheet> {
           '+$adds',
           style: TextStyle(
             fontSize: 11,
-            color: Colors.green[700],
-            fontWeight: FontWeight.w500,
+            color: statusColors.running.foreground,
+            fontWeight: FontWeight.w600,
           ),
         ),
         const SizedBox(width: 4),
@@ -389,8 +400,8 @@ class _DiffSheetState extends State<DiffSheet> {
           '-$dels',
           style: TextStyle(
             fontSize: 11,
-            color: Colors.red[700],
-            fontWeight: FontWeight.w500,
+            color: statusColors.error.foreground,
+            fontWeight: FontWeight.w600,
           ),
         ),
       ],
@@ -398,23 +409,31 @@ class _DiffSheetState extends State<DiffSheet> {
   }
 
   Widget _buildDiffList(ScrollController scrollController) {
+    final scheme = Theme.of(context).colorScheme;
     if (_lines.isEmpty) {
       return Center(
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.insert_drive_file, size: 48, color: Colors.grey[400]),
+            Icon(
+              Icons.insert_drive_file,
+              size: 48,
+              color: scheme.onSurfaceVariant.withValues(alpha: 0.6),
+            ),
             const SizedBox(height: 12),
             Text(
               widget.isBinary
                   ? AppLocalizations.of(context)!.gitBinaryFile
                   : AppLocalizations.of(context)!.gitNoTextChanges,
-              style: TextStyle(color: Colors.grey[600], fontSize: 14),
+              style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 14),
             ),
             const SizedBox(height: 4),
             Text(
               widget.path,
-              style: TextStyle(color: Colors.grey[500], fontSize: 12),
+              style: TextStyle(
+                color: scheme.onSurfaceVariant.withValues(alpha: 0.85),
+                fontSize: 12,
+              ),
             ),
           ],
         ),
@@ -466,6 +485,11 @@ class _DiffSheetState extends State<DiffSheet> {
   }
 
   Widget _buildDiffLine(Map<String, dynamic> line) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
+    final fontScale = ref
+        .watch(viewerFontScaleControllerProvider)
+        .maybeWhen(data: (v) => v, orElse: () => 1.0);
     final type = line['type'] as String? ?? 'context';
     final content = line['content'] as String? ?? '';
     final oldLine = line['old_line'] as int?;
@@ -477,13 +501,13 @@ class _DiffSheetState extends State<DiffSheet> {
 
     switch (type) {
       case 'add':
-        bgColor = Colors.green[50]!;
-        textColor = Colors.green[900]!;
+        bgColor = statusColors.running.background;
+        textColor = statusColors.running.foreground;
         prefix = '+';
         break;
       case 'del':
-        bgColor = Colors.red[50]!;
-        textColor = Colors.red[900]!;
+        bgColor = statusColors.error.background;
+        textColor = statusColors.error.foreground;
         prefix = '-';
         break;
       default:
@@ -503,8 +527,8 @@ class _DiffSheetState extends State<DiffSheet> {
             child: Text(
               oldLine?.toString() ?? '',
               style: TextStyle(
-                color: Colors.grey[500],
-                fontSize: 11,
+                color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+                fontSize: 11 * fontScale,
                 fontFamily: 'monospace',
               ),
               textAlign: TextAlign.right,
@@ -516,8 +540,8 @@ class _DiffSheetState extends State<DiffSheet> {
             child: Text(
               newLine?.toString() ?? '',
               style: TextStyle(
-                color: Colors.grey[500],
-                fontSize: 11,
+                color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
+                fontSize: 11 * fontScale,
                 fontFamily: 'monospace',
               ),
               textAlign: TextAlign.right,
@@ -530,7 +554,8 @@ class _DiffSheetState extends State<DiffSheet> {
               style: TextStyle(
                 color: textColor,
                 fontFamily: 'monospace',
-                fontSize: 12,
+                fontSize: 12 * fontScale,
+                height: 1.4,
               ),
               softWrap: _wrap,
             ),

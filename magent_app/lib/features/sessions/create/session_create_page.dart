@@ -6,6 +6,7 @@ import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/repositories/bootstrap_repository.dart';
 import 'package:magent_app/core/repositories/session_repository.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
 
 class SessionCreatePage extends ConsumerStatefulWidget {
@@ -337,10 +338,10 @@ class _SessionCreatePageState extends ConsumerState<SessionCreatePage> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(
+                    Icon(
                       Icons.warning_amber,
                       size: 48,
-                      color: Colors.orange,
+                      color: AppStatusColors.of(context).warning.foreground,
                     ),
                     const SizedBox(height: 16),
                     Text(_configError, textAlign: TextAlign.center),

@@ -370,6 +370,25 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsThemeMode => 'Theme mode';
 
   @override
+  String get settingsViewerFontSize => 'File viewer font size';
+
+  @override
+  String get settingsViewerFontSizeSub =>
+      'Adjust font size in code, text, Markdown source and diff views';
+
+  @override
+  String get viewerFontSizeSmall => 'Small';
+
+  @override
+  String get viewerFontSizeMedium => 'Medium';
+
+  @override
+  String get viewerFontSizeLarge => 'Large';
+
+  @override
+  String get viewerFontSizeReset => 'Reset';
+
+  @override
   String get themeSystem => 'Follow system';
 
   @override
@@ -1005,6 +1024,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get disableWrap => 'Disable wrap';
+
+  @override
+  String get viewerSource => 'Source';
+
+  @override
+  String get viewerRender => 'Render';
+
+  @override
+  String get viewerSourceMode => 'Source mode';
+
+  @override
+  String get viewerRenderMode => 'Render mode';
 
   @override
   String get loadMore => 'Load more';

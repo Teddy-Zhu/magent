@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/storage/app_database.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
 
 class CacheSettingsPage extends ConsumerStatefulWidget {
   const CacheSettingsPage({super.key});
@@ -80,6 +81,7 @@ class _CacheSettingsPageState extends ConsumerState<CacheSettingsPage> {
 
   void _confirmClearAll() {
     final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
     showDialog<void>(
       context: context,
       builder: (context) => AlertDialog(
@@ -97,7 +99,7 @@ class _CacheSettingsPageState extends ConsumerState<CacheSettingsPage> {
             },
             child: Text(
               l10n.cacheClearAll,
-              style: const TextStyle(color: Colors.red),
+              style: TextStyle(color: scheme.error),
             ),
           ),
         ],
@@ -108,10 +110,11 @@ class _CacheSettingsPageState extends ConsumerState<CacheSettingsPage> {
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
     return Scaffold(
       appBar: AppBar(title: Text(l10n.settingsCacheManage)),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppLoading()
           : _api == null
           ? Center(child: Text(l10n.noAgentConnected))
           : RefreshIndicator(
@@ -144,7 +147,10 @@ class _CacheSettingsPageState extends ConsumerState<CacheSettingsPage> {
                       icon: const Icon(Icons.delete_sweep),
                       label: Text(l10n.cacheClearAllDisplayCaches),
                       style: OutlinedButton.styleFrom(
-                        foregroundColor: Colors.red,
+                        foregroundColor: scheme.error,
+                        side: BorderSide(
+                          color: scheme.error.withValues(alpha: 0.5),
+                        ),
                       ),
                     ),
                   ),

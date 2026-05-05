@@ -5,7 +5,12 @@ import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/providers/app_settings_provider.dart';
 import 'package:magent_app/core/services/app_settings_service.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_list_tile.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
+import 'package:magent_app/shared/widgets/app_section.dart';
+import 'package:magent_app/shared/widgets/app_sheet_header.dart';
 
 class SettingsPage extends ConsumerStatefulWidget {
   const SettingsPage({super.key});
@@ -80,13 +85,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     return Scaffold(
       appBar: AppBar(title: Text(l10n.settingsTitle)),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppLoading()
           : ListView(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
               cacheExtent: 640,
               children: [
-                _buildSection(
-                  context,
+                AppSection(
                   title: l10n.settingsAgent,
                   icon: Icons.dns,
                   children: [
@@ -104,14 +108,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     ),
                   ],
                 ),
-                _buildSection(
-                  context,
+                AppSection(
                   title: l10n.settingsDefaultCli,
                   icon: Icons.tune,
                   children: [_buildDefaultProviderTile(l10n)],
                 ),
-                _buildSection(
-                  context,
+                AppSection(
                   title: l10n.settingsSession,
                   icon: Icons.chat_bubble_outline,
                   children: [
@@ -119,14 +121,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     _buildShowAiCommitSessionsTile(l10n),
                   ],
                 ),
-                _buildSection(
-                  context,
+                AppSection(
                   title: l10n.settingsAppearance,
                   icon: Icons.palette_outlined,
-                  children: [_buildThemeModeTile(l10n)],
+                  children: [
+                    _buildThemeModeTile(l10n),
+                    _buildViewerFontScaleTile(l10n),
+                  ],
                 ),
-                _buildSection(
-                  context,
+                AppSection(
                   title: l10n.settingsGit,
                   icon: Icons.alt_route,
                   children: [
@@ -139,8 +142,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     _buildAiCommitSettingsTile(l10n),
                   ],
                 ),
-                _buildSection(
-                  context,
+                AppSection(
                   title: l10n.settingsCache,
                   icon: Icons.storage,
                   children: [
@@ -152,16 +154,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     ),
                   ],
                 ),
-                _buildSection(
-                  context,
+                AppSection(
                   title: l10n.settingsAbout,
                   icon: Icons.info_outline,
                   children: [
-                    _SettingsTile(
-                      icon: Icons.tag,
+                    AppListTile(
+                      leadingIcon: Icons.tag,
                       title: Text(l10n.settingsVersion),
                       subtitle: const Text('1.0.0-dev'),
-                      onTap: null,
                     ),
                   ],
                 ),
@@ -171,14 +171,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   Widget _buildSessionOpenAtBottomTile(AppLocalizations l10n) {
-    return _SettingsTile(
-      icon: Icons.vertical_align_bottom,
+    return AppListTile(
+      leadingIcon: Icons.vertical_align_bottom,
       title: Text(l10n.settingsSessionOpenAtBottom),
       subtitle: Text(l10n.settingsSessionOpenAtBottomSub),
       onTap: _toggleSessionOpenAtBottom,
       trailing: Switch(
         value: _sessionOpenAtBottom,
-        onChanged: (value) => _setSessionOpenAtBottom(value),
+        onChanged: _setSessionOpenAtBottom,
       ),
     );
   }
@@ -195,14 +195,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   Widget _buildShowAiCommitSessionsTile(AppLocalizations l10n) {
-    return _SettingsTile(
-      icon: Icons.auto_fix_high,
+    return AppListTile(
+      leadingIcon: Icons.auto_fix_high,
       title: Text(l10n.settingsShowAiCommitSessions),
       subtitle: Text(l10n.settingsShowAiCommitSessionsSub),
       onTap: _toggleShowAiCommitSessions,
       trailing: Switch(
         value: _showAiCommitSessions,
-        onChanged: (value) => _setShowAiCommitSessions(value),
+        onChanged: _setShowAiCommitSessions,
       ),
     );
   }
@@ -221,11 +221,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   }
 
   Widget _buildThemeModeTile(AppLocalizations l10n) {
-    return _SettingsTile(
-      icon: Icons.dark_mode_outlined,
+    return AppListTile(
+      leadingIcon: Icons.dark_mode_outlined,
       title: Text(l10n.settingsThemeMode),
       subtitle: Text(_themeModeLabel(l10n, _themeMode)),
       onTap: () => _showThemeModePicker(l10n),
+      showChevron: true,
     );
   }
 
@@ -233,31 +234,38 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     showModalBottomSheet(
       context: context,
       builder: (context) {
+        final scheme = Theme.of(context).colorScheme;
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
-            children: AppThemeModeSetting.values.map((mode) {
-              final selected = _themeMode == mode;
-              return ListTile(
-                title: Text(_themeModeLabel(l10n, mode)),
-                leading: Icon(
-                  selected ? Icons.check_circle : Icons.circle_outlined,
-                  color: selected
-                      ? Theme.of(context).colorScheme.primary
-                      : Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-                onTap: () async {
-                  final nav = Navigator.of(context);
-                  await ref
-                      .read(themeModeControllerProvider.notifier)
-                      .setMode(mode);
-                  if (mounted) {
-                    setState(() => _themeMode = mode);
-                    nav.pop();
-                  }
-                },
-              );
-            }).toList(),
+            children: [
+              AppSheetHeader(
+                title: l10n.settingsThemeMode,
+                icon: Icons.dark_mode_outlined,
+              ),
+              ...AppThemeModeSetting.values.map((mode) {
+                final selected = _themeMode == mode;
+                return ListTile(
+                  title: Text(_themeModeLabel(l10n, mode)),
+                  leading: Icon(
+                    selected ? Icons.check_circle : Icons.circle_outlined,
+                    color: selected
+                        ? scheme.primary
+                        : scheme.onSurfaceVariant,
+                  ),
+                  onTap: () async {
+                    final nav = Navigator.of(context);
+                    await ref
+                        .read(themeModeControllerProvider.notifier)
+                        .setMode(mode);
+                    if (mounted) {
+                      setState(() => _themeMode = mode);
+                      nav.pop();
+                    }
+                  },
+                );
+              }),
+            ],
           ),
         );
       },
@@ -275,12 +283,132 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
+  Widget _buildViewerFontScaleTile(AppLocalizations l10n) {
+    final scale = ref
+        .watch(viewerFontScaleControllerProvider)
+        .maybeWhen(data: (v) => v, orElse: () => 1.0);
+    return AppListTile(
+      leadingIcon: Icons.format_size,
+      title: Text(l10n.settingsViewerFontSize),
+      subtitle: Text(
+        '${l10n.settingsViewerFontSizeSub}\n'
+        '${(12 * scale).toStringAsFixed(0)}pt · ×${scale.toStringAsFixed(2)}',
+      ),
+      onTap: () => _showViewerFontScalePicker(l10n),
+      showChevron: true,
+    );
+  }
+
+  void _showViewerFontScalePicker(AppLocalizations l10n) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(0, 0, 0, 16),
+            child: Consumer(
+              builder: (context, ref, _) {
+                final scale = ref
+                    .watch(viewerFontScaleControllerProvider)
+                    .maybeWhen(data: (v) => v, orElse: () => 1.0);
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AppSheetHeader(
+                      title: l10n.settingsViewerFontSize,
+                      subtitle: l10n.settingsViewerFontSizeSub,
+                      icon: Icons.format_size,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
+                      child: _ViewerFontPreview(scale: scale),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Row(
+                        children: [
+                          Text(
+                            'A',
+                            style: TextStyle(
+                              fontSize: 12,
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .onSurfaceVariant,
+                            ),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              min: AppSettingsService.viewerFontScaleMin,
+                              max: AppSettingsService.viewerFontScaleMax,
+                              divisions: 15,
+                              value: scale,
+                              label: '×${scale.toStringAsFixed(2)}',
+                              onChanged: (v) => ref
+                                  .read(viewerFontScaleControllerProvider
+                                      .notifier)
+                                  .setScale(v),
+                            ),
+                          ),
+                          const Text(
+                            'A',
+                            style: TextStyle(fontSize: 22),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          _ViewerFontPresetButton(
+                            label: l10n.viewerFontSizeSmall,
+                            value: 0.9,
+                            current: scale,
+                          ),
+                          const SizedBox(width: 8),
+                          _ViewerFontPresetButton(
+                            label: l10n.viewerFontSizeMedium,
+                            value: 1.0,
+                            current: scale,
+                          ),
+                          const SizedBox(width: 8),
+                          _ViewerFontPresetButton(
+                            label: l10n.viewerFontSizeLarge,
+                            value: 1.2,
+                            current: scale,
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed: scale == 1.0
+                                ? null
+                                : () => ref
+                                    .read(
+                                      viewerFontScaleControllerProvider.notifier,
+                                    )
+                                    .setScale(1.0),
+                            child: Text(l10n.viewerFontSizeReset),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildAiCommitSettingsTile(AppLocalizations l10n) {
-    return _SettingsTile(
-      icon: Icons.auto_awesome,
+    return AppListTile(
+      leadingIcon: Icons.auto_awesome,
       title: Text(l10n.settingsAiCommitModel),
       subtitle: Text(_aiCommitSettingsSummary(l10n)),
       onTap: () => _showAiCommitSettingsSheet(l10n),
+      showChevron: true,
     );
   }
 
@@ -323,46 +451,37 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             maxChildSize: 0.9,
             expand: false,
             builder: (context, scrollController) {
-              return ListView(
-                controller: scrollController,
-                padding: const EdgeInsets.fromLTRB(16, 8, 16, 24),
+              return Column(
+                mainAxisSize: MainAxisSize.min,
                 children: [
-                  Center(
-                    child: Container(
-                      width: 36,
-                      height: 4,
-                      margin: const EdgeInsets.only(bottom: 16),
-                      decoration: BoxDecoration(
-                        color: Theme.of(context).colorScheme.outlineVariant,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
+                  AppSheetHeader(
+                    title: l10n.settingsAiCommitModel,
+                    subtitle: l10n.settingsAiCommitModelSub,
+                    icon: Icons.auto_awesome,
+                  ),
+                  Expanded(
+                    child: ListView(
+                      controller: scrollController,
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
+                      children: [
+                        for (final provider in available)
+                          _AiCommitProviderSettings(
+                            provider:
+                                Map<String, dynamic>.from(provider as Map),
+                            selectedModel:
+                                _aiCommitModels[provider['name']?.toString() ??
+                                        ''] ??
+                                    '',
+                            selectedEffort:
+                                _aiCommitEfforts[provider['name']?.toString() ??
+                                        ''] ??
+                                    '',
+                            onChanged: _setAiCommitProviderSettings,
+                            effortLabel: (effort) => _effortLabel(effort, l10n),
+                          ),
+                      ],
                     ),
                   ),
-                  Text(
-                    l10n.settingsAiCommitModel,
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    l10n.settingsAiCommitModelSub,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  for (final provider in available)
-                    _AiCommitProviderSettings(
-                      provider: Map<String, dynamic>.from(provider as Map),
-                      selectedModel:
-                          _aiCommitModels[provider['name']?.toString() ?? ''] ??
-                          '',
-                      selectedEffort:
-                          _aiCommitEfforts[provider['name']?.toString() ??
-                              ''] ??
-                          '',
-                      onChanged: _setAiCommitProviderSettings,
-                      effortLabel: (effort) => _effortLabel(effort, l10n),
-                    ),
                 ],
               );
             },
@@ -408,15 +527,20 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   Widget _buildDefaultProviderTile(AppLocalizations l10n) {
     final available = _availableProviders;
+    final scheme = Theme.of(context).colorScheme;
 
-    return _SettingsTile(
-      icon: Icons.smart_toy,
+    return AppListTile(
+      leadingIcon: Icons.smart_toy,
       title: Text(l10n.settingsDefaultCli),
       subtitle: Text(
         _defaultProvider ?? l10n.sessionsModelDefault,
-        style: TextStyle(color: _defaultProvider != null ? null : Colors.grey),
+        style: TextStyle(
+          color:
+              _defaultProvider != null ? null : scheme.onSurfaceVariant,
+        ),
       ),
       onTap: () => _showDefaultProviderPicker(l10n, available),
+      showChevron: true,
     );
   }
 
@@ -427,17 +551,25 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     showModalBottomSheet(
       context: context,
       builder: (context) {
+        final scheme = Theme.of(context).colorScheme;
+        final statusColors = AppStatusColors.of(context);
         return SafeArea(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              AppSheetHeader(
+                title: l10n.settingsDefaultCli,
+                icon: Icons.smart_toy,
+              ),
               ListTile(
                 title: Text(l10n.sessionsModelDefault),
                 leading: Icon(
                   _defaultProvider == null
                       ? Icons.check_circle
                       : Icons.circle_outlined,
-                  color: _defaultProvider == null ? Colors.green : Colors.grey,
+                  color: _defaultProvider == null
+                      ? statusColors.running.foreground
+                      : scheme.onSurfaceVariant,
                 ),
                 onTap: () async {
                   final storage = AgentStorage();
@@ -456,7 +588,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   title: Text(name[0].toUpperCase() + name.substring(1)),
                   leading: Icon(
                     selected ? Icons.check_circle : Icons.circle_outlined,
-                    color: selected ? Colors.green : Colors.grey,
+                    color: selected
+                        ? statusColors.running.foreground
+                        : scheme.onSurfaceVariant,
                   ),
                   onTap: () async {
                     final storage = AgentStorage();
@@ -476,143 +610,18 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 
-  Widget _buildSection(
-    BuildContext context, {
-    required String title,
-    required IconData icon,
-    required List<Widget> children,
-  }) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(4, 14, 4, 8),
-          child: Row(
-            children: [
-              Icon(icon, size: 16, color: scheme.primary),
-              const SizedBox(width: 8),
-              Text(
-                title,
-                style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: scheme.primary,
-                ),
-              ),
-            ],
-          ),
-        ),
-        Card(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              for (var i = 0; i < children.length; i++) ...[
-                children[i],
-                if (i != children.length - 1)
-                  Divider(
-                    height: 1,
-                    indent: 58,
-                    color: scheme.outlineVariant.withValues(alpha: 0.55),
-                  ),
-              ],
-            ],
-          ),
-        ),
-      ],
-    );
-  }
-
   Widget _buildNavTile({
     required IconData icon,
     required String title,
     required String subtitle,
     required VoidCallback onTap,
   }) {
-    return _SettingsTile(
-      icon: icon,
+    return AppListTile(
+      leadingIcon: icon,
       title: Text(title),
       subtitle: Text(subtitle),
       onTap: onTap,
-    );
-  }
-}
-
-class _SettingsTile extends StatelessWidget {
-  final IconData icon;
-  final Widget title;
-  final Widget subtitle;
-  final VoidCallback? onTap;
-  final Widget? trailing;
-
-  const _SettingsTile({
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.onTap,
-    this.trailing,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        child: Row(
-          children: [
-            Container(
-              width: 34,
-              height: 34,
-              decoration: BoxDecoration(
-                color: scheme.primaryContainer.withValues(alpha: 0.55),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Icon(icon, size: 18, color: scheme.onPrimaryContainer),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DefaultTextStyle.merge(
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodyLarge?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                    child: title,
-                  ),
-                  const SizedBox(height: 3),
-                  DefaultTextStyle.merge(
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: scheme.onSurfaceVariant,
-                    ),
-                    child: subtitle,
-                  ),
-                ],
-              ),
-            ),
-            if (trailing != null) ...[
-              const SizedBox(width: 8),
-              trailing!,
-            ] else if (onTap != null) ...[
-              const SizedBox(width: 8),
-              Icon(
-                Icons.chevron_right,
-                size: 20,
-                color: scheme.onSurfaceVariant,
-              ),
-            ],
-          ],
-        ),
-      ),
+      showChevron: true,
     );
   }
 }
@@ -653,9 +662,9 @@ class _AiCommitProviderSettings extends StatelessWidget {
         : '';
 
     return Card(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: 12),
       child: Padding(
-        padding: const EdgeInsets.all(12),
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -672,10 +681,7 @@ class _AiCommitProviderSettings extends StatelessWidget {
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               initialValue: effectiveModel,
-              decoration: InputDecoration(
-                labelText: l10n.sessionsModel,
-                border: const OutlineInputBorder(),
-              ),
+              decoration: InputDecoration(labelText: l10n.sessionsModel),
               items: [
                 DropdownMenuItem(
                   value: '',
@@ -707,10 +713,7 @@ class _AiCommitProviderSettings extends StatelessWidget {
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
                 initialValue: effectiveEffort,
-                decoration: InputDecoration(
-                  labelText: l10n.sessionsEffort,
-                  border: const OutlineInputBorder(),
-                ),
+                decoration: InputDecoration(labelText: l10n.sessionsEffort),
                 items: efforts
                     .map(
                       (effort) => DropdownMenuItem(
@@ -773,5 +776,83 @@ class _AiCommitProviderSettings extends StatelessWidget {
   String _providerLabel(String name) {
     if (name.isEmpty) return '';
     return name[0].toUpperCase() + name.substring(1);
+  }
+}
+
+class _ViewerFontPreview extends StatelessWidget {
+  final double scale;
+  const _ViewerFontPreview({required this.scale});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: scheme.outlineVariant.withValues(alpha: 0.5),
+        ),
+      ),
+      child: Text(
+        '''def hello(name):
+    print(f"Hello, {name}!")
+
+hello("Magent")''',
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 12 * scale,
+          height: 1.45,
+          color: scheme.onSurface,
+        ),
+      ),
+    );
+  }
+}
+
+class _ViewerFontPresetButton extends StatelessWidget {
+  final String label;
+  final double value;
+  final double current;
+  const _ViewerFontPresetButton({
+    required this.label,
+    required this.value,
+    required this.current,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = (current - value).abs() < 0.01;
+    return Consumer(
+      builder: (context, ref, _) {
+        final style = selected
+            ? FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              )
+            : OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              );
+        Future<void> onTap() => ref
+            .read(viewerFontScaleControllerProvider.notifier)
+            .setScale(value);
+        return selected
+            ? FilledButton(
+                onPressed: onTap,
+                style: style,
+                child: Text(label),
+              )
+            : OutlinedButton(
+                onPressed: onTap,
+                style: style,
+                child: Text(label),
+              );
+      },
+    );
   }
 }

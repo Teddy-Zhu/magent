@@ -5,9 +5,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:magent_app/core/providers/api_provider.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/features/git/widgets/diff_sheet.dart';
 import 'package:magent_app/features/git/widgets/commit_sheet.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
 
 class GitManagePage extends ConsumerStatefulWidget {
   final String projectId;
@@ -240,7 +242,7 @@ class _StatusTabState extends State<_StatusTab>
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(
               AppLocalizations.of(context)!.gitDiscard,
-              style: const TextStyle(color: Colors.red),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
         ],
@@ -270,7 +272,7 @@ class _StatusTabState extends State<_StatusTab>
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(AppLocalizations.of(context)!.gitPushSuccessful),
-            backgroundColor: Colors.green,
+            backgroundColor: AppStatusColors.of(context).running.foreground,
           ),
         );
         await _load();
@@ -294,7 +296,7 @@ class _StatusTabState extends State<_StatusTab>
           );
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Theme.of(context).colorScheme.error));
   }
 
   void _openDiff(dynamic file) {
@@ -337,7 +339,7 @@ class _StatusTabState extends State<_StatusTab>
             },
             child: Text(
               AppLocalizations.of(context)!.gitForcePush,
-              style: const TextStyle(color: Colors.red),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
         ],
@@ -349,7 +351,7 @@ class _StatusTabState extends State<_StatusTab>
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const AppLoading();
     }
 
     final hasChanges = _allFiles.isNotEmpty;
@@ -363,7 +365,7 @@ class _StatusTabState extends State<_StatusTab>
             _buildSummaryCard(),
             Container(
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
               ),
               child: TabBar(
                 controller: _tabController,
@@ -384,13 +386,13 @@ class _StatusTabState extends State<_StatusTab>
                           Icon(
                             Icons.check_circle_outline,
                             size: 64,
-                            color: Colors.green[200],
+                            color: AppStatusColors.of(context).running.foreground.withValues(alpha: 0.5),
                           ),
                           const SizedBox(height: 12),
                           Text(
                             l10n.gitWorkingTreeClean,
                             style: TextStyle(
-                              color: Colors.grey[500],
+                              color: Theme.of(context).colorScheme.onSurfaceVariant,
                               fontSize: 15,
                             ),
                           ),
@@ -402,7 +404,7 @@ class _StatusTabState extends State<_StatusTab>
         ),
         if (_operating)
           Container(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: Theme.of(context).colorScheme.scrim.withValues(alpha: 0.05),
             child: Center(
               child: Card(
                 child: Padding(
@@ -439,7 +441,7 @@ class _StatusTabState extends State<_StatusTab>
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
-            Icon(Icons.alt_route, size: 16, color: Colors.blue[600]),
+            Icon(Icons.alt_route, size: 16, color: AppStatusColors.of(context).info.foreground),
             const SizedBox(width: 6),
             Text(
               branch,
@@ -449,7 +451,7 @@ class _StatusTabState extends State<_StatusTab>
               const SizedBox(width: 6),
               Text(
                 '→ $upstream',
-                style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 12),
               ),
             ],
             const Spacer(),
@@ -457,12 +459,12 @@ class _StatusTabState extends State<_StatusTab>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.blue[50],
+                  color: AppStatusColors.of(context).info.background,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   '↑$ahead',
-                  style: TextStyle(fontSize: 11, color: Colors.blue[700]),
+                  style: TextStyle(fontSize: 11, color: AppStatusColors.of(context).info.foreground),
                 ),
               ),
             if (behind > 0) ...[
@@ -470,12 +472,12 @@ class _StatusTabState extends State<_StatusTab>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.orange[50],
+                  color: AppStatusColors.of(context).warning.background,
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   '↓$behind',
-                  style: TextStyle(fontSize: 11, color: Colors.orange[700]),
+                  style: TextStyle(fontSize: 11, color: AppStatusColors.of(context).warning.foreground),
                 ),
               ),
             ],
@@ -495,7 +497,7 @@ class _StatusTabState extends State<_StatusTab>
                 context,
               ).colorScheme.primaryContainer.withValues(alpha: 0.3)
             : Theme.of(context).colorScheme.surface,
-        border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+        border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
       ),
       child: Row(
         children: hasSelection
@@ -542,7 +544,7 @@ class _StatusTabState extends State<_StatusTab>
                       style: _barOutlinedStyle(),
                       child: Text(
                         AppLocalizations.of(context)!.gitDiscard,
-                        style: const TextStyle(fontSize: 12, color: Colors.red),
+                        style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.error),
                       ),
                     ),
                   ),
@@ -656,7 +658,7 @@ class _StatusTabState extends State<_StatusTab>
           _isStagedTab
               ? AppLocalizations.of(context)!.gitNoStagedFiles
               : AppLocalizations.of(context)!.gitNoUnstagedFiles,
-          style: TextStyle(color: Colors.grey[500]),
+          style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
       );
     }
@@ -698,12 +700,12 @@ class _StatusTabState extends State<_StatusTab>
             border: Border.all(
               color: selected
                   ? Theme.of(context).colorScheme.primary
-                  : Colors.grey[400]!,
+                  : Theme.of(context).colorScheme.outlineVariant,
               width: 1.5,
             ),
           ),
           child: selected
-              ? const Icon(Icons.check, size: 14, color: Colors.white)
+              ? Icon(Icons.check, size: 14, color: Theme.of(context).colorScheme.onPrimary)
               : _statusIconSmall(status),
         ),
       ),
@@ -716,7 +718,7 @@ class _StatusTabState extends State<_StatusTab>
       subtitle: path.contains('/')
           ? Text(
               path.substring(0, path.lastIndexOf('/')),
-              style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+              style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             )
@@ -728,12 +730,12 @@ class _StatusTabState extends State<_StatusTab>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
               decoration: BoxDecoration(
-                color: Colors.grey[200],
+                color: Theme.of(context).colorScheme.surfaceContainerHigh,
                 borderRadius: BorderRadius.circular(4),
               ),
               child: Text(
                 'binary',
-                style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                style: TextStyle(fontSize: 10, color: Theme.of(context).colorScheme.onSurfaceVariant),
               ),
             ),
           if (additions > 0 && !isBinary)
@@ -741,7 +743,7 @@ class _StatusTabState extends State<_StatusTab>
               '+$additions',
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.green[600],
+                color: AppStatusColors.of(context).running.foreground,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -751,7 +753,7 @@ class _StatusTabState extends State<_StatusTab>
               '-$deletions',
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.red[600],
+                color: AppStatusColors.of(context).error.foreground,
                 fontWeight: FontWeight.w500,
               ),
             ),
@@ -772,15 +774,15 @@ class _StatusTabState extends State<_StatusTab>
   Widget _statusIconSmall(String status) {
     switch (status) {
       case 'modified':
-        return Icon(Icons.edit, size: 12, color: Colors.orange[600]);
+        return Icon(Icons.edit, size: 12, color: AppStatusColors.of(context).warning.foreground);
       case 'added':
-        return Icon(Icons.add, size: 12, color: Colors.green[600]);
+        return Icon(Icons.add, size: 12, color: AppStatusColors.of(context).running.foreground);
       case 'deleted':
-        return Icon(Icons.remove, size: 12, color: Colors.red[600]);
+        return Icon(Icons.remove, size: 12, color: AppStatusColors.of(context).error.foreground);
       case 'untracked':
-        return Icon(Icons.help_outline, size: 12, color: Colors.grey[500]);
+        return Icon(Icons.help_outline, size: 12, color: Theme.of(context).colorScheme.onSurfaceVariant);
       default:
-        return Icon(Icons.circle, size: 8, color: Colors.grey[400]);
+        return Icon(Icons.circle, size: 8, color: Theme.of(context).colorScheme.outlineVariant);
     }
   }
 }
@@ -892,7 +894,7 @@ class _LogTabState extends State<_LogTab> {
             ),
             trailing: Text(
               _formatTime(timestamp),
-              style: TextStyle(fontSize: 11, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 11, color: Theme.of(context).colorScheme.onSurfaceVariant),
             ),
             onTap: () => _openCommitDetail(commit as Map<String, dynamic>),
           );
@@ -990,7 +992,7 @@ class _CommitDetailSheetState extends State<_CommitDetailSheet> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1103,17 +1105,18 @@ class _CommitDetailSheetState extends State<_CommitDetailSheet> {
   }
 
   Color _statusColor(String status) {
+    final statusColors = AppStatusColors.of(context);
     switch (status) {
       case 'A':
-        return Colors.green;
+        return statusColors.running.foreground;
       case 'M':
-        return Colors.orange;
+        return statusColors.warning.foreground;
       case 'D':
-        return Colors.red;
+        return statusColors.error.foreground;
       case 'R':
-        return Colors.blue;
+        return statusColors.info.foreground;
       default:
-        return Colors.grey;
+        return statusColors.neutral.foreground;
     }
   }
 }
@@ -1185,7 +1188,7 @@ class _CommitFileDiffSheetState extends State<_CommitFileDiffSheet> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
               ),
               child: Row(
                 children: [
@@ -1241,31 +1244,33 @@ class _CommitFileDiffSheetState extends State<_CommitFileDiffSheet> {
   }
 
   Widget _buildContent(ScrollController scrollController) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     final lines = _content.split('\n');
     final lineWidgets = <Widget>[];
 
     for (final line in lines) {
       Color bgColor;
-      Color textColor = Colors.black87;
+      Color textColor = scheme.onSurface;
       FontWeight fontWeight = FontWeight.normal;
 
       if (line.startsWith('@@')) {
-        bgColor = Colors.blue[50]!;
-        textColor = Colors.blue[700]!;
-        fontWeight = FontWeight.w500;
+        bgColor = statusColors.info.background;
+        textColor = statusColors.info.foreground;
+        fontWeight = FontWeight.w600;
       } else if (line.startsWith('+')) {
-        bgColor = Colors.green[50]!;
-        textColor = Colors.green[900]!;
+        bgColor = statusColors.running.background;
+        textColor = statusColors.running.foreground;
       } else if (line.startsWith('-')) {
-        bgColor = Colors.red[50]!;
-        textColor = Colors.red[900]!;
+        bgColor = statusColors.error.background;
+        textColor = statusColors.error.foreground;
       } else if (line.startsWith('diff --git') ||
           line.startsWith('index ') ||
           line.startsWith('---') ||
           line.startsWith('+++')) {
-        bgColor = Colors.grey[100]!;
-        textColor = Colors.grey[700]!;
-        fontWeight = FontWeight.w500;
+        bgColor = scheme.surfaceContainerHigh;
+        textColor = scheme.onSurfaceVariant;
+        fontWeight = FontWeight.w600;
       } else {
         bgColor = Colors.transparent;
       }
@@ -1366,8 +1371,10 @@ class _BranchesTabState extends State<_BranchesTab> {
                 ? Icons.check_circle
                 : (isRemote ? Icons.cloud : Icons.account_tree),
             color: isCurrent
-                ? Colors.green
-                : (isRemote ? Colors.blue : Colors.grey),
+                ? AppStatusColors.of(context).running.foreground
+                : (isRemote
+                    ? AppStatusColors.of(context).info.foreground
+                    : Theme.of(context).colorScheme.onSurfaceVariant),
             size: 20,
           ),
           title: Text(

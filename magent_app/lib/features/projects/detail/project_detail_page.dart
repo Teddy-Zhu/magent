@@ -11,10 +11,12 @@ import 'package:magent_app/core/repositories/git_repository.dart';
 import 'package:magent_app/core/repositories/session_repository.dart';
 import 'package:magent_app/core/session/session_language.dart';
 import 'package:magent_app/core/storage/secure_storage.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/features/projects/detail/project_sessions_tab.dart';
 import 'package:magent_app/features/projects/detail/project_changes_tab.dart';
 import 'package:magent_app/features/projects/detail/project_files_tab.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
 
 class ProjectDetailPage extends ConsumerStatefulWidget {
   final String projectId;
@@ -216,7 +218,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
         ],
       ),
       body: _loading
-          ? const Center(child: CircularProgressIndicator())
+          ? const AppLoading()
           : _api == null
           ? Center(child: Text(l10n.noAgentConnected))
           : _buildTabContent(),
@@ -287,23 +289,35 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
         decoration: BoxDecoration(
           color: Theme.of(
             context,
-          ).colorScheme.primaryContainer.withValues(alpha: 0.4),
-          borderRadius: BorderRadius.circular(16),
+          ).colorScheme.secondaryContainer.withValues(alpha: 0.55),
+          borderRadius: AppRadius.rsm,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(_providerIcon(_selectedProvider), size: 14),
+            Icon(
+              _providerIcon(_selectedProvider),
+              size: 14,
+              color: Theme.of(context).colorScheme.onSecondaryContainer,
+            ),
             const SizedBox(width: 4),
             Text(
               _selectedProvider.isNotEmpty
                   ? _selectedProvider[0].toUpperCase() +
                         _selectedProvider.substring(1)
                   : 'Provider',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w500),
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+                color: Theme.of(context).colorScheme.onSecondaryContainer,
+              ),
             ),
             const SizedBox(width: 2),
-            const Icon(Icons.arrow_drop_down, size: 16),
+            Icon(
+              Icons.arrow_drop_down,
+              size: 16,
+              color: Theme.of(context).colorScheme.onSecondaryContainer,
+            ),
           ],
         ),
       ),

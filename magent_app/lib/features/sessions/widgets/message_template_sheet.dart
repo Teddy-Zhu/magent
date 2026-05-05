@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:magent_app/core/services/message_template_service.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
 
 class MessageTemplateSheet extends StatefulWidget {
   final ValueChanged<String> onSelect;
@@ -69,14 +70,11 @@ class _MessageTemplateSheetState extends State<MessageTemplateSheet>
       context: context,
       builder: (ctx) => AlertDialog(
         title: Text(l10n.templatesSaveAs),
-        content: TextField(
-          controller: controller,
-          decoration: InputDecoration(
-            hintText: l10n.templatesNameHint,
-            border: const OutlineInputBorder(),
+          content: TextField(
+            controller: controller,
+            decoration: InputDecoration(hintText: l10n.templatesNameHint),
+            autofocus: true,
           ),
-          autofocus: true,
-        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(ctx),
@@ -113,16 +111,6 @@ class _MessageTemplateSheetState extends State<MessageTemplateSheet>
       builder: (context, scrollController) {
         return Column(
           children: [
-            // Handle bar
-            Container(
-              margin: const EdgeInsets.only(top: 8),
-              width: 40,
-              height: 4,
-              decoration: BoxDecoration(
-                color: Colors.grey[300],
-                borderRadius: BorderRadius.circular(2),
-              ),
-            ),
             // Tab bar
             TabBar(
               controller: _tabController,
@@ -134,7 +122,7 @@ class _MessageTemplateSheetState extends State<MessageTemplateSheet>
             // Content
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const AppLoading()
                   : TabBarView(
                       controller: _tabController,
                       children: [
@@ -150,11 +138,12 @@ class _MessageTemplateSheetState extends State<MessageTemplateSheet>
   }
 
   Widget _buildRecentList(ScrollController scrollController) {
+    final scheme = Theme.of(context).colorScheme;
     if (_recent.isEmpty) {
       return Center(
         child: Text(
           AppLocalizations.of(context)!.templatesNoRecent,
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: scheme.onSurfaceVariant),
         ),
       );
     }
@@ -185,11 +174,12 @@ class _MessageTemplateSheetState extends State<MessageTemplateSheet>
   }
 
   Widget _buildTemplateList(ScrollController scrollController) {
+    final scheme = Theme.of(context).colorScheme;
     if (_templates.isEmpty) {
       return Center(
         child: Text(
           AppLocalizations.of(context)!.templatesNoSaved,
-          style: const TextStyle(color: Colors.grey),
+          style: TextStyle(color: scheme.onSurfaceVariant),
         ),
       );
     }

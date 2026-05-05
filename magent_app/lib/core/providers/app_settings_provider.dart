@@ -16,6 +16,11 @@ final showAiCommitSessionsControllerProvider =
       ShowAiCommitSessionsController.new,
     );
 
+final viewerFontScaleControllerProvider =
+    AsyncNotifierProvider<ViewerFontScaleController, double>(
+      ViewerFontScaleController.new,
+    );
+
 class ThemeModeController extends AsyncNotifier<ThemeMode> {
   @override
   Future<ThemeMode> build() async {
@@ -38,6 +43,19 @@ class ShowAiCommitSessionsController extends AsyncNotifier<bool> {
   Future<void> setVisible(bool value) async {
     await ref.read(appSettingsServiceProvider).setShowAiCommitSessions(value);
     state = AsyncData(value);
+  }
+}
+
+class ViewerFontScaleController extends AsyncNotifier<double> {
+  @override
+  Future<double> build() {
+    return ref.read(appSettingsServiceProvider).getViewerFontScale();
+  }
+
+  Future<void> setScale(double value) async {
+    await ref.read(appSettingsServiceProvider).setViewerFontScale(value);
+    final current = await ref.read(appSettingsServiceProvider).getViewerFontScale();
+    state = AsyncData(current);
   }
 }
 

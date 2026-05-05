@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/features/git/widgets/commit_sheet.dart';
 import 'package:magent_app/features/git/widgets/diff_sheet.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_loading.dart';
 
 class ProjectChangesTab extends StatefulWidget {
   final String projectId;
@@ -159,7 +161,7 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
             onPressed: () => Navigator.pop(ctx, true),
             child: Text(
               AppLocalizations.of(context)!.gitDiscard,
-              style: const TextStyle(color: Colors.red),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
         ],
@@ -186,10 +188,11 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
     try {
       await widget.git.push(widget.projectId, force: force);
       if (mounted) {
+        final statusColors = AppStatusColors.of(context);
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(AppLocalizations.of(context)!.gitPushSuccessful),
-            backgroundColor: Colors.green,
+            backgroundColor: statusColors.running.foreground,
           ),
         );
         await _load();
@@ -211,9 +214,10 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
             error,
             action: action,
           );
+    final scheme = Theme.of(context).colorScheme;
     ScaffoldMessenger.of(
       context,
-    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
+    ).showSnackBar(SnackBar(content: Text(msg), backgroundColor: scheme.error));
   }
 
   void _openDiff(dynamic file) {
@@ -256,7 +260,7 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
             },
             child: Text(
               AppLocalizations.of(context)!.gitForcePush,
-              style: const TextStyle(color: Colors.red),
+              style: TextStyle(color: Theme.of(context).colorScheme.error),
             ),
           ),
         ],
@@ -267,8 +271,10 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
   @override
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     if (_loading) {
-      return const Center(child: CircularProgressIndicator());
+      return const AppLoading();
     }
 
     final hasChanges = _allFiles.isNotEmpty;
@@ -284,7 +290,11 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
             // Tab bar
             Container(
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                border: Border(
+                  bottom: BorderSide(
+                    color: scheme.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                ),
               ),
               child: TabBar(
                 controller: _tabController,
@@ -307,13 +317,14 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                           Icon(
                             Icons.check_circle_outline,
                             size: 64,
-                            color: Colors.green[200],
+                            color: statusColors.running.foreground
+                                .withValues(alpha: 0.5),
                           ),
                           const SizedBox(height: 12),
                           Text(
                             l10n.gitWorkingTreeClean,
                             style: TextStyle(
-                              color: Colors.grey[500],
+                              color: scheme.onSurfaceVariant,
                               fontSize: 15,
                             ),
                           ),
@@ -325,7 +336,7 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
         ),
         if (_operating)
           Container(
-            color: Colors.black.withValues(alpha: 0.05),
+            color: scheme.scrim.withValues(alpha: 0.05),
             child: Center(
               child: Card(
                 child: Padding(
@@ -351,6 +362,8 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
   }
 
   Widget _buildSummaryCard() {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     final branch = _summary?['branch'] as String? ?? '';
     final upstream = _summary?['upstream'] as String? ?? '';
     final ahead = _summary?['ahead'] ?? 0;
@@ -362,7 +375,7 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
         padding: const EdgeInsets.all(12),
         child: Row(
           children: [
-            Icon(Icons.alt_route, size: 16, color: Colors.blue[600]),
+            Icon(Icons.alt_route, size: 16, color: statusColors.info.foreground),
             const SizedBox(width: 6),
             Text(
               branch,
@@ -372,7 +385,7 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
               const SizedBox(width: 6),
               Text(
                 '→ $upstream',
-                style: TextStyle(color: Colors.grey[500], fontSize: 12),
+                style: TextStyle(color: scheme.onSurfaceVariant, fontSize: 12),
               ),
             ],
             const Spacer(),
@@ -380,12 +393,15 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.blue[50],
-                  borderRadius: BorderRadius.circular(8),
+                  color: statusColors.info.background,
+                  borderRadius: AppRadius.rsm,
                 ),
                 child: Text(
                   '↑$ahead',
-                  style: TextStyle(fontSize: 11, color: Colors.blue[700]),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: statusColors.info.foreground,
+                  ),
                 ),
               ),
             if (behind > 0) ...[
@@ -393,12 +409,15 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: Colors.orange[50],
-                  borderRadius: BorderRadius.circular(8),
+                  color: statusColors.warning.background,
+                  borderRadius: AppRadius.rsm,
                 ),
                 child: Text(
                   '↓$behind',
-                  style: TextStyle(fontSize: 11, color: Colors.orange[700]),
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: statusColors.warning.foreground,
+                  ),
                 ),
               ),
             ],
@@ -409,16 +428,19 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
   }
 
   Widget _buildActionBar(int stagedCount, bool hasSelection) {
+    final scheme = Theme.of(context).colorScheme;
     return Container(
       height: 44,
       padding: const EdgeInsets.symmetric(horizontal: 12),
       decoration: BoxDecoration(
         color: hasSelection
-            ? Theme.of(
-                context,
-              ).colorScheme.primaryContainer.withValues(alpha: 0.3)
-            : Theme.of(context).colorScheme.surface,
-        border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+            ? scheme.primaryContainer.withValues(alpha: 0.3)
+            : scheme.surface,
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.5),
+          ),
+        ),
       ),
       child: Row(
         children: hasSelection
@@ -465,7 +487,7 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
                       style: _barOutlinedStyle(),
                       child: Text(
                         AppLocalizations.of(context)!.gitDiscard,
-                        style: const TextStyle(fontSize: 12, color: Colors.red),
+                        style: TextStyle(fontSize: 12, color: scheme.error),
                       ),
                     ),
                   ),
@@ -573,13 +595,14 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
 
   Widget _buildFileList() {
     final files = _currentFiles;
+    final scheme = Theme.of(context).colorScheme;
     if (files.isEmpty) {
       return Center(
         child: Text(
           _isStagedTab
               ? AppLocalizations.of(context)!.gitNoStagedFiles
               : AppLocalizations.of(context)!.gitNoUnstagedFiles,
-          style: TextStyle(color: Colors.grey[500]),
+          style: TextStyle(color: scheme.onSurfaceVariant),
         ),
       );
     }
@@ -599,6 +622,8 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
   }
 
   Widget _buildFileTile(dynamic file) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     final path = file['path'] as String? ?? '';
     final status = file['status'] as String? ?? '';
     final additions = file['additions'] as int? ?? 0;
@@ -617,18 +642,16 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
           height: 24,
           decoration: BoxDecoration(
             shape: BoxShape.circle,
-            color: selected
-                ? Theme.of(context).colorScheme.primary
-                : Colors.transparent,
+            color: selected ? scheme.primary : Colors.transparent,
             border: Border.all(
               color: selected
-                  ? Theme.of(context).colorScheme.primary
-                  : Colors.grey[400]!,
+                  ? scheme.primary
+                  : scheme.outlineVariant,
               width: 1.5,
             ),
           ),
           child: selected
-              ? const Icon(Icons.check, size: 14, color: Colors.white)
+              ? Icon(Icons.check, size: 14, color: scheme.onPrimary)
               : _statusIconSmall(status),
         ),
       ),
@@ -641,7 +664,7 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
       subtitle: path.contains('/')
           ? Text(
               path.substring(0, path.lastIndexOf('/')),
-              style: TextStyle(fontSize: 10, color: Colors.grey[500]),
+              style: TextStyle(fontSize: 10, color: scheme.onSurfaceVariant),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             )
@@ -653,12 +676,15 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
               decoration: BoxDecoration(
-                color: Colors.grey[200],
-                borderRadius: BorderRadius.circular(4),
+                color: scheme.surfaceContainerHigh,
+                borderRadius: AppRadius.rxs,
               ),
               child: Text(
                 'binary',
-                style: TextStyle(fontSize: 10, color: Colors.grey[600]),
+                style: TextStyle(
+                  fontSize: 10,
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
             ),
           if (additions > 0 && !isBinary)
@@ -666,8 +692,8 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
               '+$additions',
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.green[600],
-                fontWeight: FontWeight.w500,
+                color: statusColors.running.foreground,
+                fontWeight: FontWeight.w600,
               ),
             ),
           if (deletions > 0 && !isBinary) ...[
@@ -676,8 +702,8 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
               '-$deletions',
               style: TextStyle(
                 fontSize: 11,
-                color: Colors.red[600],
-                fontWeight: FontWeight.w500,
+                color: statusColors.error.foreground,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ],
@@ -695,17 +721,19 @@ class _ProjectChangesTabState extends State<ProjectChangesTab>
   }
 
   Widget _statusIconSmall(String status) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     switch (status) {
       case 'modified':
-        return Icon(Icons.edit, size: 12, color: Colors.orange[600]);
+        return Icon(Icons.edit, size: 12, color: statusColors.warning.foreground);
       case 'added':
-        return Icon(Icons.add, size: 12, color: Colors.green[600]);
+        return Icon(Icons.add, size: 12, color: statusColors.running.foreground);
       case 'deleted':
-        return Icon(Icons.remove, size: 12, color: Colors.red[600]);
+        return Icon(Icons.remove, size: 12, color: statusColors.error.foreground);
       case 'untracked':
-        return Icon(Icons.help_outline, size: 12, color: Colors.grey[500]);
+        return Icon(Icons.help_outline, size: 12, color: scheme.onSurfaceVariant);
       default:
-        return Icon(Icons.circle, size: 8, color: Colors.grey[400]);
+        return Icon(Icons.circle, size: 8, color: scheme.outlineVariant);
     }
   }
 

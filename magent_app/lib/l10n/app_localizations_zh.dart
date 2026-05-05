@@ -364,6 +364,24 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsThemeMode => '主题模式';
 
   @override
+  String get settingsViewerFontSize => '文件查看字号';
+
+  @override
+  String get settingsViewerFontSizeSub => '调整代码、文本、Markdown 源码、Diff 的字号';
+
+  @override
+  String get viewerFontSizeSmall => '小';
+
+  @override
+  String get viewerFontSizeMedium => '中';
+
+  @override
+  String get viewerFontSizeLarge => '大';
+
+  @override
+  String get viewerFontSizeReset => '重置';
+
+  @override
   String get themeSystem => '跟随系统';
 
   @override
@@ -988,6 +1006,18 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get disableWrap => '关闭换行';
+
+  @override
+  String get viewerSource => '源码';
+
+  @override
+  String get viewerRender => '渲染';
+
+  @override
+  String get viewerSourceMode => '源码模式';
+
+  @override
+  String get viewerRenderMode => '渲染模式';
 
   @override
   String get loadMore => '加载更多';

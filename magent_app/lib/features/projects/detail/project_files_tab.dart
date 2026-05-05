@@ -4,10 +4,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/github.dart';
+import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:magent_app/core/api/error_messages.dart';
+import 'package:magent_app/core/providers/app_settings_provider.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
+import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
 
 class ProjectFilesTab extends StatefulWidget {
@@ -110,7 +114,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(AppLocalizations.of(context)!.gitPullSuccessful),
-            backgroundColor: Colors.green,
+            backgroundColor: AppStatusColors.of(context).running.foreground,
           ),
         );
         await _loadDir();
@@ -126,7 +130,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                 action: AppLocalizations.of(context)!.gitPullFailed,
               ),
             ),
-            backgroundColor: Colors.red,
+            backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
@@ -142,7 +146,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(AppLocalizations.of(context)!.gitPushSuccessful),
-            backgroundColor: Colors.green,
+            backgroundColor: AppStatusColors.of(context).running.foreground,
           ),
         );
       }
@@ -157,7 +161,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                 action: AppLocalizations.of(context)!.gitPushFailed,
               ),
             ),
-            backgroundColor: Colors.red,
+            backgroundColor: Theme.of(context).colorScheme.error,
           ),
         );
       }
@@ -195,7 +199,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
               color: Theme.of(
                 context,
               ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-              border: Border(bottom: BorderSide(color: Colors.grey[200]!)),
+              border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
             ),
             child: Row(
               children: [
@@ -219,7 +223,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                       style: TextStyle(
                         fontSize: 13,
                         fontFamily: 'monospace',
-                        color: Colors.grey[700],
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -296,26 +300,20 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                 : RefreshIndicator(
                     onRefresh: _loadDir,
                     child: ListView.builder(
+                      padding: const EdgeInsets.symmetric(vertical: 4),
                       itemCount: (canGoUp ? 1 : 0) + _items.length,
                       itemBuilder: (context, index) {
                         if (canGoUp && index == 0) {
-                          return ListTile(
-                            leading: const Icon(
-                              Icons.folder,
-                              color: Colors.amber,
-                              size: 22,
-                            ),
-                            title: const Text(
-                              '..',
-                              style: TextStyle(fontWeight: FontWeight.w500),
-                            ),
-                            subtitle: Text(
-                              _pathStack.length > 2
-                                  ? _pathStack[_pathStack.length - 2]
-                                  : '/',
-                              style: const TextStyle(fontSize: 11),
-                            ),
-                            dense: true,
+                          final parentLabel = _pathStack.length > 2
+                              ? _pathStack[_pathStack.length - 2]
+                              : '/';
+                          return _FileRow(
+                            icon: Icons.folder,
+                            iconColor:
+                                Theme.of(context).colorScheme.tertiary,
+                            name: '..',
+                            subtitle: parentLabel,
+                            isDir: true,
                             onTap: _navigateBack,
                           );
                         }
@@ -329,28 +327,18 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                             : '';
                         final fileType = isDir ? null : _getFileType(ext);
 
-                        return ListTile(
-                          leading: Icon(
-                            isDir ? Icons.folder : _getFileIcon(ext, fileType),
-                            color: isDir
-                                ? Colors.amber
-                                : _getFileColor(fileType),
-                            size: 22,
-                          ),
-                          title: Text(
-                            name,
-                            style: const TextStyle(fontSize: 13),
-                          ),
+                        return _FileRow(
+                          icon: isDir
+                              ? Icons.folder
+                              : _getFileIcon(ext, fileType),
+                          iconColor: isDir
+                              ? Theme.of(context).colorScheme.tertiary
+                              : _getFileColor(fileType),
+                          name: name,
                           subtitle: isDir
                               ? null
-                              : Text(
-                                  _formatSize(item['size'] as int? ?? 0),
-                                  style: const TextStyle(fontSize: 11),
-                                ),
-                          trailing: isDir
-                              ? const Icon(Icons.chevron_right, size: 18)
-                              : null,
-                          dense: true,
+                              : _formatSize(item['size'] as int? ?? 0),
+                          isDir: isDir,
                           onTap: () {
                             if (isDir) {
                               _navigateToDir(name);
@@ -648,16 +636,120 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
   }
 
   Color? _getFileColor(_FileType? type) {
-    if (type == _FileType.image) return Colors.green;
-    if (type == _FileType.markdown) return Colors.purple;
-    if (type == _FileType.code) return Colors.blue;
-    return Colors.grey;
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
+    if (type == _FileType.image) return statusColors.running.foreground;
+    if (type == _FileType.markdown) return scheme.tertiary;
+    if (type == _FileType.code) return statusColors.info.foreground;
+    return scheme.onSurfaceVariant;
   }
 
   String _formatSize(int bytes) {
     if (bytes < 1024) return '$bytes B';
     if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
     return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+}
+
+/// 紧凑且垂直居中的文件/目录行。固定高度 44，title 与 subtitle 整体居中。
+class _FileRow extends StatelessWidget {
+  final IconData icon;
+  final Color? iconColor;
+  final String name;
+  final String? subtitle;
+  final bool isDir;
+  final VoidCallback onTap;
+
+  const _FileRow({
+    required this.icon,
+    required this.name,
+    required this.isDir,
+    required this.onTap,
+    this.iconColor,
+    this.subtitle,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return InkWell(
+      onTap: onTap,
+      child: Container(
+        constraints: const BoxConstraints(minHeight: 44),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: Row(
+          children: [
+            Icon(icon, size: 20, color: iconColor),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      height: 1.2,
+                    ),
+                  ),
+                  if (subtitle != null && subtitle!.isNotEmpty) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 11,
+                        height: 1.2,
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (isDir)
+              Icon(
+                Icons.chevron_right,
+                size: 18,
+                color: scheme.onSurfaceVariant,
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 文件查看器 Sheet 顶栏专用的紧凑图标按钮：32×32 触摸区、无 padding，
+/// 让多按钮组合在窄屏也能完整显示。
+class _ViewerToolbarButton extends StatelessWidget {
+  final IconData icon;
+  final String? tooltip;
+  final VoidCallback? onPressed;
+
+  const _ViewerToolbarButton({
+    required this.icon,
+    required this.onPressed,
+    this.tooltip,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final btn = IconButton(
+      icon: Icon(icon, size: 18),
+      onPressed: onPressed,
+      visualDensity: VisualDensity.compact,
+      padding: EdgeInsets.zero,
+      constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+      splashRadius: 18,
+    );
+    if (tooltip == null) return btn;
+    return Tooltip(message: tooltip!, child: btn);
   }
 }
 
@@ -722,7 +814,7 @@ class _GitLogSheetState extends State<_GitLogSheet> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
               ),
               child: Row(
                 children: [
@@ -805,7 +897,7 @@ class _GitLogSheetState extends State<_GitLogSheet> {
                               _formatTime(timestamp),
                               style: TextStyle(
                                 fontSize: 11,
-                                color: Colors.grey[600],
+                                color: Theme.of(context).colorScheme.onSurfaceVariant,
                               ),
                             ),
                             onTap: () => _openCommitDetail(hash, message),
@@ -911,7 +1003,7 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1014,17 +1106,18 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
   }
 
   Color _statusColor(String status) {
+    final statusColors = AppStatusColors.of(context);
     switch (status) {
       case 'A':
-        return Colors.green;
+        return statusColors.running.foreground;
       case 'M':
-        return Colors.orange;
+        return statusColors.warning.foreground;
       case 'D':
-        return Colors.red;
+        return statusColors.error.foreground;
       case 'R':
-        return Colors.blue;
+        return statusColors.info.foreground;
       default:
-        return Colors.grey;
+        return statusColors.neutral.foreground;
     }
   }
 
@@ -1108,9 +1201,9 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
         return Column(
           children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+                border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
               ),
               child: Row(
                 children: [
@@ -1119,24 +1212,19 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
                   Expanded(
                     child: Text(
                       widget.path,
-                      style: const TextStyle(fontWeight: FontWeight.w500),
+                      style: const TextStyle(fontWeight: FontWeight.w600),
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                  Tooltip(
-                    message: _wrap
+                  _ViewerToolbarButton(
+                    tooltip: _wrap
                         ? AppLocalizations.of(context)!.noWrap
                         : AppLocalizations.of(context)!.wrap,
-                    child: IconButton(
-                      icon: Icon(
-                        _wrap ? Icons.wrap_text : Icons.horizontal_rule,
-                        size: 18,
-                      ),
-                      onPressed: () => setState(() => _wrap = !_wrap),
-                    ),
+                    icon: _wrap ? Icons.wrap_text : Icons.horizontal_rule,
+                    onPressed: () => setState(() => _wrap = !_wrap),
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.copy, size: 18),
+                  _ViewerToolbarButton(
+                    icon: Icons.copy,
                     onPressed: () {
                       Clipboard.setData(ClipboardData(text: _content));
                       ScaffoldMessenger.of(context).showSnackBar(
@@ -1147,8 +1235,8 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
                       );
                     },
                   ),
-                  IconButton(
-                    icon: const Icon(Icons.close),
+                  _ViewerToolbarButton(
+                    icon: Icons.close,
                     onPressed: () => Navigator.pop(context),
                   ),
                 ],
@@ -1166,29 +1254,31 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
   }
 
   Widget _buildContent(ScrollController scrollController) {
+    final scheme = Theme.of(context).colorScheme;
+    final statusColors = AppStatusColors.of(context);
     final lines = _content.split('\n');
     final lineWidgets = <Widget>[];
     for (final line in lines) {
       Color bgColor;
-      Color textColor = Colors.black87;
+      Color textColor = scheme.onSurface;
       FontWeight fontWeight = FontWeight.normal;
       if (line.startsWith('@@')) {
-        bgColor = Colors.blue[50]!;
-        textColor = Colors.blue[700]!;
-        fontWeight = FontWeight.w500;
+        bgColor = statusColors.info.background;
+        textColor = statusColors.info.foreground;
+        fontWeight = FontWeight.w600;
       } else if (line.startsWith('+')) {
-        bgColor = Colors.green[50]!;
-        textColor = Colors.green[900]!;
+        bgColor = statusColors.running.background;
+        textColor = statusColors.running.foreground;
       } else if (line.startsWith('-')) {
-        bgColor = Colors.red[50]!;
-        textColor = Colors.red[900]!;
+        bgColor = statusColors.error.background;
+        textColor = statusColors.error.foreground;
       } else if (line.startsWith('diff --git') ||
           line.startsWith('index ') ||
           line.startsWith('---') ||
           line.startsWith('+++')) {
-        bgColor = Colors.grey[100]!;
-        textColor = Colors.grey[700]!;
-        fontWeight = FontWeight.w500;
+        bgColor = scheme.surfaceContainerHigh;
+        textColor = scheme.onSurfaceVariant;
+        fontWeight = FontWeight.w600;
       } else {
         bgColor = Colors.transparent;
       }
@@ -1271,7 +1361,7 @@ class _ImageSheet extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+        border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
       ),
       child: Row(
         children: [
@@ -1285,7 +1375,7 @@ class _ImageSheet extends StatelessWidget {
           ),
           Text(
             '${(bytes.length / 1024).toStringAsFixed(1)} KB',
-            style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
           ),
           IconButton(
             icon: const Icon(Icons.close),
@@ -1297,43 +1387,97 @@ class _ImageSheet extends StatelessWidget {
   }
 }
 
-class _MarkdownSheet extends StatelessWidget {
+class _MarkdownSheet extends ConsumerStatefulWidget {
   final String path;
   final ValueListenable<String> content;
   const _MarkdownSheet({required this.path, required this.content});
 
   @override
+  ConsumerState<_MarkdownSheet> createState() => _MarkdownSheetState();
+}
+
+class _MarkdownSheetState extends ConsumerState<_MarkdownSheet> {
+  /// 默认渲染模式；切换为 true 后以源码（带高亮）显示，参考代码查看体验。
+  bool _sourceMode = false;
+  bool _wrap = false;
+
+  @override
   Widget build(BuildContext context) {
+    final fontScale = ref
+        .watch(viewerFontScaleControllerProvider)
+        .maybeWhen(data: (v) => v, orElse: () => 1.0);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return DraggableScrollableSheet(
       initialChildSize: 0.8,
       maxChildSize: 0.95,
       minChildSize: 0.3,
       expand: false,
       builder: (context, scrollController) {
-        return Column(
-          children: [
-            _header(context),
-            Expanded(
-              child: ValueListenableBuilder<String>(
-                valueListenable: content,
-                builder: (context, value, _) => Markdown(
-                  data: value,
-                  controller: scrollController,
-                  padding: const EdgeInsets.all(16),
+        return ValueListenableBuilder<String>(
+          valueListenable: widget.content,
+          builder: (context, value, _) {
+            return Column(
+              children: [
+                _header(context, value),
+                Expanded(
+                  child: _sourceMode
+                      ? _buildSource(value, scrollController, fontScale, isDark)
+                      : Markdown(
+                          data: value,
+                          controller: scrollController,
+                          padding: const EdgeInsets.all(16),
+                        ),
                 ),
-              ),
-            ),
-          ],
+              ],
+            );
+          },
         );
       },
     );
   }
 
-  Widget _header(BuildContext context) {
+  Widget _buildSource(
+    String content,
+    ScrollController scrollController,
+    double fontScale,
+    bool isDark,
+  ) {
+    final codeView = HighlightView(
+      content,
+      language: 'markdown',
+      theme: isDark ? atomOneDarkTheme : githubTheme,
+      padding: const EdgeInsets.all(16),
+      textStyle: TextStyle(
+        fontFamily: 'monospace',
+        fontSize: 12 * fontScale,
+        height: 1.45,
+      ),
+    );
+    return _wrap
+        ? SingleChildScrollView(
+            controller: scrollController,
+            child: codeView,
+          )
+        : SingleChildScrollView(
+            controller: scrollController,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: codeView,
+            ),
+          );
+  }
+
+  Widget _header(BuildContext context, String content) {
+    final scheme = Theme.of(context).colorScheme;
+    final l10n = AppLocalizations.of(context)!;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Colors.grey[300]!)),
+        border: Border(
+          bottom: BorderSide(
+            color: scheme.outlineVariant.withValues(alpha: 0.5),
+          ),
+        ),
       ),
       child: Row(
         children: [
@@ -1341,12 +1485,36 @@ class _MarkdownSheet extends StatelessWidget {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              path,
-              style: const TextStyle(fontWeight: FontWeight.w500),
+              widget.path,
+              style: const TextStyle(fontWeight: FontWeight.w600),
+              overflow: TextOverflow.ellipsis,
             ),
           ),
-          IconButton(
-            icon: const Icon(Icons.close),
+          _ViewerToolbarButton(
+            tooltip: _sourceMode ? l10n.viewerRenderMode : l10n.viewerSourceMode,
+            icon: _sourceMode ? Icons.visibility : Icons.code,
+            onPressed: () => setState(() => _sourceMode = !_sourceMode),
+          ),
+          if (_sourceMode)
+            _ViewerToolbarButton(
+              tooltip: _wrap ? l10n.noWrap : l10n.wrap,
+              icon: _wrap ? Icons.wrap_text : Icons.horizontal_rule,
+              onPressed: () => setState(() => _wrap = !_wrap),
+            ),
+          _ViewerToolbarButton(
+            icon: Icons.copy,
+            onPressed: () {
+              Clipboard.setData(ClipboardData(text: content));
+              ScaffoldMessenger.of(context).showSnackBar(
+                SnackBar(
+                  content: Text(l10n.copied),
+                  duration: const Duration(seconds: 1),
+                ),
+              );
+            },
+          ),
+          _ViewerToolbarButton(
+            icon: Icons.close,
             onPressed: () => Navigator.pop(context),
           ),
         ],
@@ -1355,7 +1523,7 @@ class _MarkdownSheet extends StatelessWidget {
   }
 }
 
-class _CodeSheet extends StatefulWidget {
+class _CodeSheet extends ConsumerStatefulWidget {
   final String path;
   final ValueListenable<String> content;
   final String language;
@@ -1366,14 +1534,18 @@ class _CodeSheet extends StatefulWidget {
   });
 
   @override
-  State<_CodeSheet> createState() => _CodeSheetState();
+  ConsumerState<_CodeSheet> createState() => _CodeSheetState();
 }
 
-class _CodeSheetState extends State<_CodeSheet> {
+class _CodeSheetState extends ConsumerState<_CodeSheet> {
   bool _wrap = false;
 
   @override
   Widget build(BuildContext context) {
+    final fontScale = ref
+        .watch(viewerFontScaleControllerProvider)
+        .maybeWhen(data: (v) => v, orElse: () => 1.0);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return DraggableScrollableSheet(
       initialChildSize: 0.8,
       maxChildSize: 0.95,
@@ -1386,20 +1558,21 @@ class _CodeSheetState extends State<_CodeSheet> {
             final codeView = HighlightView(
               content,
               language: widget.language,
-              theme: githubTheme,
+              theme: isDark ? atomOneDarkTheme : githubTheme,
               padding: const EdgeInsets.all(16),
-              textStyle: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              textStyle: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12 * fontScale,
+                height: 1.45,
+              ),
             );
             return Column(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
                   decoration: BoxDecoration(
                     border: Border(
-                      bottom: BorderSide(color: Colors.grey[300]!),
+                      bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5)),
                     ),
                   ),
                   child: Row(
@@ -1409,7 +1582,8 @@ class _CodeSheetState extends State<_CodeSheet> {
                       Expanded(
                         child: Text(
                           widget.path,
-                          style: const TextStyle(fontWeight: FontWeight.w500),
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                       Container(
@@ -1418,31 +1592,27 @@ class _CodeSheetState extends State<_CodeSheet> {
                           vertical: 2,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.blue[50],
+                          color: AppStatusColors.of(context).info.background,
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
                           widget.language,
                           style: TextStyle(
                             fontSize: 10,
-                            color: Colors.blue[700],
+                            color: AppStatusColors.of(context).info.foreground,
                           ),
                         ),
                       ),
-                      Tooltip(
-                        message: _wrap
+                      const SizedBox(width: 4),
+                      _ViewerToolbarButton(
+                        tooltip: _wrap
                             ? AppLocalizations.of(context)!.noWrap
                             : AppLocalizations.of(context)!.wrap,
-                        child: IconButton(
-                          icon: Icon(
-                            _wrap ? Icons.wrap_text : Icons.horizontal_rule,
-                            size: 18,
-                          ),
-                          onPressed: () => setState(() => _wrap = !_wrap),
-                        ),
+                        icon: _wrap ? Icons.wrap_text : Icons.horizontal_rule,
+                        onPressed: () => setState(() => _wrap = !_wrap),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.copy, size: 18),
+                      _ViewerToolbarButton(
+                        icon: Icons.copy,
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: content));
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -1455,8 +1625,8 @@ class _CodeSheetState extends State<_CodeSheet> {
                           );
                         },
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
+                      _ViewerToolbarButton(
+                        icon: Icons.close,
                         onPressed: () => Navigator.pop(context),
                       ),
                     ],
@@ -1485,20 +1655,23 @@ class _CodeSheetState extends State<_CodeSheet> {
   }
 }
 
-class _TextFileSheet extends StatefulWidget {
+class _TextFileSheet extends ConsumerStatefulWidget {
   final String path;
   final ValueListenable<String> content;
   const _TextFileSheet({required this.path, required this.content});
 
   @override
-  State<_TextFileSheet> createState() => _TextFileSheetState();
+  ConsumerState<_TextFileSheet> createState() => _TextFileSheetState();
 }
 
-class _TextFileSheetState extends State<_TextFileSheet> {
+class _TextFileSheetState extends ConsumerState<_TextFileSheet> {
   bool _wrap = false;
 
   @override
   Widget build(BuildContext context) {
+    final fontScale = ref
+        .watch(viewerFontScaleControllerProvider)
+        .maybeWhen(data: (v) => v, orElse: () => 1.0);
     return DraggableScrollableSheet(
       initialChildSize: 0.8,
       maxChildSize: 0.95,
@@ -1510,18 +1683,19 @@ class _TextFileSheetState extends State<_TextFileSheet> {
           builder: (context, content, _) {
             final textView = SelectableText(
               content,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              style: TextStyle(
+                fontFamily: 'monospace',
+                fontSize: 12 * fontScale,
+                height: 1.45,
+              ),
             );
             return Column(
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 16,
-                    vertical: 12,
-                  ),
+                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
                   decoration: BoxDecoration(
                     border: Border(
-                      bottom: BorderSide(color: Colors.grey[300]!),
+                      bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5)),
                     ),
                   ),
                   child: Row(
@@ -1531,23 +1705,19 @@ class _TextFileSheetState extends State<_TextFileSheet> {
                       Expanded(
                         child: Text(
                           widget.path,
-                          style: const TextStyle(fontWeight: FontWeight.w500),
+                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
-                      Tooltip(
-                        message: _wrap
+                      _ViewerToolbarButton(
+                        tooltip: _wrap
                             ? AppLocalizations.of(context)!.noWrap
                             : AppLocalizations.of(context)!.wrap,
-                        child: IconButton(
-                          icon: Icon(
-                            _wrap ? Icons.wrap_text : Icons.horizontal_rule,
-                            size: 18,
-                          ),
-                          onPressed: () => setState(() => _wrap = !_wrap),
-                        ),
+                        icon: _wrap ? Icons.wrap_text : Icons.horizontal_rule,
+                        onPressed: () => setState(() => _wrap = !_wrap),
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.copy, size: 18),
+                      _ViewerToolbarButton(
+                        icon: Icons.copy,
                         onPressed: () {
                           Clipboard.setData(ClipboardData(text: content));
                           ScaffoldMessenger.of(context).showSnackBar(
@@ -1560,8 +1730,8 @@ class _TextFileSheetState extends State<_TextFileSheet> {
                           );
                         },
                       ),
-                      IconButton(
-                        icon: const Icon(Icons.close),
+                      _ViewerToolbarButton(
+                        icon: Icons.close,
                         onPressed: () => Navigator.pop(context),
                       ),
                     ],

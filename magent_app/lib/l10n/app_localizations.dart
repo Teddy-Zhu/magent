@@ -800,6 +800,42 @@ abstract class AppLocalizations {
   /// **'Theme mode'**
   String get settingsThemeMode;
 
+  /// No description provided for @settingsViewerFontSize.
+  ///
+  /// In en, this message translates to:
+  /// **'File viewer font size'**
+  String get settingsViewerFontSize;
+
+  /// No description provided for @settingsViewerFontSizeSub.
+  ///
+  /// In en, this message translates to:
+  /// **'Adjust font size in code, text, Markdown source and diff views'**
+  String get settingsViewerFontSizeSub;
+
+  /// No description provided for @viewerFontSizeSmall.
+  ///
+  /// In en, this message translates to:
+  /// **'Small'**
+  String get viewerFontSizeSmall;
+
+  /// No description provided for @viewerFontSizeMedium.
+  ///
+  /// In en, this message translates to:
+  /// **'Medium'**
+  String get viewerFontSizeMedium;
+
+  /// No description provided for @viewerFontSizeLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'Large'**
+  String get viewerFontSizeLarge;
+
+  /// No description provided for @viewerFontSizeReset.
+  ///
+  /// In en, this message translates to:
+  /// **'Reset'**
+  String get viewerFontSizeReset;
+
   /// No description provided for @themeSystem.
   ///
   /// In en, this message translates to:
@@ -1987,6 +2023,30 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Disable wrap'**
   String get disableWrap;
+
+  /// No description provided for @viewerSource.
+  ///
+  /// In en, this message translates to:
+  /// **'Source'**
+  String get viewerSource;
+
+  /// No description provided for @viewerRender.
+  ///
+  /// In en, this message translates to:
+  /// **'Render'**
+  String get viewerRender;
+
+  /// No description provided for @viewerSourceMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Source mode'**
+  String get viewerSourceMode;
+
+  /// No description provided for @viewerRenderMode.
+  ///
+  /// In en, this message translates to:
+  /// **'Render mode'**
+  String get viewerRenderMode;
 
   /// No description provided for @loadMore.
   ///
