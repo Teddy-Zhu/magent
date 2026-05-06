@@ -1,6 +1,6 @@
 module github.com/Teddy-Zhu/magent
 
-go 1.23
+go 1.23.0
 
 require (
 	github.com/creack/pty v1.1.24
@@ -8,6 +8,7 @@ require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/google/uuid v1.6.0
 	github.com/gorilla/websocket v1.5.3
+	github.com/kardianos/service v1.2.4
 	github.com/spf13/cobra v1.8.1
 	github.com/spf13/viper v1.19.0
 	modernc.org/sqlite v1.34.5
@@ -53,7 +54,7 @@ require (
 	golang.org/x/crypto v0.31.0 // indirect
 	golang.org/x/exp v0.0.0-20230905200255-921286631fa9 // indirect
 	golang.org/x/net v0.33.0 // indirect
-	golang.org/x/sys v0.28.0 // indirect
+	golang.org/x/sys v0.34.0 // indirect
 	golang.org/x/text v0.21.0 // indirect
 	google.golang.org/protobuf v1.36.1 // indirect
 	gopkg.in/ini.v1 v1.67.0 // indirect

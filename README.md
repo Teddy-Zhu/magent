@@ -132,7 +132,7 @@ magent/
 ├── go.mod                    # Go module: github.com/Teddy-Zhu/magent
 ├── go.sum
 ├── agent/                    # Go Agent 后端运行时
-│   ├── cmd/magent/main.go    # CLI 入口：serve / init / version
+│   ├── cmd/magent/main.go    # CLI 入口：serve / 服务管理 / version
 │   ├── configs/default.yaml  # 默认配置模板
 │   └── internal/
 │       ├── api/              # HTTP API、WebSocket、middleware
@@ -204,14 +204,11 @@ magent/
 ### 1. 编译并启动 Go Agent
 
 ```bash
-# 初始化配置和默认 Token
-go run ./agent/cmd/magent init
-
-# 启动服务
+# 首次启动会自动生成配置和默认 Token
 go run ./agent/cmd/magent serve
 ```
 
-`init` 会初始化配置并生成访问 Token。默认配置文件位于：
+如果配置文件不存在，`serve` 会自动初始化配置并生成访问 Token。默认配置文件位于：
 
 ```text
 ~/.magent/default.yaml
@@ -246,7 +243,7 @@ flutter run
 | 字段 | 说明 |
 | --- | --- |
 | **URL** | Agent 地址，例如 `http://192.168.1.100:9000` |
-| **Token** | `magent init` 生成的 Token |
+| **Token** | `~/.magent/default.yaml` 中 `auth.tokens[0].token` 的值 |
 | **Name** | 自定义显示名称 |
 
 连接成功后即可进入项目列表，添加项目路径并创建 AI 会话。
@@ -330,22 +327,17 @@ GitHub Actions 中的 Agent Release 目前会自动构建 Linux **amd64** 和 **
 
 ## 💻 Agent 使用
 
-### 初始化
-
-```bash
-./magent init
-```
-
-首次初始化会生成配置文件 `~/.magent/default.yaml`，并输出默认 Token。Flutter App 连接 Agent 时需要填写这个 Token。
-
 ### 启动 / 调试
 
 ```bash
-# 启动
+# 启动；首次运行自动生成 ~/.magent/default.yaml
 ./magent serve
 
 # 指定配置文件
 ./magent serve --config /path/to/default.yaml
+
+# 覆盖监听地址、端口或 token
+./magent serve --host 0.0.0.0 --port 9000 --token "<your-token>"
 
 # 全局调试日志
 ./magent serve --log-level debug
@@ -355,6 +347,22 @@ GitHub Actions 中的 Agent Release 目前会自动构建 Linux **amd64** 和 **
 
 # 查看版本信息
 ./magent version
+```
+
+### 系统服务管理
+
+```bash
+# 安装为系统服务；首次安装会自动初始化配置
+./magent install
+
+# 安装时固定配置文件和监听参数
+./magent install --config /path/to/default.yaml --host 0.0.0.0 --port 9000
+
+# 管理服务
+./magent start
+./magent stop
+./magent restart
+./magent uninstall
 ```
 
 ### 自检
@@ -374,13 +382,14 @@ curl -H "Authorization: Bearer ${TOKEN}" http://127.0.0.1:9000/api/v1/agent/info
 
 ## ⚙️ Agent 配置
 
-Agent 使用 Viper 加载配置，按以下优先级生效：
+Agent 使用 Viper 加载配置，并在配置文件不存在时自动生成。运行时配置按以下优先级生效：
 
-1. `--config` 显式指定的配置文件
-2. `~/.magent/default.yaml`
-3. 当前目录下的 `default.yaml`
-4. `MAGENT_` 前缀环境变量
-5. 代码内默认值
+1. 命令行参数：`--host`、`--port`、`--token`
+2. `MAGENT_` 前缀环境变量
+3. `--config` 指定的配置文件，或默认搜索到的配置文件
+4. 代码内默认值
+
+默认配置文件搜索顺序是 `~/.magent/default.yaml`、当前目录下的 `default.yaml`。两个文件都不存在时，会创建 `~/.magent/default.yaml`。
 
 ### 常用配置项
 
@@ -412,6 +421,7 @@ workspace:
 ### 通过命令行覆盖
 
 ```bash
+go run ./agent/cmd/magent serve --host 0.0.0.0 --port 9000 --token "<your-token>"
 go run ./agent/cmd/magent serve --log-level debug
 go run ./agent/cmd/magent serve --log-levels codex=debug,gitwatcher=off
 ```
@@ -421,6 +431,7 @@ go run ./agent/cmd/magent serve --log-levels codex=debug,gitwatcher=off
 环境变量使用 `MAGENT_` 前缀，嵌套字段以 `_` 连接，例如：
 
 ```bash
+MAGENT_HOST=0.0.0.0 MAGENT_PORT=9000 MAGENT_TOKEN="<your-token>" ./magent serve
 MAGENT_SERVER_HOST=0.0.0.0 MAGENT_SERVER_PORT=9000 ./magent serve
 ```
 

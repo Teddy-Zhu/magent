@@ -82,8 +82,8 @@ go build ./agent/...
 # 运行
 go run ./agent/cmd/magent serve
 
-# 初始化配置
-go run ./agent/cmd/magent init
+# 安装为系统服务
+go run ./agent/cmd/magent install
 ```
 
 ### Flutter App
