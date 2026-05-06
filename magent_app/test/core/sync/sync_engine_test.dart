@@ -388,9 +388,7 @@ class _FakeSessions implements SessionSyncStore {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> refreshItems(
-    String sessionId,
-  ) async {
+  Future<List<Map<String, dynamic>>> refreshItems(String sessionId) async {
     refreshedItems.add(sessionId);
     if (refreshCompleters.isNotEmpty) {
       return refreshCompleters.removeAt(0).future;

@@ -240,7 +240,7 @@ void main() {
         'updated_at': DateTime(2026, 5, 1).toIso8601String(),
       },
     ];
-    await repo.refreshItems('s1');
+    await repo.loadLatestItemsPage('s1');
 
     final applied = await repo.applyRealtimeEvent({
       'type': 'session.message_delta',
@@ -366,7 +366,7 @@ void main() {
       },
     ];
 
-    await repo.refreshItems('s1');
+    await repo.loadLatestItemsPage('s1');
     final item = await db.getItem('agent-a', 's1', 'cmd-1');
 
     expect(item, isNotNull);
@@ -412,7 +412,7 @@ void main() {
       },
     ];
 
-    await repo.refreshItems('s1');
+    await repo.loadLatestItemsPage('s1');
     final item = await db.getItem('agent-a', 's1', 'cmd-1');
 
     expect(item, isNotNull);
@@ -420,43 +420,57 @@ void main() {
     expect(item.content, contains('"status":"completed"'));
   });
 
-  test(
-    'latest window ignores older-page cursor state',
-    () async {
-      await db.setSyncCursor(
-        'agent-a',
-        'session_items_older',
-        's1',
-        'newer:old',
-      );
-      fakeApi.items = [
-        {
-          'item_id': 'cmd-1',
-          'turn_id': 'turn-1',
-          'index': 1,
-          'type': 'command_execution',
-          'status': 'completed',
-          'content': {
-            'id': 'cmd-1',
-            'type': 'commandExecution',
-            'command': 'go test ./...',
-            'aggregatedOutput': 'ok',
-            'exitCode': 0,
-          },
-          'created_at': DateTime(2026, 5, 1).toIso8601String(),
-          'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+  test('latest window ignores older-page cursor state', () async {
+    await db.setSyncCursor('agent-a', 'session_items_older', 's1', 'newer:old');
+    fakeApi.items = [
+      {
+        'item_id': 'cmd-1',
+        'turn_id': 'turn-1',
+        'index': 1,
+        'type': 'command_execution',
+        'status': 'completed',
+        'content': {
+          'id': 'cmd-1',
+          'type': 'commandExecution',
+          'command': 'go test ./...',
+          'aggregatedOutput': 'ok',
+          'exitCode': 0,
         },
-      ];
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
+      },
+    ];
 
-      await repo.loadLatestItemsPage('s1');
+    await repo.loadLatestItemsPage('s1');
 
-      expect(fakeApi.itemRequestCursors, [isNull]);
-      final item = await db.getItem('agent-a', 's1', 'cmd-1');
-      expect(item, isNotNull);
-      expect(item!.content, contains('"command":"go test ./..."'));
-      expect(item.content, contains('"output":"ok"'));
-    },
-  );
+    expect(fakeApi.itemRequestCursors, [isNull]);
+    final item = await db.getItem('agent-a', 's1', 'cmd-1');
+    expect(item, isNotNull);
+    expect(item!.content, contains('"command":"go test ./..."'));
+    expect(item.content, contains('"output":"ok"'));
+  });
+
+  test('latest window requires a cursor before exposing older items', () async {
+    fakeApi.items = [
+      {
+        'item_id': 'msg-1',
+        'turn_id': 'turn-1',
+        'index': 1,
+        'type': 'agent_message',
+        'status': 'completed',
+        'content': {'id': 'msg-1', 'type': 'agentMessage', 'text': 'hello'},
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+      },
+    ];
+    fakeApi.pageHasMore[null] = true;
+
+    final page = await repo.loadLatestItemsPage('s1');
+
+    expect(page.hasOlder, isFalse);
+    expect(page.olderCursor, isNull);
+    expect(await db.getSyncCursor('agent-a', 'session_items_older', 's1'), '');
+  });
 
   test('delete session cache clears websocket epoch cursor', () async {
     await db.setSyncCursor('agent-a', 'session_ws', 's1', 'old:24');
@@ -512,6 +526,30 @@ void main() {
     expect(items.map((item) => item.itemId), ['msg-next']);
     expect(await repo.getItemRevision('s1'), 2);
   });
+
+  test(
+    'refresh items with no runtime revision does not fetch history window',
+    () async {
+      fakeApi.items = [
+        {
+          'item_id': 'msg-1',
+          'turn_id': 'turn-1',
+          'index': 1,
+          'type': 'agent_message',
+          'status': 'completed',
+          'content': {'id': 'msg-1', 'type': 'agentMessage', 'text': 'hello'},
+          'created_at': DateTime(2026, 5, 1).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+        },
+      ];
+
+      await repo.refreshItems('s1');
+
+      expect(fakeApi.itemChangeRequestRevisions, [0]);
+      expect(fakeApi.itemRequestCursors, isEmpty);
+      expect(await db.getItemsBySession('agent-a', 's1'), isEmpty);
+    },
+  );
 
   test('refresh items stores codex app-server tool call projections', () async {
     fakeApi.items = [
@@ -604,7 +642,9 @@ void main() {
     expect(fileChange.content, contains('"diff":"@@ -271'));
   });
 
-  test('reset item window removes stale items and keeps pending input', () async {
+  test(
+    'reset item window removes stale items and keeps pending input',
+    () async {
       await db.insertOrUpdateItem(
         SessionItemEntriesCompanion.insert(
           agentId: 'agent-a',
@@ -648,7 +688,8 @@ void main() {
       );
       final items = await db.getItemsBySession('agent-a', 's1');
       expect(items.any((item) => item.itemId.startsWith('local-')), isTrue);
-  });
+    },
+  );
   test('refresh items skips unchanged cached rows', () async {
     final createdAt = DateTime(2026, 5, 1);
     final updatedAt = DateTime(2026, 5, 1, 0, 0, 1);
@@ -878,7 +919,7 @@ class _FakeSessionApi implements SessionApiLike {
   Future<Map<String, dynamic>> getItemsPage(
     String sessionId, {
     String? cursor,
-    int limit = 200,
+    int limit = 80,
   }) async {
     itemRequestCursors.add(cursor);
     return {

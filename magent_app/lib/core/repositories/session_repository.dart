@@ -54,7 +54,7 @@ abstract class SessionApiLike {
   Future<Map<String, dynamic>> getItemsPage(
     String sessionId, {
     String? cursor,
-    int limit = 200,
+    int limit = 80,
   });
 
   Future<Map<String, dynamic>> getItemChanges(
@@ -662,34 +662,9 @@ class SessionRepository implements SessionSyncStore {
 
   // --- Items ---
 
-  Future<List<Map<String, dynamic>>> getItems(
-    String sessionId, {
-    int? limit,
-  }) async {
-    final localItems = limit == null
-        ? await _db.getItemsBySession(agentId, sessionId)
-        : await _db.getRecentItemsBySession(agentId, sessionId, limit);
-    final localList = localItems.map(_itemToMap).toList();
-
-    loadLatestItemsPage(sessionId, limit: limit ?? 80).catchError((e) {
-      debugPrint('SessionRepository: sync items error: $e');
-      return const SessionItemPageState(
-        items: [],
-        olderCursor: null,
-        hasOlder: false,
-      );
-    });
-
-    return localList;
-  }
-
   @override
   Future<List<Map<String, dynamic>>> refreshItems(String sessionId) async {
     final revision = await getItemRevision(sessionId);
-    if (revision <= 0) {
-      final page = await loadLatestItemsPage(sessionId);
-      return page.items;
-    }
     return _syncItemChanges(sessionId, revision);
   }
 
@@ -768,6 +743,11 @@ class SessionRepository implements SessionSyncStore {
         entries.add(next);
       }
     }
+    final olderCursor = _stringValue(page['cursor']);
+    final hasOlder =
+        (page['has_more'] == true || page['hasMore'] == true) &&
+        olderCursor != null &&
+        olderCursor.isNotEmpty;
     await _db.transaction(() async {
       if (entries.isNotEmpty) {
         await _db.insertOrUpdateItems(entries);
@@ -776,7 +756,7 @@ class SessionRepository implements SessionSyncStore {
         agentId,
         'session_items_older',
         sessionId,
-        _stringValue(page['cursor']) ?? '',
+        hasOlder ? olderCursor : '',
       );
     });
     for (final content in realUserMessageContents) {
@@ -784,8 +764,8 @@ class SessionRepository implements SessionSyncStore {
     }
     return SessionItemPageState(
       items: entries.map(_itemCompanionToMap).toList(growable: false),
-      olderCursor: _stringValue(page['cursor']),
-      hasOlder: page['has_more'] == true || page['hasMore'] == true,
+      olderCursor: hasOlder ? olderCursor : null,
+      hasOlder: hasOlder,
     );
   }
 

@@ -117,7 +117,7 @@ WS replay cursor 对 item 同步不再承担可靠性职责。App 订阅 session
 2. SyncEngine `subscribeSession(sessionId)`。
 3. SyncEngine 先发送 WS subscribe，同时进入 catch-up gate。
 4. ChatPage 调用 `SessionRepository.loadLatestItemsPage(sessionId)` 拉最新窗口。
-5. SyncEngine catch-up 只拉 runtime changes。
+5. SyncEngine catch-up 只拉 runtime changes；本地 revision 为 0 时也不会拉 provider history 窗口。
 6. ChatPage 由 Drift watch 自动刷新 UI。
 7. catch-up 期间到达的 WS 事件先进入 buffer。catch-up 后：
    - 如果 revision 已推进，丢弃已被 HTTP 同步覆盖的 item hint。

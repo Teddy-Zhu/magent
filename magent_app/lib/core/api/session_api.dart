@@ -153,10 +153,7 @@ class SessionApi implements SessionApiLike {
   }) async {
     final resp = await _dio.get(
       '$_apiPrefix/sessions/$sessionId/items/changes',
-      queryParameters: {
-        'after_revision': afterRevision,
-        'limit': limit,
-      },
+      queryParameters: {'after_revision': afterRevision, 'limit': limit},
     );
     return Map<String, dynamic>.from(resp.data['data'] as Map? ?? {});
   }

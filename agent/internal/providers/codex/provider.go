@@ -179,14 +179,14 @@ func (p *CodexProvider) CreateSession(ctx context.Context, req provider.CreateSe
 	}
 
 	return &provider.Session{
-		ID:             sessionID,
-		ProviderID:     "codex",
-		ThreadID:       threadID,
-		ProjectID:      req.ProjectID,
-		Purpose:        req.Purpose,
-		Workdir:        req.Workdir,
-		Status:         string(provider.SessionStatusRunning),
-		RunnerType:     "app-server",
+		ID:         sessionID,
+		ProviderID: "codex",
+		ThreadID:   threadID,
+		ProjectID:  req.ProjectID,
+		Purpose:    req.Purpose,
+		Workdir:    req.Workdir,
+		Status:     string(provider.SessionStatusRunning),
+		RunnerType: "app-server",
 		// magent 通过 codex app-server 创建的会话在 codex 那边记成 sourceKind=appServer.
 		Source:         "appServer",
 		Model:          req.Model,
@@ -1335,7 +1335,6 @@ func (p *CodexProvider) defaultModel() string {
 	}
 	return "gpt-5.5"
 }
-
 
 func (p *CodexProvider) InterruptSession(ctx context.Context, sessionID string) error {
 	client, err := p.appServerClient(ctx)
