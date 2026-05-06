@@ -115,6 +115,27 @@ diff --git a/lib/b.dart b/lib/b.dart
     expect(files.last.deletions, 1);
   });
 
+  test('yaml file unified diff uses diff detail language', () {
+    final language = chatDetailLanguage('config/app.yaml', '''
+--- a/config/app.yaml
++++ b/config/app.yaml
+@@ -1,2 +1,2 @@
+-enabled: false
++enabled: true
+''');
+
+    expect(language, 'diff');
+  });
+
+  test('plain yaml content still uses yaml detail language', () {
+    final language = chatDetailLanguage('config/app.yaml', '''
+enabled: true
+name: demo
+''');
+
+    expect(language, 'yaml');
+  });
+
   test('web search item is summarized as readable text', () {
     final data = {
       'type': 'web_search',
@@ -133,6 +154,7 @@ diff --git a/lib/b.dart b/lib/b.dart
       chatWebSearchTitle(data),
       'Web search: Flutter ListView jump to bottom',
     );
+    expect(chatWebSearchListSummary(data), isEmpty);
     expect(chatWebSearchSummary(data), '1 result');
     final detail = chatWebSearchDetail(data);
     expect(detail, contains('Query: Flutter ListView jump to bottom'));

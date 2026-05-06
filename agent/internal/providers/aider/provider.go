@@ -7,14 +7,15 @@ import (
 	"sync"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 	"github.com/Teddy-Zhu/magent/agent/internal/runner"
+	"github.com/google/uuid"
 )
 
 type AiderProvider struct {
 	runners  map[string]*runner.PTYRunner
 	sessions map[string]chan provider.ProviderEvent
+	metadata map[string]provider.Session
 	mu       sync.RWMutex
 }
 
@@ -22,6 +23,7 @@ func New() *AiderProvider {
 	return &AiderProvider{
 		runners:  make(map[string]*runner.PTYRunner),
 		sessions: make(map[string]chan provider.ProviderEvent),
+		metadata: make(map[string]provider.Session),
 	}
 }
 
@@ -73,19 +75,7 @@ func (p *AiderProvider) CreateSession(ctx context.Context, req provider.CreateSe
 		return nil, fmt.Errorf("start aider: %w", err)
 	}
 
-	p.mu.Lock()
-	p.runners[sessionID] = r
-	ch := make(chan provider.ProviderEvent, 256)
-	p.sessions[sessionID] = ch
-	p.mu.Unlock()
-
-	if req.Prompt != "" {
-		r.Write([]byte(req.Prompt + "\n"))
-	}
-
-	go p.collectOutput(sessionID, r)
-
-	return &provider.Session{
+	session := provider.Session{
 		ID:         sessionID,
 		ProviderID: "aider",
 		ProjectID:  req.ProjectID,
@@ -95,7 +85,22 @@ func (p *AiderProvider) CreateSession(ctx context.Context, req provider.CreateSe
 		Model:      req.Model,
 		CreatedAt:  time.Now(),
 		UpdatedAt:  time.Now(),
-	}, nil
+	}
+
+	p.mu.Lock()
+	p.runners[sessionID] = r
+	ch := make(chan provider.ProviderEvent, 256)
+	p.sessions[sessionID] = ch
+	p.metadata[sessionID] = session
+	p.mu.Unlock()
+
+	if req.Prompt != "" {
+		r.Write([]byte(req.Prompt + "\n"))
+	}
+
+	go p.collectOutput(sessionID, r)
+
+	return &session, nil
 }
 
 func (p *AiderProvider) collectOutput(sessionID string, r *runner.PTYRunner) {
@@ -116,6 +121,7 @@ func (p *AiderProvider) collectOutput(sessionID string, r *runner.PTYRunner) {
 		if event.Type == "exit" || event.Type == "error" {
 			p.mu.Lock()
 			delete(p.runners, sessionID)
+			delete(p.metadata, sessionID)
 			p.mu.Unlock()
 			return
 		}
@@ -160,6 +166,7 @@ func (p *AiderProvider) StopSession(ctx context.Context, sessionID string) error
 	if hasCh {
 		delete(p.sessions, sessionID)
 	}
+	delete(p.metadata, sessionID)
 	p.mu.Unlock()
 
 	if !ok {
@@ -215,7 +222,21 @@ func (p *AiderProvider) Capabilities() provider.ProviderCapabilities {
 }
 
 func (p *AiderProvider) ListThreads(ctx context.Context, cwd string, limit int) ([]provider.Session, error) {
-	return nil, nil
+	p.mu.RLock()
+	defer p.mu.RUnlock()
+
+	sessions := make([]provider.Session, 0, len(p.metadata))
+	for _, session := range p.metadata {
+		if cwd != "" && session.Workdir != cwd {
+			continue
+		}
+		session.Status = string(provider.SessionStatusRunning)
+		sessions = append(sessions, session)
+		if limit > 0 && len(sessions) >= limit {
+			break
+		}
+	}
+	return sessions, nil
 }
 
 func (p *AiderProvider) HasSession(sessionID string) bool {
@@ -244,5 +265,6 @@ func (p *AiderProvider) Close() error {
 	}
 	p.runners = make(map[string]*runner.PTYRunner)
 	p.sessions = make(map[string]chan provider.ProviderEvent)
+	p.metadata = make(map[string]provider.Session)
 	return nil
 }

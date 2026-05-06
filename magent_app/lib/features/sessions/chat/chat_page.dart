@@ -126,6 +126,9 @@ String chatWebSearchSummary(Object? data) {
 }
 
 @visibleForTesting
+String chatWebSearchListSummary(Object? _) => '';
+
+@visibleForTesting
 String chatWebSearchDetail(Object? data) {
   final map = data is Map ? Map<String, dynamic>.from(data) : null;
   if (map == null) return data?.toString() ?? '';
@@ -378,6 +381,54 @@ List<ChatDiffFileSummary> chatDiffFileSummaries(String diff) {
   }
   finishFile();
   return files;
+}
+
+@visibleForTesting
+String chatDetailLanguage(String title, String content) {
+  final lowerTitle = title.toLowerCase();
+  final trimmed = content.trimLeft();
+  if (_looksLikeUnifiedDiff(trimmed) || lowerTitle.contains('diff')) {
+    return 'diff';
+  }
+  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+    return 'json';
+  }
+  if (lowerTitle.contains('dart')) return 'dart';
+  if (lowerTitle.contains('.go') || lowerTitle.contains(' go ')) return 'go';
+  if (lowerTitle.contains('.md') || lowerTitle.contains('markdown')) {
+    return 'markdown';
+  }
+  if (lowerTitle.contains('.yaml') || lowerTitle.contains('.yml')) {
+    return 'yaml';
+  }
+  if (lowerTitle.contains('.json')) return 'json';
+  if (lowerTitle.contains('.ts')) return 'typescript';
+  if (lowerTitle.contains('.js')) return 'javascript';
+  if (lowerTitle.contains('.py')) return 'python';
+  if (lowerTitle.contains('command') || lowerTitle.contains('命令')) {
+    return 'bash';
+  }
+  return 'plaintext';
+}
+
+bool _looksLikeUnifiedDiff(String content) {
+  if (content.startsWith('diff --git') ||
+      content.startsWith('Index: ') ||
+      content.startsWith('@@ ')) {
+    return true;
+  }
+  var sawOld = false;
+  var sawNew = false;
+  var checkedLines = 0;
+  for (final line in content.split('\n')) {
+    if (line.trim().isEmpty && !sawOld && !sawNew) continue;
+    checkedLines++;
+    if (line.startsWith('--- ')) sawOld = true;
+    if (line.startsWith('+++ ')) sawNew = true;
+    if (sawOld && sawNew) return true;
+    if (checkedLines >= 12) return false;
+  }
+  return false;
 }
 
 String _pathFromDiffHeader(String line) {
@@ -2502,7 +2553,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 fallback: l10n.chatCommandOutput,
               ),
           output: output,
-          summary: _singleLineSummary(output, fallback: l10n.chatCommandOutput),
+          summary: '',
           success: true,
         );
       case SessionEventTypes.fileChangeOutputDelta:
@@ -2511,21 +2562,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           icon: Icons.edit_note,
           title: _toolText(data?['path'], fallback: l10n.chatFileChangeOutput),
           output: output,
-          summary: _singleLineSummary(
-            output,
-            fallback: l10n.chatFileChangeOutput,
-          ),
+          summary: _toolOutputSummary(output),
           success: true,
         );
       case SessionEventTypes.commandCompleted:
-        final output = _commandCompletedOutput(data);
+        final output = _commandCompletedDetail(data);
         return _ToolCallCard(
           icon: _commandIcon(data),
           title:
               _commandActionTitle(data) ??
               _commandTitle(_commandValue(data), fallback: l10n.chatCommand),
           output: output,
-          summary: _commandSummary(data, output),
+          summary: '',
           success: _commandSuccess(data),
         );
       case SessionEventTypes.fileWrite:
@@ -2545,19 +2593,17 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           success: true,
         );
       case SessionEventTypes.mcpToolCompleted:
+        final output = _toolText(
+          data?['output'] ?? data?['result'] ?? data?['error'],
+        );
         return _ToolCallCard(
           icon: Icons.extension_outlined,
           title: _toolText(
             data?['tool'] ?? data?['name'] ?? data?['server'],
             fallback: 'MCP Tool',
           ),
-          output: _toolText(
-            data?['output'] ?? data?['result'] ?? data?['error'],
-          ),
-          summary: _singleLineSummary(
-            _toolText(data?['output'] ?? data?['result'] ?? data?['error']),
-            fallback: 'MCP Tool',
-          ),
+          output: output,
+          summary: _toolOutputSummary(output),
           success: data?['error'] == null,
         );
       case SessionEventTypes.itemCompleted:
@@ -2574,7 +2620,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             icon: Icons.travel_explore,
             title: chatWebSearchTitle(data),
             output: detail,
-            summary: chatWebSearchSummary(data),
+            summary: chatWebSearchListSummary(data),
             success: true,
             monospace: false,
           );
@@ -2811,9 +2857,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return null;
   }
 
-  String _commandCompletedOutput(dynamic data) {
+  String _commandCompletedDetail(dynamic data) {
     final output = _toolText(_commandOutputValue(data));
-    if (output.isNotEmpty) return output;
     if (data is! Map) return '';
     final details = <String>[];
     final cwd = _toolText(data['cwd']);
@@ -2822,7 +2867,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (status.isNotEmpty) details.add('status: $status');
     final exitCode = data['exit_code'] ?? data['exitCode'];
     if (exitCode != null) details.add('exit: $exitCode');
-    return details.join('\n');
+    final durationRaw = data['durationMs'] ?? data['duration_ms'];
+    if (durationRaw != null) {
+      final ms = _intValue(durationRaw) ?? 0;
+      if (ms > 0) details.add('duration: ${_formatDuration(ms)}');
+    }
+    final source = _toolText(data['source']);
+    if (source.isNotEmpty) details.add('source: $source');
+    final pidRaw = data['processId'] ?? data['pid'] ?? data['process_id'];
+    if (pidRaw != null) {
+      final pid = _intValue(pidRaw) ?? 0;
+      if (pid > 0) details.add('pid: $pid');
+    }
+    if (output.isEmpty) return details.join('\n');
+    if (details.isEmpty) return output;
+    return [output, '', ...details].join('\n');
   }
 
   bool _commandSuccess(dynamic data) {
@@ -2912,11 +2971,28 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   String _genericItemSummary(dynamic data) {
     if (data is! Map) return _singleLineSummary(data?.toString() ?? '');
-    for (final key in ['message', 'text', 'content', 'summary', 'status']) {
+    for (final key in ['message', 'text', 'content', 'summary']) {
       final text = _toolText(data[key]);
       if (text.isNotEmpty) return _singleLineSummary(text);
     }
-    return _singleLineSummary(_genericItemContent(data));
+    final status = _toolText(data['status']);
+    if (status.isNotEmpty && !_isCompletedStatusText(status)) {
+      return _singleLineSummary(status);
+    }
+    return '';
+  }
+
+  bool _isCompletedStatusText(String status) {
+    switch (status.trim().toLowerCase()) {
+      case 'completed':
+      case 'complete':
+      case 'succeeded':
+      case 'success':
+      case 'done':
+        return true;
+      default:
+        return false;
+    }
   }
 
   String _singleLineSummary(String text, {String fallback = ''}) {
@@ -2930,31 +3006,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return '${normalized.substring(0, 160).trimRight()}...';
   }
 
-  String _commandSummary(dynamic data, String output) {
-    final details = <String>[];
-    if (data is Map) {
-      final status = _toolText(data['status']);
-      if (status.isNotEmpty) details.add(status);
-      final exitCode = data['exit_code'] ?? data['exitCode'];
-      if (exitCode != null) details.add('exit $exitCode');
-      final durationRaw = data['durationMs'] ?? data['duration_ms'];
-      if (durationRaw != null) {
-        final ms = _intValue(durationRaw) ?? 0;
-        if (ms > 0) details.add(_formatDuration(ms));
-      }
-      final source = _toolText(data['source']);
-      if (source.isNotEmpty) details.add(source);
-      final pidRaw = data['processId'] ?? data['pid'] ?? data['process_id'];
-      if (pidRaw != null) {
-        final pid = _intValue(pidRaw) ?? 0;
-        if (pid > 0) details.add('pid $pid');
-      }
-    }
-    final outputSummary = _singleLineSummary(output);
-    if (outputSummary.isNotEmpty) details.add(outputSummary);
-    return details.isEmpty
-        ? AppLocalizations.of(context)!.chatCommand
-        : details.join(' · ');
+  String _toolOutputSummary(String output, {String fallback = ''}) {
+    final summary = _singleLineSummary(output, fallback: fallback);
+    return _isCompletedStatusText(summary) ? '' : summary;
   }
 
   String _fileChangeSummary(dynamic data) {
@@ -4233,30 +4287,7 @@ void _showTextDetailSheet(
 }
 
 String _detailLanguage(String title, String content) {
-  final lowerTitle = title.toLowerCase();
-  final trimmed = content.trimLeft();
-  if (trimmed.startsWith('diff --git') || lowerTitle.contains('diff')) {
-    return 'diff';
-  }
-  if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
-    return 'json';
-  }
-  if (lowerTitle.contains('dart')) return 'dart';
-  if (lowerTitle.contains('.go') || lowerTitle.contains(' go ')) return 'go';
-  if (lowerTitle.contains('.md') || lowerTitle.contains('markdown')) {
-    return 'markdown';
-  }
-  if (lowerTitle.contains('.yaml') || lowerTitle.contains('.yml')) {
-    return 'yaml';
-  }
-  if (lowerTitle.contains('.json')) return 'json';
-  if (lowerTitle.contains('.ts')) return 'typescript';
-  if (lowerTitle.contains('.js')) return 'javascript';
-  if (lowerTitle.contains('.py')) return 'python';
-  if (lowerTitle.contains('command') || lowerTitle.contains('命令')) {
-    return 'bash';
-  }
-  return 'plaintext';
+  return chatDetailLanguage(title, content);
 }
 
 class _SessionDetailSheet extends StatefulWidget {

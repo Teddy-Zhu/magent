@@ -7,7 +7,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-func TestMigrateDropsContentCachesAndRebuildsSessions(t *testing.T) {
+func TestMigrateDropsContentCachesAndSessions(t *testing.T) {
 	db, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
 		t.Fatalf("open sqlite: %v", err)
@@ -51,36 +51,8 @@ func TestMigrateDropsContentCachesAndRebuildsSessions(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 
-	columns := tableColumns(t, db, "sessions")
-	if columns["status"] {
-		t.Fatalf("expected old status column to be removed")
-	}
-	if columns["last_seq"] {
-		t.Fatalf("expected last_seq column to be removed")
-	}
-	if !columns["last_status"] {
-		t.Fatalf("expected last_status column")
-	}
-	if columns["approval_mode"] {
-		t.Fatalf("expected approval_mode column to be removed")
-	}
-	if !columns["approval_policy"] {
-		t.Fatalf("expected approval_policy column")
-	}
-	if !columns["purpose"] {
-		t.Fatalf("expected purpose column")
-	}
-
-	var lastStatus string
-	var approvalPolicy string
-	if err := db.QueryRow(`SELECT last_status, approval_policy FROM sessions WHERE id = 's1'`).Scan(&lastStatus, &approvalPolicy); err != nil {
-		t.Fatalf("read migrated session: %v", err)
-	}
-	if lastStatus != "running" {
-		t.Fatalf("expected status copied to last_status, got %q", lastStatus)
-	}
-	if approvalPolicy != "onRequest" {
-		t.Fatalf("expected approval_mode copied to approval_policy, got %q", approvalPolicy)
+	if tableExists(t, db, "sessions") {
+		t.Fatalf("expected sessions table to be dropped")
 	}
 
 	for _, table := range []string{"session_events", "git_state", "git_file_changes", "git_diff_cache", "file_cache", "dir_cache"} {
@@ -88,29 +60,6 @@ func TestMigrateDropsContentCachesAndRebuildsSessions(t *testing.T) {
 			t.Fatalf("expected %s to be dropped", table)
 		}
 	}
-}
-
-func tableColumns(t *testing.T, db *sql.DB, table string) map[string]bool {
-	t.Helper()
-	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		t.Fatalf("table info %s: %v", table, err)
-	}
-	defer rows.Close()
-
-	columns := map[string]bool{}
-	for rows.Next() {
-		var cid int
-		var name, typ string
-		var notNull int
-		var defaultValue any
-		var pk int
-		if err := rows.Scan(&cid, &name, &typ, &notNull, &defaultValue, &pk); err != nil {
-			t.Fatalf("scan table info %s: %v", table, err)
-		}
-		columns[name] = true
-	}
-	return columns
 }
 
 func tableExists(t *testing.T, db *sql.DB, table string) bool {

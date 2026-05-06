@@ -67,7 +67,7 @@ func (r CreateSessionRequest) ProviderName() string {
 	return r.Provider
 }
 
-// CreateSession creates a session via provider and saves minimal metadata to DB.
+// CreateSession creates a session via provider. Provider is the source of truth.
 func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (*provider.Session, error) {
 	if err := req.Validate(); err != nil {
 		return nil, err
@@ -99,10 +99,6 @@ func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (
 		return nil, err
 	}
 
-	// Save minimal metadata to DB (project_id mapping)
-	if err := m.store.Save(session); err != nil {
-		log.Error("session", "CreateSession: store.Save(%s) error: %v", session.ID, err)
-	}
 	log.Info("session", "CreateSession: id=%s provider=%s thread=%s", session.ID, session.ProviderID, session.ThreadID)
 
 	// Start live event forwarding to WebSocket
@@ -146,20 +142,12 @@ func (m *Manager) forwardEvents(sessionID string, p provider.Provider) {
 
 // GetSession returns session info. Provider is source of truth for status.
 func (m *Manager) GetSession(ctx context.Context, sessionID string) (*provider.Session, error) {
-	sess, err := m.store.Get(sessionID)
-	if err != nil {
-		return nil, err
-	}
-
-	providerName := ""
-	if sess != nil {
-		providerName = sess.ProviderID
-	}
-
-	if p := m.activeProviderForSession(sessionID, providerName); p != nil {
-		if sess != nil {
-			sess.Status = string(provider.SessionStatusRunning)
-			return sess, nil
+	if p := m.activeProviderForSession(sessionID, ""); p != nil {
+		if ps, ok, listErr := m.providerListedSession(ctx, sessionID, p.Name(), ""); listErr != nil {
+			return nil, listErr
+		} else if ok {
+			ps.Status = string(provider.SessionStatusRunning)
+			return &ps, nil
 		}
 		return &provider.Session{
 			ID:         sessionID,
@@ -169,16 +157,14 @@ func (m *Manager) GetSession(ctx context.Context, sessionID string) (*provider.S
 		}, nil
 	}
 
-	if sess != nil {
-		if ps, ok, listErr := m.providerListedSession(ctx, sessionID, sess.ProviderID, ""); listErr != nil {
+	for _, p := range m.registry.ListProviders() {
+		ps, ok, listErr := m.providerListedSession(ctx, sessionID, p.Name(), "")
+		if listErr != nil {
 			return nil, listErr
-		} else if ok {
-			merged := mergeProviderSessionMetadata(ps, *sess)
-			merged.Status = m.sessionListStatus(merged)
-			return &merged, nil
 		}
-		if deleteErr := m.store.Delete(sessionID); deleteErr != nil {
-			log.Warn("session", "delete stale session failed id=%s: %v", sessionID, deleteErr)
+		if ok {
+			ps.Status = m.sessionListStatus(ps)
+			return &ps, nil
 		}
 	}
 
@@ -210,24 +196,10 @@ func (m *Manager) ListSessions(ctx context.Context, projectID, providerName, wor
 		}
 	}
 
-	// Get DB metadata for project_id association
-	dbSessions, _ := m.store.ListByProject(projectID)
-	dbMap := make(map[string]provider.Session)
-	for _, s := range dbSessions {
-		dbMap[s.ID] = s
-	}
-
-	// Merge: provider threads + DB metadata
 	var result []provider.Session
-	seen := make(map[string]bool)
 
 	for _, ps := range providerSessions {
-		seen[ps.ID] = true
-		if db, ok := dbMap[ps.ID]; ok {
-			ps = mergeProviderSessionMetadata(ps, db)
-		} else {
-			ps.ProjectID = projectID
-		}
+		ps.ProjectID = projectID
 		if archived {
 			ps.Status = string(provider.SessionStatusStopped)
 		} else {
@@ -236,38 +208,13 @@ func (m *Manager) ListSessions(ctx context.Context, projectID, providerName, wor
 		result = append(result, ps)
 	}
 
-	// Add only DB sessions that the provider still holds active in memory. DB
-	// rows not returned by provider history and not active are stale metadata.
-	if !archived {
-		for _, db := range dbSessions {
-			if !seen[db.ID] && m.activeProviderForSession(db.ID, db.ProviderID) != nil {
-				db.Status = m.sessionListStatus(db)
-				result = append(result, db)
-			}
-		}
-	}
-
 	return result, nil
 }
 
 func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) error {
-	sess, err := m.store.Get(sessionID)
+	p, _, err := m.providerForArchivedOperation(sessionID)
 	if err != nil {
 		return err
-	}
-	providerName := ""
-	if sess != nil {
-		providerName = sess.ProviderID
-	}
-	p := m.activeProviderForSession(sessionID, providerName)
-	if p == nil && providerName != "" {
-		p, err = m.registry.Get(providerName)
-		if err != nil {
-			return err
-		}
-	}
-	if p == nil {
-		return fmt.Errorf("session %s not found", sessionID)
 	}
 	archiver, ok := p.(provider.ThreadArchiver)
 	if !ok {
@@ -275,9 +222,6 @@ func (m *Manager) ArchiveSession(ctx context.Context, sessionID string) error {
 	}
 	if err := archiver.ArchiveSession(ctx, sessionID); err != nil {
 		return err
-	}
-	if deleteErr := m.store.Delete(sessionID); deleteErr != nil {
-		log.Warn("session", "delete archived session metadata failed id=%s: %v", sessionID, deleteErr)
 	}
 	return nil
 }
@@ -308,9 +252,6 @@ func (m *Manager) UnarchiveSession(ctx context.Context, sessionID string) (*prov
 		session.ThreadID = session.ID
 	}
 	session.ArchivedAt = nil
-	if err := m.store.Save(session); err != nil {
-		log.Error("session", "save unarchived session failed id=%s: %v", session.ID, err)
-	}
 	return session, nil
 }
 
@@ -326,19 +267,10 @@ func (m *Manager) DeleteSession(ctx context.Context, sessionID string) error {
 	if err := deleter.DeleteSession(ctx, sessionID); err != nil {
 		return err
 	}
-	if deleteErr := m.store.Delete(sessionID); deleteErr != nil {
-		log.Warn("session", "delete session metadata failed id=%s: %v", sessionID, deleteErr)
-	}
 	return nil
 }
 
 func (m *Manager) providerForArchivedOperation(sessionID string) (provider.Provider, string, error) {
-	if sess, err := m.store.Get(sessionID); err != nil {
-		return nil, "", err
-	} else if sess != nil && sess.ProviderID != "" {
-		p, err := m.registry.Get(sess.ProviderID)
-		return p, sess.ProviderID, err
-	}
 	if p := m.activeProviderForSession(sessionID, ""); p != nil {
 		return p, p.Name(), nil
 	}
@@ -369,18 +301,6 @@ func (m *Manager) providerListedSession(ctx context.Context, sessionID, provider
 		}
 	}
 	return provider.Session{}, false, nil
-}
-
-func mergeProviderSessionMetadata(ps, db provider.Session) provider.Session {
-	ps.Model = firstNonEmpty(db.Model, ps.Model)
-	ps.Effort = firstNonEmpty(db.Effort, ps.Effort)
-	ps.ProjectID = db.ProjectID
-	ps.Purpose = db.Purpose
-	ps.Workdir = firstNonEmpty(ps.Workdir, db.Workdir)
-	ps.ApprovalPolicy = firstNonEmpty(ps.ApprovalPolicy, db.ApprovalPolicy)
-	ps.SandboxMode = firstNonEmpty(ps.SandboxMode, db.SandboxMode)
-	ps.Config = db.Config
-	return ps
 }
 
 func (m *Manager) sessionListStatus(session provider.Session) string {
@@ -899,23 +819,13 @@ func payloadTime(value any) time.Time {
 
 // ResumeSession activates a session in its provider.
 func (m *Manager) ResumeSession(ctx context.Context, sessionID string) error {
-	// Already active?
 	for _, p := range m.registry.ListProviders() {
 		if p.HasSession(sessionID) {
 			return nil
 		}
 	}
 
-	// Look up metadata
-	sess, _ := m.store.Get(sessionID)
 	providerName, threadID := "codex", sessionID
-	if sess != nil {
-		providerName = sess.ProviderID
-		if sess.ThreadID != "" {
-			threadID = sess.ThreadID
-		}
-	}
-
 	p, err := m.registry.Get(providerName)
 	if err != nil {
 		return err
@@ -924,49 +834,34 @@ func (m *Manager) ResumeSession(ctx context.Context, sessionID string) error {
 	if err != nil {
 		return err
 	}
+	var sessionMeta *provider.Session
 	if hasProviderSession {
-		if sess != nil {
-			merged := mergeProviderSessionMetadata(providerSession, *sess)
-			sess = &merged
-		} else {
-			providerSession.ProjectID = ""
-			sess = &providerSession
+		if providerSession.ProviderID == "" {
+			providerSession.ProviderID = providerName
 		}
-		if sess.ProviderID == "" {
-			sess.ProviderID = providerName
+		if providerSession.ThreadID != "" {
+			threadID = providerSession.ThreadID
 		}
-		if sess.ThreadID == "" {
-			sess.ThreadID = threadID
-		}
+		sessionMeta = &providerSession
 	}
 
 	if err := p.ResumeSession(ctx, sessionID, threadID); err != nil {
 		if providerSessionMissing(err) {
-			if deleteErr := m.store.Delete(sessionID); deleteErr != nil {
-				log.Warn("session", "delete stale session failed id=%s: %v", sessionID, deleteErr)
-			}
 			return fmt.Errorf("session %s not found in provider: %w", sessionID, err)
 		}
 		return fmt.Errorf("resume failed: %w", err)
 	}
-	if updater, ok := p.(provider.SessionMetadataUpdater); ok && sess != nil {
-		updater.UpdateSessionMetadata(*sess)
-	}
-
-	// Save to DB if not already there
-	if sess == nil {
-		sess = &provider.Session{
+	if sessionMeta == nil {
+		sessionMeta = &provider.Session{
 			ID:         sessionID,
 			ProviderID: providerName,
 			ThreadID:   threadID,
-			ProjectID:  "",
 		}
 	}
-	if err := m.store.Save(sess); err != nil {
-		log.Warn("session", "ResumeSession: store.Save(%s) error: %v", sessionID, err)
+	if updater, ok := p.(provider.SessionMetadataUpdater); ok {
+		updater.UpdateSessionMetadata(*sessionMeta)
 	}
 
-	// Start forwarding live events
 	go m.forwardEvents(sessionID, p)
 
 	log.Info("session", "ResumeSession: id=%s provider=%s", sessionID, providerName)
@@ -984,22 +879,16 @@ func providerSessionMissing(err error) bool {
 
 // SendInput sends input to a session. Auto-resumes if needed.
 func (m *Manager) SendInput(ctx context.Context, sessionID string, input provider.SendInputRequest) error {
-	// Try active provider first
 	for _, p := range m.registry.ListProviders() {
 		if p.HasSession(sessionID) {
-			if err := m.updateProviderSessionMetadata(ctx, p, sessionID); err != nil {
-				return err
-			}
 			return p.SendInput(ctx, sessionID, input)
 		}
 	}
 
-	// Not active — try to resume
 	if err := m.ResumeSession(ctx, sessionID); err != nil {
 		return fmt.Errorf("session %s is not active and could not be resumed: %w", sessionID, err)
 	}
 
-	// Retry after resume
 	for _, p := range m.registry.ListProviders() {
 		if p.HasSession(sessionID) {
 			return p.SendInput(ctx, sessionID, input)
@@ -1007,30 +896,6 @@ func (m *Manager) SendInput(ctx context.Context, sessionID string, input provide
 	}
 
 	return fmt.Errorf("session %s not found after resume", sessionID)
-}
-
-func (m *Manager) updateProviderSessionMetadata(ctx context.Context, p provider.Provider, sessionID string) error {
-	updater, ok := p.(provider.SessionMetadataUpdater)
-	if !ok {
-		return nil
-	}
-	sess, _ := m.store.Get(sessionID)
-	if sess == nil {
-		return nil
-	}
-	providerSession, ok, err := m.providerListedSession(ctx, sessionID, sess.ProviderID, "")
-	if err != nil {
-		return err
-	}
-	if ok {
-		merged := mergeProviderSessionMetadata(providerSession, *sess)
-		sess = &merged
-		if saveErr := m.store.Save(sess); saveErr != nil {
-			log.Warn("session", "update provider metadata: store.Save(%s) error: %v", sessionID, saveErr)
-		}
-	}
-	updater.UpdateSessionMetadata(*sess)
-	return nil
 }
 
 // InterruptSession interrupts a running session.
@@ -1060,13 +925,6 @@ func (m *Manager) StopSession(ctx context.Context, sessionID string) error {
 }
 
 func (m *Manager) markSessionStopped(sessionID string) {
-	sess, err := m.store.Get(sessionID)
-	if err == nil && sess != nil {
-		sess.Status = string(provider.SessionStatusStopped)
-		if updateErr := m.store.Update(sess); updateErr != nil {
-			log.Warn("session", "mark stopped failed id=%s: %v", sessionID, updateErr)
-		}
-	}
 	m.wsHub.Broadcast(map[string]any{
 		"type":       "session.status_changed",
 		"session_id": sessionID,
@@ -1079,47 +937,25 @@ func (m *Manager) markSessionStopped(sessionID string) {
 
 // ForkSession forks a session.
 func (m *Manager) ForkSession(ctx context.Context, sessionID string) (*provider.Session, error) {
-	sess, err := m.store.Get(sessionID)
-	if err != nil {
-		return nil, err
-	}
-	if sess == nil {
-		return nil, fmt.Errorf("session %s not found", sessionID)
-	}
-
-	p, err := m.registry.Get(sess.ProviderID)
+	p, threadID, err := m.getProviderAndThreadForSession(sessionID)
 	if err != nil {
 		return nil, err
 	}
 
-	newThreadID, err := p.ForkSession(ctx, sessionID, sess.ThreadID)
+	newThreadID, err := p.ForkSession(ctx, sessionID, threadID)
 	if err != nil {
 		return nil, err
 	}
 
 	newSession := &provider.Session{
-		ID:             newThreadID,
-		ProviderID:     sess.ProviderID,
-		ThreadID:       newThreadID,
-		ProjectID:      sess.ProjectID,
-		Purpose:        sess.Purpose,
-		Workdir:        sess.Workdir,
-		Status:         string(provider.SessionStatusRunning),
-		RunnerType:     sess.RunnerType,
-		Model:          sess.Model,
-		ApprovalPolicy: sess.ApprovalPolicy,
-		SandboxMode:    sess.SandboxMode,
-		Config:         sess.Config,
-	}
-	if newSession.RunnerType == "" {
-		newSession.RunnerType = "app-server"
+		ID:         newThreadID,
+		ProviderID: p.Name(),
+		ThreadID:   newThreadID,
+		Status:     string(provider.SessionStatusRunning),
+		RunnerType: "app-server",
 	}
 	if updater, ok := p.(provider.SessionMetadataUpdater); ok {
 		updater.UpdateSessionMetadata(*newSession)
-	}
-
-	if err := m.store.Save(newSession); err != nil {
-		return nil, err
 	}
 
 	go m.forwardEvents(newSession.ID, p)
@@ -1162,34 +998,19 @@ func (m *Manager) ResolveApproval(ctx context.Context, sessionID, approvalID str
 func (m *Manager) getProviderAndThreadForSession(sessionID string) (provider.Provider, string, error) {
 	for _, p := range m.registry.ListProviders() {
 		if p.HasSession(sessionID) {
-			threadID := sessionID
-			if sess, _ := m.store.Get(sessionID); sess != nil && sess.ThreadID != "" {
-				threadID = sess.ThreadID
-			}
-			return p, threadID, nil
+			return p, sessionID, nil
 		}
 	}
 
-	sess, _ := m.store.Get(sessionID)
-	if sess == nil {
-		p, err := m.registry.Get("codex")
-		if err != nil {
-			return nil, "", fmt.Errorf("session %s not found", sessionID)
-		}
-		return p, sessionID, nil
-	}
-	p, err := m.registry.Get(sess.ProviderID)
+	p, err := m.registry.Get("codex")
 	if err != nil {
-		return nil, "", err
+		return nil, "", fmt.Errorf("session %s not found", sessionID)
 	}
-	threadID := sess.ThreadID
-	if threadID == "" {
-		threadID = sessionID
-	}
-	return p, threadID, nil
+	return p, sessionID, nil
 }
 
-// getProviderForSession finds the provider for a session by checking active sessions and DB.
+// getProviderForSession finds the provider for a session by checking active
+// sessions first, then falling back to the provider-backed thread id.
 func (m *Manager) getProviderForSession(sessionID string) (provider.Provider, error) {
 	for _, p := range m.registry.ListProviders() {
 		if p.HasSession(sessionID) {
@@ -1197,14 +1018,9 @@ func (m *Manager) getProviderForSession(sessionID string) (provider.Provider, er
 		}
 	}
 
-	sess, _ := m.store.Get(sessionID)
-	if sess == nil {
-		return nil, fmt.Errorf("session %s not found", sessionID)
-	}
-
-	p, err := m.registry.Get(sess.ProviderID)
+	p, err := m.registry.Get("codex")
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("session %s not found", sessionID)
 	}
 	return p, nil
 }

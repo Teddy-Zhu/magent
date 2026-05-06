@@ -12,23 +12,20 @@ import (
 	"github.com/Teddy-Zhu/magent/agent/internal/log"
 	"github.com/Teddy-Zhu/magent/agent/internal/project"
 	"github.com/Teddy-Zhu/magent/agent/internal/provider"
-	"github.com/Teddy-Zhu/magent/agent/internal/session"
 	"github.com/gin-gonic/gin"
 )
 
 type GitHandler struct {
-	gitService   *gitservice.Service
-	projectMgr   *project.Manager
-	registry     *provider.Registry
-	sessionStore *session.SessionStore
+	gitService *gitservice.Service
+	projectMgr *project.Manager
+	registry   *provider.Registry
 }
 
-func NewGitHandler(gitService *gitservice.Service, projectMgr *project.Manager, registry *provider.Registry, sessionStore *session.SessionStore) *GitHandler {
+func NewGitHandler(gitService *gitservice.Service, projectMgr *project.Manager, registry *provider.Registry) *GitHandler {
 	return &GitHandler{
-		gitService:   gitService,
-		projectMgr:   projectMgr,
-		registry:     registry,
-		sessionStore: sessionStore,
+		gitService: gitService,
+		projectMgr: projectMgr,
+		registry:   registry,
 	}
 }
 
@@ -548,25 +545,11 @@ Requirements:
 		Fail(c, 500, "AI_FAILED", err.Error())
 		return
 	}
-	if h.sessionStore != nil {
-		sess.Purpose = string(provider.SessionPurposeAICommit)
-		sess.ProjectID = project.ID
-		sess.Workdir = project.Path
-		if err := h.sessionStore.Save(sess); err != nil {
-			log.Warn("git", "suggest: save ai commit session metadata failed: %v", err)
-		}
-	}
 
 	defer func() {
 		log.Info("git", "suggest: stopping session %s", sess.ID)
 		if err := p.StopSession(context.Background(), sess.ID); err != nil {
 			log.Warn("git", "suggest: stop session error: %v", err)
-		}
-		if h.sessionStore != nil {
-			sess.Status = string(provider.SessionStatusStopped)
-			if err := h.sessionStore.Update(sess); err != nil {
-				log.Warn("git", "suggest: mark ai commit session stopped failed: %v", err)
-			}
 		}
 	}()
 

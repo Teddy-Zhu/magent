@@ -60,34 +60,27 @@ func TestListSessionsUsesProviderAsSourceOfTruth(t *testing.T) {
 	defer db.Close()
 
 	store := NewSessionStore(db)
-	for _, sess := range []*provider.Session{
-		{
-			ID:         "active-empty-session",
-			ProviderID: "codex",
-			ThreadID:   "active-empty-session",
-			ProjectID:  "p1",
-			Workdir:    "/tmp/project",
-			Status:     string(provider.SessionStatusRunning),
-		},
-		{
-			ID:         "inactive-session",
-			ProviderID: "codex",
-			ThreadID:   "inactive-session",
-			ProjectID:  "p1",
-			Workdir:    "/tmp/project",
-			Status:     string(provider.SessionStatusRunning),
-		},
-	} {
-		if err := store.Save(sess); err != nil {
-			t.Fatalf("save %s: %v", sess.ID, err)
-		}
-	}
-
 	registry := provider.NewRegistry()
 	registry.Register("codex", &managerTestProvider{
 		name: "codex",
 		active: map[string]bool{
-			"active-empty-session": true,
+			"listed-active-session": true,
+		},
+		threads: []provider.Session{
+			{
+				ID:         "listed-active-session",
+				ProviderID: "codex",
+				ThreadID:   "listed-active-session",
+				Workdir:    "/tmp/project",
+				Status:     string(provider.SessionStatusStopped),
+			},
+			{
+				ID:         "listed-stopped-session",
+				ProviderID: "codex",
+				ThreadID:   "listed-stopped-session",
+				Workdir:    "/tmp/project",
+				Status:     string(provider.SessionStatusStopped),
+			},
 		},
 	})
 	manager := NewManager(store, registry, ws.NewHub())
@@ -102,11 +95,11 @@ func TestListSessionsUsesProviderAsSourceOfTruth(t *testing.T) {
 		statuses[sess.ID] = sess.Status
 	}
 
-	if statuses["active-empty-session"] != string(provider.SessionStatusRunning) {
-		t.Fatalf("active omitted session status = %q, want running; sessions=%#v", statuses["active-empty-session"], got)
+	if statuses["listed-active-session"] != string(provider.SessionStatusRunning) {
+		t.Fatalf("active listed session status = %q, want running; sessions=%#v", statuses["listed-active-session"], got)
 	}
-	if _, ok := statuses["inactive-session"]; ok {
-		t.Fatalf("inactive DB-only session should not be listed; sessions=%#v", got)
+	if statuses["listed-stopped-session"] != string(provider.SessionStatusStopped) {
+		t.Fatalf("stopped listed session status = %q, want stopped; sessions=%#v", statuses["listed-stopped-session"], got)
 	}
 }
 
@@ -118,37 +111,6 @@ func TestGetSessionUsesProviderAsSourceOfTruth(t *testing.T) {
 	defer db.Close()
 
 	store := NewSessionStore(db)
-	for _, sess := range []*provider.Session{
-		{
-			ID:         "active-empty-session",
-			ProviderID: "codex",
-			ThreadID:   "active-empty-session",
-			ProjectID:  "p1",
-			Workdir:    "/tmp/project",
-			Status:     string(provider.SessionStatusStopped),
-		},
-		{
-			ID:         "listed-session",
-			ProviderID: "codex",
-			ThreadID:   "listed-session",
-			ProjectID:  "p1",
-			Workdir:    "/tmp/project",
-			Status:     string(provider.SessionStatusRunning),
-		},
-		{
-			ID:         "stale-session",
-			ProviderID: "codex",
-			ThreadID:   "stale-session",
-			ProjectID:  "p1",
-			Workdir:    "/tmp/project",
-			Status:     string(provider.SessionStatusRunning),
-		},
-	} {
-		if err := store.Save(sess); err != nil {
-			t.Fatalf("save %s: %v", sess.ID, err)
-		}
-	}
-
 	registry := provider.NewRegistry()
 	registry.Register("codex", &managerTestProvider{
 		name: "codex",
@@ -195,16 +157,9 @@ func TestGetSessionUsesProviderAsSourceOfTruth(t *testing.T) {
 	if stale != nil {
 		t.Fatalf("stale session = %#v, want nil", stale)
 	}
-	deleted, err := store.Get("stale-session")
-	if err != nil {
-		t.Fatalf("get stale after delete: %v", err)
-	}
-	if deleted != nil {
-		t.Fatalf("stale DB row should be deleted: %#v", deleted)
-	}
 }
 
-func TestGetSessionFindsProviderSessionWhenDBWorkdirIsStale(t *testing.T) {
+func TestGetSessionUsesProviderWorkdir(t *testing.T) {
 	db, err := storage.Open(":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -212,17 +167,6 @@ func TestGetSessionFindsProviderSessionWhenDBWorkdirIsStale(t *testing.T) {
 	defer db.Close()
 
 	store := NewSessionStore(db)
-	if err := store.Save(&provider.Session{
-		ID:         "listed-session",
-		ProviderID: "codex",
-		ThreadID:   "listed-session",
-		ProjectID:  "p1",
-		Workdir:    "/stale/workdir",
-		Status:     string(provider.SessionStatusRunning),
-	}); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-
 	registry := provider.NewRegistry()
 	registry.Register("codex", &managerTestProvider{
 		name: "codex",
@@ -243,7 +187,7 @@ func TestGetSessionFindsProviderSessionWhenDBWorkdirIsStale(t *testing.T) {
 		t.Fatalf("GetSession: %v", err)
 	}
 	if got == nil {
-		t.Fatal("provider-listed session should not be treated as stale")
+		t.Fatal("expected provider-listed session")
 	}
 	if got.Workdir != "/home/teddyhp/code/python_web_template" {
 		t.Fatalf("workdir = %q", got.Workdir)
@@ -258,15 +202,6 @@ func TestForwardEventsUpsertsCompletedItemWithoutProviderRead(t *testing.T) {
 	defer db.Close()
 
 	store := NewSessionStore(db)
-	if err := store.Save(&provider.Session{
-		ID:         "s1",
-		ProviderID: "codex",
-		ThreadID:   "s1",
-		ProjectID:  "p1",
-		Status:     string(provider.SessionStatusRunning),
-	}); err != nil {
-		t.Fatalf("save session: %v", err)
-	}
 	events := make(chan provider.ProviderEvent)
 	providerImpl := &managerTestProvider{name: "codex", events: events}
 	registry := provider.NewRegistry()
@@ -352,7 +287,7 @@ func TestForwardEventsIgnoresDeltaProjectionSync(t *testing.T) {
 	}
 }
 
-func TestResumeSessionDeletesProviderMissingDBMetadata(t *testing.T) {
+func TestResumeSessionReturnsNotFoundForProviderMissingThread(t *testing.T) {
 	db, err := storage.Open(":memory:")
 	if err != nil {
 		t.Fatalf("open db: %v", err)
@@ -360,17 +295,6 @@ func TestResumeSessionDeletesProviderMissingDBMetadata(t *testing.T) {
 	defer db.Close()
 
 	store := NewSessionStore(db)
-	if err := store.Save(&provider.Session{
-		ID:         "empty-stale-session",
-		ProviderID: "codex",
-		ThreadID:   "empty-stale-session",
-		ProjectID:  "p1",
-		Workdir:    "/tmp/project",
-		Status:     string(provider.SessionStatusStopped),
-	}); err != nil {
-		t.Fatalf("save: %v", err)
-	}
-
 	registry := provider.NewRegistry()
 	registry.Register("codex", &managerTestProvider{
 		name:      "codex",
@@ -384,13 +308,6 @@ func TestResumeSessionDeletesProviderMissingDBMetadata(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("ResumeSession error = %v, want not found", err)
-	}
-	got, getErr := store.Get("empty-stale-session")
-	if getErr != nil {
-		t.Fatalf("get after resume: %v", getErr)
-	}
-	if got != nil {
-		t.Fatalf("stale DB row should be deleted: %#v", got)
 	}
 }
 
@@ -430,15 +347,26 @@ func TestResumeSessionUsesProviderWorkdirForMetadata(t *testing.T) {
 	if providerImpl.lastMetadata.Workdir != "/home/teddyhp/code/python_web_template" {
 		t.Fatalf("metadata workdir = %q", providerImpl.lastMetadata.Workdir)
 	}
-	sess, err := store.Get("provider-only-session")
+}
+
+func TestArchiveSessionFallsBackToProviderForProviderOnlySession(t *testing.T) {
+	db, err := storage.Open(":memory:")
 	if err != nil {
-		t.Fatalf("store.Get: %v", err)
+		t.Fatalf("open db: %v", err)
 	}
-	if sess == nil {
-		t.Fatal("resumed provider session should be saved")
+	defer db.Close()
+
+	store := NewSessionStore(db)
+	providerImpl := &managerTestProvider{name: "codex"}
+	registry := provider.NewRegistry()
+	registry.Register("codex", providerImpl)
+	manager := NewManager(store, registry, ws.NewHub())
+
+	if err := manager.ArchiveSession(context.Background(), "provider-only-session"); err != nil {
+		t.Fatalf("ArchiveSession: %v", err)
 	}
-	if sess.Workdir != "/home/teddyhp/code/python_web_template" {
-		t.Fatalf("stored workdir = %q", sess.Workdir)
+	if len(providerImpl.archivedIDs) != 1 || providerImpl.archivedIDs[0] != "provider-only-session" {
+		t.Fatalf("archivedIDs = %#v", providerImpl.archivedIDs)
 	}
 }
 
@@ -450,40 +378,30 @@ func TestForkSessionUpdatesProviderMetadataForNewThread(t *testing.T) {
 	defer db.Close()
 
 	store := NewSessionStore(db)
-	if err := store.Save(&provider.Session{
-		ID:             "source-session",
-		ProviderID:     "codex",
-		ThreadID:       "source-session",
-		ProjectID:      "p1",
-		Workdir:        "/home/teddyhp/code/python_web_template",
-		Model:          "gpt-5.5",
-		ApprovalPolicy: string(provider.ApprovalPolicyOnRequest),
-		SandboxMode:    string(provider.SandboxModeWorkspaceWrite),
-		Status:         string(provider.SessionStatusStopped),
-	}); err != nil {
-		t.Fatalf("save: %v", err)
+	providerImpl := &managerTestProvider{
+		name:   "codex",
+		forkID: "forked-session",
+		threads: []provider.Session{
+			{
+				ID:         "source-session",
+				ProviderID: "codex",
+				ThreadID:   "source-session",
+				Status:     string(provider.SessionStatusStopped),
+			},
+		},
 	}
-
-	providerImpl := &managerTestProvider{name: "codex", forkID: "forked-session"}
 	registry := provider.NewRegistry()
 	registry.Register("codex", providerImpl)
 	manager := NewManager(store, registry, ws.NewHub())
 
-	forked, err := manager.ForkSession(context.Background(), "source-session")
-	if err != nil {
+	if _, err := manager.ForkSession(context.Background(), "source-session"); err != nil {
 		t.Fatalf("ForkSession: %v", err)
-	}
-	if forked.Workdir != "/home/teddyhp/code/python_web_template" {
-		t.Fatalf("forked workdir = %q", forked.Workdir)
 	}
 	if providerImpl.lastMetadata == nil {
 		t.Fatal("provider metadata was not updated")
 	}
 	if providerImpl.lastMetadata.ID != "forked-session" {
 		t.Fatalf("metadata id = %q", providerImpl.lastMetadata.ID)
-	}
-	if providerImpl.lastMetadata.Workdir != "/home/teddyhp/code/python_web_template" {
-		t.Fatalf("metadata workdir = %q", providerImpl.lastMetadata.Workdir)
 	}
 }
 

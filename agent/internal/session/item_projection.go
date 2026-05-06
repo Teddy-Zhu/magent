@@ -43,6 +43,13 @@ type itemProjectionStore struct {
 	mu sync.Mutex
 }
 
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
 func newItemProjectionStore(store *SessionStore) *itemProjectionStore {
 	return &itemProjectionStore{db: store.db.DB()}
 }

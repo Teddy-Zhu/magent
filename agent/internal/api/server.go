@@ -105,7 +105,7 @@ func NewServer(cfg *config.Config, store *storage.SQLite) *Server {
 		registry:        registry,
 		gitService:      gitService,
 		sessionHandler:  NewSessionHandler(sessionMgr, projectMgr),
-		gitHandler:      NewGitHandler(gitService, projectMgr, registry, sessionStore),
+		gitHandler:      NewGitHandler(gitService, projectMgr, registry),
 		fileHandler:     NewFileHandler(fileService, projectMgr),
 		syncHandler:     NewSyncHandler(configService),
 		providerHandler: NewProviderHandler(registry, projectMgr),
