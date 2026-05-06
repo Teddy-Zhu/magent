@@ -489,10 +489,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       : _sessionField('effort');
   String get _activeApproval => (_pendingApproval?.isNotEmpty ?? false)
       ? _pendingApproval!
-      : _sessionField('approval_policy');
+      : SessionApprovalPolicies.normalize(_session?['approval_policy']) ?? '';
   String get _activeSandbox => (_pendingSandbox?.isNotEmpty ?? false)
       ? _pendingSandbox!
-      : _sessionField('sandbox_mode');
+      : SessionSandboxModes.normalize(_session?['sandbox_mode']) ?? '';
 
   /// 当 sheet 返回新值时调用：只把"和当前基线不同"的字段记为 pending，
   /// 相同的清空（不发送）。
@@ -509,9 +509,12 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _pendingEffort = diff(r.effort, _sessionField('effort'));
       _pendingApproval = diff(
         r.approvalPolicy,
-        _sessionField('approval_policy'),
+        SessionApprovalPolicies.normalize(_session?['approval_policy']) ?? '',
       );
-      _pendingSandbox = diff(r.sandboxMode, _sessionField('sandbox_mode'));
+      _pendingSandbox = diff(
+        r.sandboxMode,
+        SessionSandboxModes.normalize(_session?['sandbox_mode']) ?? '',
+      );
     });
   }
 
@@ -4792,6 +4795,9 @@ class _SessionStrategyBar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final l10n = AppLocalizations.of(context)!;
     final displayModel = _readableOneLine(model);
+    final displayEffort = _readableOneLine(effort);
+    final displayApproval = _approvalLabel(l10n, approvalPolicy);
+    final displaySandbox = _sandboxLabel(l10n, sandboxMode);
 
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
@@ -4806,34 +4812,45 @@ class _SessionStrategyBar extends StatelessWidget {
               Expanded(
                 child: Row(
                   children: [
-                    Expanded(
+                    Flexible(
+                      fit: FlexFit.loose,
                       child: _StrategyChip(
                         label: displayModel.isEmpty ? '—' : displayModel,
                         tone: scheme.primary,
+                        maxWidth: 128,
                       ),
                     ),
-                    if (effort.isNotEmpty) ...[
+                    if (displayEffort.isNotEmpty) ...[
                       const SizedBox(width: 6),
-                      _StrategyChip(
-                        label: _readableOneLine(effort),
-                        tone: scheme.secondary,
-                        maxWidth: 70,
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: _StrategyChip(
+                          label: displayEffort,
+                          tone: scheme.secondary,
+                          maxWidth: 58,
+                        ),
                       ),
                     ],
-                    if (approvalPolicy.isNotEmpty) ...[
+                    if (displayApproval.isNotEmpty) ...[
                       const SizedBox(width: 6),
-                      _StrategyChip(
-                        label: _approvalLabel(l10n, approvalPolicy),
-                        tone: scheme.tertiary,
-                        maxWidth: 82,
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: _StrategyChip(
+                          label: displayApproval,
+                          tone: scheme.tertiary,
+                          maxWidth: 76,
+                        ),
                       ),
                     ],
-                    if (sandboxMode.isNotEmpty) ...[
+                    if (displaySandbox.isNotEmpty) ...[
                       const SizedBox(width: 6),
-                      _StrategyChip(
-                        label: _sandboxLabel(l10n, sandboxMode),
-                        tone: scheme.tertiary,
-                        maxWidth: 82,
+                      Flexible(
+                        fit: FlexFit.loose,
+                        child: _StrategyChip(
+                          label: displaySandbox,
+                          tone: scheme.tertiary,
+                          maxWidth: 76,
+                        ),
                       ),
                     ],
                   ],
@@ -5032,8 +5049,10 @@ class _SessionSettingsSheet extends StatefulWidget {
 class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
   late String _model = widget.currentModel;
   late String _effort = widget.currentEffort;
-  late String _approval = widget.currentApproval;
-  late String _sandbox = widget.currentSandbox;
+  late String _approval =
+      SessionApprovalPolicies.normalize(widget.currentApproval) ?? '';
+  late String _sandbox =
+      SessionSandboxModes.normalize(widget.currentSandbox) ?? '';
 
   List<Map<String, dynamic>> get _models {
     final raw = widget.config?['models'];
@@ -5061,13 +5080,13 @@ class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
   List<String> get _approvalPolicies {
     final raw = widget.config?['approval_policies'];
     if (raw is! List) return const [];
-    return _stringOptions(raw);
+    return _normalizedOptions(raw, SessionApprovalPolicies.normalize);
   }
 
   List<String> get _sandboxModes {
     final raw = widget.config?['sandbox_modes'];
     if (raw is! List) return const [];
-    return _stringOptions(raw);
+    return _normalizedOptions(raw, SessionSandboxModes.normalize);
   }
 
   List<String> _stringOptions(List<dynamic> raw) {
@@ -5082,6 +5101,22 @@ class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
       };
       final normalized = _readableOneLine(value);
       if (normalized.isNotEmpty && !values.contains(normalized)) {
+        values.add(normalized);
+      }
+    }
+    return values;
+  }
+
+  List<String> _normalizedOptions(
+    List<dynamic> raw,
+    String? Function(dynamic value) normalize,
+  ) {
+    final values = <String>[];
+    for (final item in raw) {
+      final normalized = normalize(item);
+      if (normalized != null &&
+          normalized.isNotEmpty &&
+          !values.contains(normalized)) {
         values.add(normalized);
       }
     }
@@ -5105,11 +5140,13 @@ class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
     }.toList();
     final approvalOptions = <String>{
       ..._approvalPolicies,
-      if (_approval.isNotEmpty) _approval,
+      if (_approval.isNotEmpty)
+        SessionApprovalPolicies.normalize(_approval) ?? _approval,
     }.toList();
     final sandboxOptions = <String>{
       ..._sandboxModes,
-      if (_sandbox.isNotEmpty) _sandbox,
+      if (_sandbox.isNotEmpty)
+        SessionSandboxModes.normalize(_sandbox) ?? _sandbox,
     }.toList();
 
     String? safeValue(String value, List<String> options) {

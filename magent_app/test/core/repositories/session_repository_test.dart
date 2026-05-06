@@ -741,6 +741,54 @@ void main() {
     expect(events, isEmpty);
   });
 
+  test('refresh sessions preserves source metadata for session list', () async {
+    fakeApi.sessions = [
+      {
+        'id': 's1',
+        'provider_id': 'codex',
+        'project_id': 'p1',
+        'source': 'cli',
+        'runner_type': 'app-server',
+        'model': 'gpt-5.5',
+        'effort': 'xhigh',
+        'status': {'type': 'notLoaded'},
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+      },
+    ];
+
+    await repo.refreshSessions('p1');
+
+    final session = await repo.getCachedSession('s1');
+    expect(session?['source'], 'cli');
+    expect(session?['runner_type'], 'app-server');
+    expect(session?['provider_id'], 'codex');
+    expect(session?['model'], 'gpt-5.5');
+    expect(session?['effort'], 'xhigh');
+  });
+
+  test('refresh sessions normalizes object sandbox metadata', () async {
+    fakeApi.sessions = [
+      {
+        'id': 's1',
+        'provider_id': 'codex',
+        'project_id': 'p1',
+        'sandbox_mode': {
+          'type': 'workspace-write',
+          'writableRoots': ['/repo'],
+        },
+        'status': {'type': 'notLoaded'},
+        'created_at': DateTime(2026, 5, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+      },
+    ];
+
+    await repo.refreshSessions('p1');
+
+    final session = await repo.getCachedSession('s1');
+    expect(session?['sandbox_mode'], 'workspace-write');
+  });
+
   test('active and archived session refreshes reconcile separately', () async {
     fakeApi.sessions = [
       {

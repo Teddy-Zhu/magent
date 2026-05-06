@@ -92,7 +92,15 @@ class SessionApprovalPolicies {
   const SessionApprovalPolicies._();
 
   static String? normalize(dynamic policy) {
-    switch (policy?.toString()) {
+    final raw = _sessionSettingValue(policy, const [
+      'type',
+      'policy',
+      'mode',
+      'approval_policy',
+      'approvalPolicy',
+      'value',
+    ]);
+    switch (raw) {
       case 'on-request':
       case 'onRequest':
         return onRequest;
@@ -111,7 +119,21 @@ class SessionApprovalPolicies {
       case '':
         return null;
       default:
-        return policy.toString();
+        final lower = raw.toLowerCase();
+        if (lower.contains('on-request') || lower.contains('onrequest')) {
+          return onRequest;
+        }
+        if (lower.contains('on-failure') || lower.contains('onfailure')) {
+          return onFailure;
+        }
+        if (lower.contains('unless-trusted') ||
+            lower.contains('unlesstrusted') ||
+            lower.contains('untrusted')) {
+          return untrusted;
+        }
+        if (lower.contains('never')) return never;
+        if (lower.contains('granular')) return granular;
+        return raw;
     }
   }
 }
@@ -124,7 +146,16 @@ class SessionSandboxModes {
   const SessionSandboxModes._();
 
   static String? normalize(dynamic mode) {
-    switch (mode?.toString()) {
+    final raw = _sessionSettingValue(mode, const [
+      'type',
+      'mode',
+      'sandbox_mode',
+      'sandboxMode',
+      'sandbox_policy',
+      'sandboxPolicy',
+      'value',
+    ]);
+    switch (raw) {
       case 'workspace-write':
       case 'workspaceWrite':
         return workspaceWrite;
@@ -138,9 +169,35 @@ class SessionSandboxModes {
       case '':
         return null;
       default:
-        return mode.toString();
+        final lower = raw.toLowerCase();
+        if (lower.contains('workspace-write') ||
+            lower.contains('workspacewrite')) {
+          return workspaceWrite;
+        }
+        if (lower.contains('read-only') || lower.contains('readonly')) {
+          return readOnly;
+        }
+        if (lower.contains('danger-full-access') ||
+            lower.contains('dangerfullaccess')) {
+          return dangerFullAccess;
+        }
+        return raw;
     }
   }
+}
+
+String? _sessionSettingValue(dynamic value, List<String> keys) {
+  if (value == null) return null;
+  if (value is Map) {
+    for (final key in keys) {
+      if (!value.containsKey(key)) continue;
+      final text = _sessionSettingValue(value[key], keys);
+      if (text != null && text.isNotEmpty) return text;
+    }
+    return null;
+  }
+  final text = value.toString().trim();
+  return text.isEmpty ? null : text;
 }
 
 class SessionEventTypes {

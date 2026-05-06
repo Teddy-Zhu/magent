@@ -57,6 +57,8 @@ class SessionEntries extends Table {
   TextColumn get workdir => text().nullable()();
   TextColumn get title => text().nullable()();
   TextColumn get status => text().withDefault(const Constant('stopped'))();
+  TextColumn get source => text().nullable()();
+  TextColumn get runnerType => text().named('runner_type').nullable()();
   TextColumn get model => text().nullable()();
   TextColumn get effort => text().nullable()();
   TextColumn get approvalPolicy => text().named('approval_policy').nullable()();
@@ -213,7 +215,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase.forTesting(super.executor);
 
   @override
-  int get schemaVersion => 8;
+  int get schemaVersion => 9;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(

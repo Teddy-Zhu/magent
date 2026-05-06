@@ -180,7 +180,15 @@ class SessionRepository implements SessionSyncStore {
     Map<String, dynamic> session, {
     String? projectId,
   }) async {
-    final companion = _sessionCompanion(session, fallbackProjectId: projectId);
+    final existing = await _db.getSession(
+      agentId,
+      session['id']?.toString() ?? '',
+    );
+    final companion = _sessionCompanion(
+      session,
+      fallbackProjectId: projectId,
+      existing: existing,
+    );
     if (companion == null) return;
     await _db.insertOrUpdateSession(companion);
   }
@@ -549,6 +557,12 @@ class SessionRepository implements SessionSyncStore {
               existing?.status ??
               SessionStatuses.stopped,
         ),
+        source: Value(data['source']?.toString() ?? existing?.source),
+        runnerType: Value(
+          data['runner_type']?.toString() ??
+              data['runnerType']?.toString() ??
+              existing?.runnerType,
+        ),
         model: Value(data['model']?.toString() ?? existing?.model),
         effort: Value(data['effort']?.toString() ?? existing?.effort),
         approvalPolicy: Value(
@@ -556,7 +570,12 @@ class SessionRepository implements SessionSyncStore {
               existing?.approvalPolicy,
         ),
         sandboxMode: Value(
-          SessionSandboxModes.normalize(data['sandbox_mode']) ??
+          SessionSandboxModes.normalize(
+                data['sandbox_mode'] ??
+                    data['sandboxMode'] ??
+                    data['sandbox_policy'] ??
+                    data['sandboxPolicy'],
+              ) ??
               existing?.sandboxMode,
         ),
         providerCursor: Value(
@@ -609,6 +628,8 @@ class SessionRepository implements SessionSyncStore {
         workdir: Value(existing.workdir),
         title: Value(existing.title),
         status: Value(nextStatus),
+        source: Value(existing.source),
+        runnerType: Value(existing.runnerType),
         model: Value(existing.model),
         effort: Value(existing.effort),
         approvalPolicy: Value(existing.approvalPolicy),
@@ -991,6 +1012,8 @@ class SessionRepository implements SessionSyncStore {
       'workdir': s.workdir,
       'title': s.title,
       'status': s.status,
+      'source': s.source,
+      'runner_type': s.runnerType,
       'model': s.model,
       'effort': s.effort,
       'approval_policy': s.approvalPolicy,
@@ -1023,6 +1046,7 @@ class SessionRepository implements SessionSyncStore {
   SessionEntriesCompanion? _sessionCompanion(
     Map<String, dynamic> input, {
     String? fallbackProjectId,
+    SessionEntry? existing,
   }) {
     final map = _canonicalSessionMap(input);
     final id = map['id']?.toString() ?? '';
@@ -1042,12 +1066,27 @@ class SessionRepository implements SessionSyncStore {
       workdir: Value(map['workdir']?.toString()),
       title: Value(map['title']?.toString() ?? map['preview']?.toString()),
       status: Value(_extractStatus(map)),
+      source: Value(map['source']?.toString() ?? existing?.source),
+      runnerType: Value(
+        map['runner_type']?.toString() ??
+            map['runnerType']?.toString() ??
+            existing?.runnerType,
+      ),
       model: Value(map['model']?.toString()),
       effort: Value(map['effort']?.toString()),
       approvalPolicy: Value(
-        SessionApprovalPolicies.normalize(map['approval_policy']),
+        SessionApprovalPolicies.normalize(
+          map['approval_policy'] ?? map['approvalPolicy'],
+        ),
       ),
-      sandboxMode: Value(SessionSandboxModes.normalize(map['sandbox_mode'])),
+      sandboxMode: Value(
+        SessionSandboxModes.normalize(
+          map['sandbox_mode'] ??
+              map['sandboxMode'] ??
+              map['sandbox_policy'] ??
+              map['sandboxPolicy'],
+        ),
+      ),
       providerCursor: Value(map['provider_cursor']?.toString()),
       listRevision: Value(_parseInt(map['list_revision'])),
       createdAt: Value(_parseDateTime(map['created_at'])),

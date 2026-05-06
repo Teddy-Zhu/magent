@@ -1387,6 +1387,26 @@ class $SessionEntriesTable extends SessionEntries
     requiredDuringInsert: false,
     defaultValue: const Constant('stopped'),
   );
+  static const VerificationMeta _sourceMeta = const VerificationMeta('source');
+  @override
+  late final GeneratedColumn<String> source = GeneratedColumn<String>(
+    'source',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _runnerTypeMeta = const VerificationMeta(
+    'runnerType',
+  );
+  @override
+  late final GeneratedColumn<String> runnerType = GeneratedColumn<String>(
+    'runner_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _modelMeta = const VerificationMeta('model');
   @override
   late final GeneratedColumn<String> model = GeneratedColumn<String>(
@@ -1504,6 +1524,8 @@ class $SessionEntriesTable extends SessionEntries
     workdir,
     title,
     status,
+    source,
+    runnerType,
     model,
     effort,
     approvalPolicy,
@@ -1584,6 +1606,18 @@ class $SessionEntriesTable extends SessionEntries
       context.handle(
         _statusMeta,
         status.isAcceptableOrUnknown(data['status']!, _statusMeta),
+      );
+    }
+    if (data.containsKey('source')) {
+      context.handle(
+        _sourceMeta,
+        source.isAcceptableOrUnknown(data['source']!, _sourceMeta),
+      );
+    }
+    if (data.containsKey('runner_type')) {
+      context.handle(
+        _runnerTypeMeta,
+        runnerType.isAcceptableOrUnknown(data['runner_type']!, _runnerTypeMeta),
       );
     }
     if (data.containsKey('model')) {
@@ -1707,6 +1741,14 @@ class $SessionEntriesTable extends SessionEntries
         DriftSqlType.string,
         data['${effectivePrefix}status'],
       )!,
+      source: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source'],
+      ),
+      runnerType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}runner_type'],
+      ),
       model: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}model'],
@@ -1766,6 +1808,8 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
   final String? workdir;
   final String? title;
   final String status;
+  final String? source;
+  final String? runnerType;
   final String? model;
   final String? effort;
   final String? approvalPolicy;
@@ -1786,6 +1830,8 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
     this.workdir,
     this.title,
     required this.status,
+    this.source,
+    this.runnerType,
     this.model,
     this.effort,
     this.approvalPolicy,
@@ -1817,6 +1863,12 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
       map['title'] = Variable<String>(title);
     }
     map['status'] = Variable<String>(status);
+    if (!nullToAbsent || source != null) {
+      map['source'] = Variable<String>(source);
+    }
+    if (!nullToAbsent || runnerType != null) {
+      map['runner_type'] = Variable<String>(runnerType);
+    }
     if (!nullToAbsent || model != null) {
       map['model'] = Variable<String>(model);
     }
@@ -1865,6 +1917,12 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
           ? const Value.absent()
           : Value(title),
       status: Value(status),
+      source: source == null && nullToAbsent
+          ? const Value.absent()
+          : Value(source),
+      runnerType: runnerType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(runnerType),
       model: model == null && nullToAbsent
           ? const Value.absent()
           : Value(model),
@@ -1909,6 +1967,8 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
       workdir: serializer.fromJson<String?>(json['workdir']),
       title: serializer.fromJson<String?>(json['title']),
       status: serializer.fromJson<String>(json['status']),
+      source: serializer.fromJson<String?>(json['source']),
+      runnerType: serializer.fromJson<String?>(json['runnerType']),
       model: serializer.fromJson<String?>(json['model']),
       effort: serializer.fromJson<String?>(json['effort']),
       approvalPolicy: serializer.fromJson<String?>(json['approvalPolicy']),
@@ -1934,6 +1994,8 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
       'workdir': serializer.toJson<String?>(workdir),
       'title': serializer.toJson<String?>(title),
       'status': serializer.toJson<String>(status),
+      'source': serializer.toJson<String?>(source),
+      'runnerType': serializer.toJson<String?>(runnerType),
       'model': serializer.toJson<String?>(model),
       'effort': serializer.toJson<String?>(effort),
       'approvalPolicy': serializer.toJson<String?>(approvalPolicy),
@@ -1957,6 +2019,8 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
     Value<String?> workdir = const Value.absent(),
     Value<String?> title = const Value.absent(),
     String? status,
+    Value<String?> source = const Value.absent(),
+    Value<String?> runnerType = const Value.absent(),
     Value<String?> model = const Value.absent(),
     Value<String?> effort = const Value.absent(),
     Value<String?> approvalPolicy = const Value.absent(),
@@ -1977,6 +2041,8 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
     workdir: workdir.present ? workdir.value : this.workdir,
     title: title.present ? title.value : this.title,
     status: status ?? this.status,
+    source: source.present ? source.value : this.source,
+    runnerType: runnerType.present ? runnerType.value : this.runnerType,
     model: model.present ? model.value : this.model,
     effort: effort.present ? effort.value : this.effort,
     approvalPolicy: approvalPolicy.present
@@ -2005,6 +2071,10 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
       workdir: data.workdir.present ? data.workdir.value : this.workdir,
       title: data.title.present ? data.title.value : this.title,
       status: data.status.present ? data.status.value : this.status,
+      source: data.source.present ? data.source.value : this.source,
+      runnerType: data.runnerType.present
+          ? data.runnerType.value
+          : this.runnerType,
       model: data.model.present ? data.model.value : this.model,
       effort: data.effort.present ? data.effort.value : this.effort,
       approvalPolicy: data.approvalPolicy.present
@@ -2040,6 +2110,8 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
           ..write('workdir: $workdir, ')
           ..write('title: $title, ')
           ..write('status: $status, ')
+          ..write('source: $source, ')
+          ..write('runnerType: $runnerType, ')
           ..write('model: $model, ')
           ..write('effort: $effort, ')
           ..write('approvalPolicy: $approvalPolicy, ')
@@ -2055,7 +2127,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
   }
 
   @override
-  int get hashCode => Object.hash(
+  int get hashCode => Object.hashAll([
     agentId,
     id,
     providerId,
@@ -2065,6 +2137,8 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
     workdir,
     title,
     status,
+    source,
+    runnerType,
     model,
     effort,
     approvalPolicy,
@@ -2075,7 +2149,7 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
     updatedAt,
     archivedAt,
     deletedAt,
-  );
+  ]);
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
@@ -2089,6 +2163,8 @@ class SessionEntry extends DataClass implements Insertable<SessionEntry> {
           other.workdir == this.workdir &&
           other.title == this.title &&
           other.status == this.status &&
+          other.source == this.source &&
+          other.runnerType == this.runnerType &&
           other.model == this.model &&
           other.effort == this.effort &&
           other.approvalPolicy == this.approvalPolicy &&
@@ -2111,6 +2187,8 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
   final Value<String?> workdir;
   final Value<String?> title;
   final Value<String> status;
+  final Value<String?> source;
+  final Value<String?> runnerType;
   final Value<String?> model;
   final Value<String?> effort;
   final Value<String?> approvalPolicy;
@@ -2132,6 +2210,8 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
     this.workdir = const Value.absent(),
     this.title = const Value.absent(),
     this.status = const Value.absent(),
+    this.source = const Value.absent(),
+    this.runnerType = const Value.absent(),
     this.model = const Value.absent(),
     this.effort = const Value.absent(),
     this.approvalPolicy = const Value.absent(),
@@ -2154,6 +2234,8 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
     this.workdir = const Value.absent(),
     this.title = const Value.absent(),
     this.status = const Value.absent(),
+    this.source = const Value.absent(),
+    this.runnerType = const Value.absent(),
     this.model = const Value.absent(),
     this.effort = const Value.absent(),
     this.approvalPolicy = const Value.absent(),
@@ -2181,6 +2263,8 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
     Expression<String>? workdir,
     Expression<String>? title,
     Expression<String>? status,
+    Expression<String>? source,
+    Expression<String>? runnerType,
     Expression<String>? model,
     Expression<String>? effort,
     Expression<String>? approvalPolicy,
@@ -2203,6 +2287,8 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
       if (workdir != null) 'workdir': workdir,
       if (title != null) 'title': title,
       if (status != null) 'status': status,
+      if (source != null) 'source': source,
+      if (runnerType != null) 'runner_type': runnerType,
       if (model != null) 'model': model,
       if (effort != null) 'effort': effort,
       if (approvalPolicy != null) 'approval_policy': approvalPolicy,
@@ -2227,6 +2313,8 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
     Value<String?>? workdir,
     Value<String?>? title,
     Value<String>? status,
+    Value<String?>? source,
+    Value<String?>? runnerType,
     Value<String?>? model,
     Value<String?>? effort,
     Value<String?>? approvalPolicy,
@@ -2249,6 +2337,8 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
       workdir: workdir ?? this.workdir,
       title: title ?? this.title,
       status: status ?? this.status,
+      source: source ?? this.source,
+      runnerType: runnerType ?? this.runnerType,
       model: model ?? this.model,
       effort: effort ?? this.effort,
       approvalPolicy: approvalPolicy ?? this.approvalPolicy,
@@ -2292,6 +2382,12 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
     }
     if (status.present) {
       map['status'] = Variable<String>(status.value);
+    }
+    if (source.present) {
+      map['source'] = Variable<String>(source.value);
+    }
+    if (runnerType.present) {
+      map['runner_type'] = Variable<String>(runnerType.value);
     }
     if (model.present) {
       map['model'] = Variable<String>(model.value);
@@ -2341,6 +2437,8 @@ class SessionEntriesCompanion extends UpdateCompanion<SessionEntry> {
           ..write('workdir: $workdir, ')
           ..write('title: $title, ')
           ..write('status: $status, ')
+          ..write('source: $source, ')
+          ..write('runnerType: $runnerType, ')
           ..write('model: $model, ')
           ..write('effort: $effort, ')
           ..write('approvalPolicy: $approvalPolicy, ')
@@ -7265,6 +7363,8 @@ typedef $$SessionEntriesTableCreateCompanionBuilder =
       Value<String?> workdir,
       Value<String?> title,
       Value<String> status,
+      Value<String?> source,
+      Value<String?> runnerType,
       Value<String?> model,
       Value<String?> effort,
       Value<String?> approvalPolicy,
@@ -7288,6 +7388,8 @@ typedef $$SessionEntriesTableUpdateCompanionBuilder =
       Value<String?> workdir,
       Value<String?> title,
       Value<String> status,
+      Value<String?> source,
+      Value<String?> runnerType,
       Value<String?> model,
       Value<String?> effort,
       Value<String?> approvalPolicy,
@@ -7352,6 +7454,16 @@ class $$SessionEntriesTableFilterComposer
 
   ColumnFilters<String> get status => $composableBuilder(
     column: $table.status,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get source => $composableBuilder(
+    column: $table.source,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get runnerType => $composableBuilder(
+    column: $table.runnerType,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -7460,6 +7572,16 @@ class $$SessionEntriesTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get source => $composableBuilder(
+    column: $table.source,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get runnerType => $composableBuilder(
+    column: $table.runnerType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get model => $composableBuilder(
     column: $table.model,
     builder: (column) => ColumnOrderings(column),
@@ -7549,6 +7671,14 @@ class $$SessionEntriesTableAnnotationComposer
   GeneratedColumn<String> get status =>
       $composableBuilder(column: $table.status, builder: (column) => column);
 
+  GeneratedColumn<String> get source =>
+      $composableBuilder(column: $table.source, builder: (column) => column);
+
+  GeneratedColumn<String> get runnerType => $composableBuilder(
+    column: $table.runnerType,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<String> get model =>
       $composableBuilder(column: $table.model, builder: (column) => column);
 
@@ -7632,6 +7762,8 @@ class $$SessionEntriesTableTableManager
                 Value<String?> workdir = const Value.absent(),
                 Value<String?> title = const Value.absent(),
                 Value<String> status = const Value.absent(),
+                Value<String?> source = const Value.absent(),
+                Value<String?> runnerType = const Value.absent(),
                 Value<String?> model = const Value.absent(),
                 Value<String?> effort = const Value.absent(),
                 Value<String?> approvalPolicy = const Value.absent(),
@@ -7653,6 +7785,8 @@ class $$SessionEntriesTableTableManager
                 workdir: workdir,
                 title: title,
                 status: status,
+                source: source,
+                runnerType: runnerType,
                 model: model,
                 effort: effort,
                 approvalPolicy: approvalPolicy,
@@ -7676,6 +7810,8 @@ class $$SessionEntriesTableTableManager
                 Value<String?> workdir = const Value.absent(),
                 Value<String?> title = const Value.absent(),
                 Value<String> status = const Value.absent(),
+                Value<String?> source = const Value.absent(),
+                Value<String?> runnerType = const Value.absent(),
                 Value<String?> model = const Value.absent(),
                 Value<String?> effort = const Value.absent(),
                 Value<String?> approvalPolicy = const Value.absent(),
@@ -7697,6 +7833,8 @@ class $$SessionEntriesTableTableManager
                 workdir: workdir,
                 title: title,
                 status: status,
+                source: source,
+                runnerType: runnerType,
                 model: model,
                 effort: effort,
                 approvalPolicy: approvalPolicy,

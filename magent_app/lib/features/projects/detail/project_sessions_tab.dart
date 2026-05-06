@@ -328,7 +328,8 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
 }
 
 /// session 卡片标题下方的元信息四元组：来源 / 模型 / 推理强度 / 时间。
-/// 来源识别优先级：source > source_kind > runner_type > provider_id。
+/// 来源识别优先级：source > source_kind > runner_type。provider_id 是引擎类型，
+/// 不作为来源展示，避免把 codex/claude 误显示成来源。
 class _SessionMeta {
   final String? source;
   final String? model;
@@ -365,12 +366,6 @@ class _SessionMeta {
         break;
       }
     }
-    sourceLabel ??= () {
-      final providerId = canonicalProviderId(session);
-      if (providerId == null || providerId.isEmpty) return null;
-      return _normalizeSourceLabel(providerId);
-    }();
-
     return _SessionMeta(
       source: sourceLabel,
       model: takeString('model'),
