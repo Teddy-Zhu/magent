@@ -63,6 +63,7 @@ class DiffSheet extends ConsumerStatefulWidget {
 
 class _DiffSheetState extends ConsumerState<DiffSheet> {
   static const _pageSize = 200;
+  static const _lineNumberWidth = 32.0;
 
   List<Map<String, dynamic>> _lines = [];
   bool _loading = true;
@@ -523,9 +524,9 @@ class _DiffSheetState extends ConsumerState<DiffSheet> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
-            width: 44,
+            width: _lineNumberWidth,
             child: Text(
-              oldLine?.toString() ?? '',
+              (newLine ?? oldLine)?.toString() ?? '',
               style: TextStyle(
                 color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
                 fontSize: 11 * fontScale,
@@ -534,20 +535,7 @@ class _DiffSheetState extends ConsumerState<DiffSheet> {
               textAlign: TextAlign.right,
             ),
           ),
-          const SizedBox(width: 2),
-          SizedBox(
-            width: 44,
-            child: Text(
-              newLine?.toString() ?? '',
-              style: TextStyle(
-                color: scheme.onSurfaceVariant.withValues(alpha: 0.7),
-                fontSize: 11 * fontScale,
-                fontFamily: 'monospace',
-              ),
-              textAlign: TextAlign.right,
-            ),
-          ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 4),
           Expanded(
             child: Text(
               '$prefix$content',

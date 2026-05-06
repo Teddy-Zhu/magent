@@ -199,7 +199,13 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
               color: Theme.of(
                 context,
               ).colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
-              border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
+              border: Border(
+                bottom: BorderSide(
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+                ),
+              ),
             ),
             child: Row(
               children: [
@@ -309,8 +315,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                               : '/';
                           return _FileRow(
                             icon: Icons.folder,
-                            iconColor:
-                                Theme.of(context).colorScheme.tertiary,
+                            iconColor: Theme.of(context).colorScheme.tertiary,
                             name: '..',
                             subtitle: parentLabel,
                             isDir: true,
@@ -691,10 +696,7 @@ class _FileRow extends StatelessWidget {
                     name,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      height: 1.2,
-                    ),
+                    style: const TextStyle(fontSize: 13, height: 1.2),
                   ),
                   if (subtitle != null && subtitle!.isNotEmpty) ...[
                     const SizedBox(height: 2),
@@ -751,6 +753,41 @@ class _ViewerToolbarButton extends StatelessWidget {
     if (tooltip == null) return btn;
     return Tooltip(message: tooltip!, child: btn);
   }
+}
+
+const _viewerTextPadding = EdgeInsets.fromLTRB(8, 12, 12, 12);
+const _viewerLinePadding = EdgeInsets.symmetric(horizontal: 8, vertical: 1);
+
+Widget _buildViewerScrollBody({
+  required ScrollController scrollController,
+  required bool wrap,
+  required Widget child,
+}) {
+  Widget content({required bool shrinkWidth}) {
+    return Padding(
+      padding: _viewerTextPadding,
+      child: Align(
+        alignment: Alignment.topLeft,
+        widthFactor: shrinkWidth ? 1 : null,
+        heightFactor: 1,
+        child: child,
+      ),
+    );
+  }
+
+  if (wrap) {
+    return SingleChildScrollView(
+      controller: scrollController,
+      child: content(shrinkWidth: false),
+    );
+  }
+  return SingleChildScrollView(
+    controller: scrollController,
+    child: SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: content(shrinkWidth: true),
+    ),
+  );
 }
 
 // --- Git Log Sheet ---
@@ -814,7 +851,13 @@ class _GitLogSheetState extends State<_GitLogSheet> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
+                border: Border(
+                  bottom: BorderSide(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                ),
               ),
               child: Row(
                 children: [
@@ -897,7 +940,9 @@ class _GitLogSheetState extends State<_GitLogSheet> {
                               _formatTime(timestamp),
                               style: TextStyle(
                                 fontSize: 11,
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
                               ),
                             ),
                             onTap: () => _openCommitDetail(hash, message),
@@ -1003,7 +1048,13 @@ class _CommitDetailSheet2State extends State<_CommitDetailSheet2> {
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
+                border: Border(
+                  bottom: BorderSide(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -1203,7 +1254,13 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
             Container(
               padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
               decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
+                border: Border(
+                  bottom: BorderSide(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                ),
               ),
               child: Row(
                 children: [
@@ -1285,7 +1342,7 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
       lineWidgets.add(
         Container(
           color: bgColor,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 1),
+          padding: _viewerLinePadding,
           child: Text(
             line.isEmpty ? ' ' : line,
             style: TextStyle(
@@ -1361,7 +1418,13 @@ class _ImageSheet extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(
+              context,
+            ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+          ),
+        ),
       ),
       child: Row(
         children: [
@@ -1375,7 +1438,10 @@ class _ImageSheet extends StatelessWidget {
           ),
           Text(
             '${(bytes.length / 1024).toStringAsFixed(1)} KB',
-            style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+            style: TextStyle(
+              fontSize: 12,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
           IconButton(
             icon: const Icon(Icons.close),
@@ -1425,7 +1491,7 @@ class _MarkdownSheetState extends ConsumerState<_MarkdownSheet> {
                       : Markdown(
                           data: value,
                           controller: scrollController,
-                          padding: const EdgeInsets.all(16),
+                          padding: _viewerTextPadding,
                         ),
                 ),
               ],
@@ -1446,25 +1512,17 @@ class _MarkdownSheetState extends ConsumerState<_MarkdownSheet> {
       content,
       language: 'markdown',
       theme: isDark ? atomOneDarkTheme : githubTheme,
-      padding: const EdgeInsets.all(16),
       textStyle: TextStyle(
         fontFamily: 'monospace',
         fontSize: 12 * fontScale,
         height: 1.45,
       ),
     );
-    return _wrap
-        ? SingleChildScrollView(
-            controller: scrollController,
-            child: codeView,
-          )
-        : SingleChildScrollView(
-            controller: scrollController,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: codeView,
-            ),
-          );
+    return _buildViewerScrollBody(
+      scrollController: scrollController,
+      wrap: _wrap,
+      child: codeView,
+    );
   }
 
   Widget _header(BuildContext context, String content) {
@@ -1491,7 +1549,9 @@ class _MarkdownSheetState extends ConsumerState<_MarkdownSheet> {
             ),
           ),
           _ViewerToolbarButton(
-            tooltip: _sourceMode ? l10n.viewerRenderMode : l10n.viewerSourceMode,
+            tooltip: _sourceMode
+                ? l10n.viewerRenderMode
+                : l10n.viewerSourceMode,
             icon: _sourceMode ? Icons.visibility : Icons.code,
             onPressed: () => setState(() => _sourceMode = !_sourceMode),
           ),
@@ -1559,7 +1619,6 @@ class _CodeSheetState extends ConsumerState<_CodeSheet> {
               content,
               language: widget.language,
               theme: isDark ? atomOneDarkTheme : githubTheme,
-              padding: const EdgeInsets.all(16),
               textStyle: TextStyle(
                 fontFamily: 'monospace',
                 fontSize: 12 * fontScale,
@@ -1572,7 +1631,11 @@ class _CodeSheetState extends ConsumerState<_CodeSheet> {
                   padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
                   decoration: BoxDecoration(
                     border: Border(
-                      bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                      bottom: BorderSide(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+                      ),
                     ),
                   ),
                   child: Row(
@@ -1633,18 +1696,11 @@ class _CodeSheetState extends ConsumerState<_CodeSheet> {
                   ),
                 ),
                 Expanded(
-                  child: _wrap
-                      ? SingleChildScrollView(
-                          controller: scrollController,
-                          child: codeView,
-                        )
-                      : SingleChildScrollView(
-                          controller: scrollController,
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            child: codeView,
-                          ),
-                        ),
+                  child: _buildViewerScrollBody(
+                    scrollController: scrollController,
+                    wrap: _wrap,
+                    child: codeView,
+                  ),
                 ),
               ],
             );
@@ -1695,7 +1751,11 @@ class _TextFileSheetState extends ConsumerState<_TextFileSheet> {
                   padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
                   decoration: BoxDecoration(
                     border: Border(
-                      bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5)),
+                      bottom: BorderSide(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+                      ),
                     ),
                   ),
                   child: Row(
@@ -1738,20 +1798,11 @@ class _TextFileSheetState extends ConsumerState<_TextFileSheet> {
                   ),
                 ),
                 Expanded(
-                  child: _wrap
-                      ? SingleChildScrollView(
-                          controller: scrollController,
-                          padding: const EdgeInsets.all(16),
-                          child: textView,
-                        )
-                      : SingleChildScrollView(
-                          controller: scrollController,
-                          child: SingleChildScrollView(
-                            scrollDirection: Axis.horizontal,
-                            padding: const EdgeInsets.all(16),
-                            child: textView,
-                          ),
-                        ),
+                  child: _buildViewerScrollBody(
+                    scrollController: scrollController,
+                    wrap: _wrap,
+                    child: textView,
+                  ),
                 ),
               ],
             );
