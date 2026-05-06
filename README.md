@@ -658,7 +658,7 @@ Magent 已经在 `gitservice.Service.Git()` 里强制加了 `-c core.quotepath=f
 
 ## 📄 许可证
 
-本项目当前仓库尚未指定 LICENSE 文件，使用前请联系作者或参照 GitHub 默认条款。后续将补充开源许可证（MIT / Apache-2.0 候选中）。
+本项目当前仓库许可证为 MIT [LICENSE](LICENSE)
 
 ---
 
