@@ -338,6 +338,7 @@
   "chatChooseSkill": "Choose skill",
   "chatChooseWorkspaceFile": "Choose workspace file or folder",
   "chatContextCompacted": "Conversation compressed",
+  "chatLoadOlderMessages": "Load earlier messages",
   "chatCollapsedEvents": "{count} older messages hidden",
   "@chatCollapsedEvents": {
     "placeholders": {

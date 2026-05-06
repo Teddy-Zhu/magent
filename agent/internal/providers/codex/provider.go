@@ -571,40 +571,6 @@ func (p *CodexProvider) ReadThreadItems(ctx context.Context, threadID, cursor st
 	}, nil
 }
 
-func (p *CodexProvider) ReadThreadItemsSnapshot(ctx context.Context, threadID string, limit int) (*provider.ItemPage, error) {
-	client, err := p.appServerClient(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if limit <= 0 {
-		limit = 500
-	}
-
-	var allTurns []ThreadTurn
-	cursor := ""
-	seenCursors := map[string]bool{}
-	for {
-		page, err := client.ListThreadTurns(ctx, threadID, cursor, limit, "desc")
-		if err != nil {
-			return nil, err
-		}
-		allTurns = append(allTurns, page.Turns...)
-		next := page.NextCursor
-		if next == "" || seenCursors[next] {
-			break
-		}
-		seenCursors[next] = true
-		cursor = next
-	}
-	reverseThreadTurns(allTurns)
-	items := codexTurnsToItems(allTurns)
-	log.Debug("codex", "ReadThreadItemsSnapshot: thread=%s turns=%d items=%d tail=%s", threadID, len(allTurns), len(items), codexSessionItemTailSummary(items, 8))
-	return &provider.ItemPage{
-		SessionID: threadID,
-		Items:     items,
-	}, nil
-}
-
 func codexSessionItemTailSummary(items []provider.SessionItem, limit int) string {
 	if len(items) == 0 {
 		return "[]"

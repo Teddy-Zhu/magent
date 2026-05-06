@@ -338,6 +338,7 @@
   "chatChooseSkill": "选择技能",
   "chatChooseWorkspaceFile": "选择工作区文件或目录",
   "chatContextCompacted": "对话已压缩",
+  "chatLoadOlderMessages": "加载更早消息",
   "chatCollapsedEvents": "已折叠 {count} 条更早消息",
   "@chatCollapsedEvents": {
     "placeholders": {

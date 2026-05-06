@@ -57,13 +57,10 @@ abstract class SessionApiLike {
     int limit = 200,
   });
 
-  Future<Map<String, dynamic>> getItemsSnapshot(String sessionId);
-
   Future<Map<String, dynamic>> getItemChanges(
     String sessionId, {
     required int afterRevision,
     int limit = 500,
-    bool reconcile = false,
   });
 
   Future<void> approve(String sessionId, String approvalId, String action);
@@ -79,10 +76,8 @@ abstract class SessionSyncStore {
   Future<int> getItemRevision(String sessionId);
 
   Future<List<Map<String, dynamic>>> refreshItems(
-    String sessionId, {
-    bool forceFull = false,
-    bool reconcile = true,
-  });
+    String sessionId,
+  );
 
   Future<List<Map<String, dynamic>>> refreshSessions(
     String projectId, {
@@ -101,6 +96,18 @@ class _ItemSyncPage {
     required this.cursor,
     required this.hasMore,
     this.revision = 0,
+  });
+}
+
+class SessionItemPageState {
+  final List<Map<String, dynamic>> items;
+  final String? olderCursor;
+  final bool hasOlder;
+
+  const SessionItemPageState({
+    required this.items,
+    required this.olderCursor,
+    required this.hasOlder,
   });
 }
 
@@ -666,9 +673,13 @@ class SessionRepository implements SessionSyncStore {
         : await _db.getRecentItemsBySession(agentId, sessionId, limit);
     final localList = localItems.map(_itemToMap).toList();
 
-    refreshItems(sessionId).catchError((e) {
+    loadLatestItemsPage(sessionId, limit: limit ?? 80).catchError((e) {
       debugPrint('SessionRepository: sync items error: $e');
-      return <Map<String, dynamic>>[];
+      return const SessionItemPageState(
+        items: [],
+        olderCursor: null,
+        hasOlder: false,
+      );
     });
 
     return localList;
@@ -676,23 +687,11 @@ class SessionRepository implements SessionSyncStore {
 
   @override
   Future<List<Map<String, dynamic>>> refreshItems(
-    String sessionId, {
-    bool forceFull = false,
-    bool reconcile = true,
-  }) async {
-    if (forceFull) return _syncItemSnapshot(sessionId);
-
+    String sessionId,
+  ) async {
     final revision = await getItemRevision(sessionId);
-    if (revision <= 0) return _syncItemSnapshot(sessionId);
-
-    try {
-      return await _syncItemChanges(sessionId, revision, reconcile: reconcile);
-    } catch (error) {
-      debugPrint(
-        'SessionRepository: item change sync failed, falling back to snapshot: $error',
-      );
-      return _syncItemSnapshot(sessionId);
-    }
+    if (revision <= 0) return loadLatestItemsPage(sessionId);
+    return _syncItemChanges(sessionId, revision);
   }
 
   @override
@@ -700,11 +699,43 @@ class SessionRepository implements SessionSyncStore {
     return await _db.getSyncRevision(agentId, 'session_items', sessionId) ?? 0;
   }
 
-  Future<List<Map<String, dynamic>>> _syncItemSnapshot(String sessionId) async {
-    final page = await _api.getItemsSnapshot(sessionId);
-    final revision = _parseInt(page['revision']) ?? 0;
+  Future<SessionItemPageState> loadLatestItemsPage(
+    String sessionId, {
+    int limit = 80,
+  }) async {
+    return _loadItemsPage(sessionId, cursor: null, limit: limit);
+  }
+
+  Future<SessionItemPageState> loadOlderItemsPage(
+    String sessionId, {
+    int limit = 80,
+  }) async {
+    final cursor = await _db.getSyncCursor(
+      agentId,
+      'session_items_older',
+      sessionId,
+    );
+    if (cursor == null || cursor.isEmpty) {
+      return const SessionItemPageState(
+        items: [],
+        olderCursor: null,
+        hasOlder: false,
+      );
+    }
+    return _loadItemsPage(sessionId, cursor: cursor, limit: limit);
+  }
+
+  Future<SessionItemPageState> _loadItemsPage(
+    String sessionId, {
+    required String? cursor,
+    required int limit,
+  }) async {
+    final page = await _api.getItemsPage(
+      sessionId,
+      cursor: cursor,
+      limit: limit,
+    );
     final newItems = page['items'] as List<dynamic>? ?? [];
-    final snapshotItemIds = <String>{};
     final realUserMessageContents = <dynamic>[];
     final entries = <SessionItemEntriesCompanion>[];
     for (final item in newItems) {
@@ -722,7 +753,6 @@ class SessionRepository implements SessionSyncStore {
         }
         continue;
       }
-      snapshotItemIds.add(itemId);
       if (type == SessionItemTypes.userMessage &&
           !itemId.startsWith('local-')) {
         realUserMessageContents.add(content);
@@ -743,35 +773,38 @@ class SessionRepository implements SessionSyncStore {
       if (entries.isNotEmpty) {
         await _db.insertOrUpdateItems(entries);
       }
-      await _pruneItemsMissingFromSnapshot(sessionId, snapshotItemIds);
-      await _db.setSyncState(
+      await _db.setSyncCursor(
         agentId,
-        'session_items',
+        'session_items_older',
         sessionId,
-        revision: revision,
+        _stringValue(page['cursor']) ?? '',
       );
     });
     for (final content in realUserMessageContents) {
       await _removeMatchingPendingUserMessage(sessionId, content);
     }
-    return entries.map(_itemCompanionToMap).toList(growable: false);
+    return SessionItemPageState(
+      items: entries.map(_itemCompanionToMap).toList(growable: false),
+      olderCursor: _stringValue(page['cursor']),
+      hasOlder: page['has_more'] == true || page['hasMore'] == true,
+    );
   }
 
   Future<List<Map<String, dynamic>>> _syncItemChanges(
     String sessionId,
-    int initialRevision, {
-    required bool reconcile,
-  }) async {
+    int initialRevision,
+  ) async {
     final synced = <Map<String, dynamic>>[];
     var afterRevision = initialRevision;
     while (true) {
       final page = await _api.getItemChanges(
         sessionId,
         afterRevision: afterRevision,
-        reconcile: reconcile && afterRevision == initialRevision,
       );
       if (page['reset_required'] == true || page['resetRequired'] == true) {
-        return _syncItemSnapshot(sessionId);
+        await resetItemWindow(sessionId);
+        final loaded = await loadLatestItemsPage(sessionId);
+        return loaded.items;
       }
       final result = await _applyItemChangesPage(sessionId, page);
       synced.addAll(result.items);
@@ -856,13 +889,9 @@ class SessionRepository implements SessionSyncStore {
     return _itemCompanionToMap(next);
   }
 
-  Future<void> _pruneItemsMissingFromSnapshot(
-    String sessionId,
-    Set<String> snapshotItemIds,
-  ) async {
+  Future<void> resetItemWindow(String sessionId) async {
     final cachedItems = await _db.getItemsBySession(agentId, sessionId);
     for (final item in cachedItems) {
-      if (snapshotItemIds.contains(item.itemId)) continue;
       if (item.itemId.startsWith('local-') &&
           item.type == SessionItemTypes.userMessage &&
           item.status == 'pending') {
@@ -870,6 +899,8 @@ class SessionRepository implements SessionSyncStore {
       }
       await _db.deleteItem(agentId, sessionId, item.itemId);
     }
+    await _db.setSyncState(agentId, 'session_items', sessionId, revision: 0);
+    await _db.setSyncCursor(agentId, 'session_items_older', sessionId, '');
   }
 
   SessionItemEntriesCompanion _sessionItemCompanion({
@@ -1238,6 +1269,12 @@ class SessionRepository implements SessionSyncStore {
   String? _nonEmptyString(dynamic value) {
     final text = value?.toString();
     if (text == null || text.trim().isEmpty) return null;
+    return text;
+  }
+
+  String? _stringValue(dynamic value) {
+    final text = value?.toString();
+    if (text == null || text.isEmpty) return null;
     return text;
   }
 

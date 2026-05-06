@@ -29,10 +29,6 @@ type Provider interface {
 	Close() error
 }
 
-type ThreadItemSnapshotReader interface {
-	ReadThreadItemsSnapshot(ctx context.Context, threadID string, limit int) (*ItemPage, error)
-}
-
 type SessionMetadataUpdater interface {
 	UpdateSessionMetadata(session Session)
 }

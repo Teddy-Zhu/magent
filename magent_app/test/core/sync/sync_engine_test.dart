@@ -60,7 +60,6 @@ void main() {
     final sub = engine.sessionEvents.listen(events.add);
     await engine.subscribeSession('s1');
     sessions.refreshedItems.clear();
-    sessions.refreshReconciles.clear();
 
     final event = {
       'type': 'session.message_delta',
@@ -219,7 +218,6 @@ void main() {
     final sub = engine.sessionEvents.listen(events.add);
     await engine.subscribeSession('s1');
     sessions.refreshedItems.clear();
-    sessions.refreshReconciles.clear();
 
     final event = {
       'type': 'session.items.changed',
@@ -231,7 +229,6 @@ void main() {
     await Future<void>.delayed(Duration.zero);
 
     expect(sessions.refreshedItems, ['s1']);
-    expect(sessions.refreshReconciles, [false]);
     expect(events.single['type'], 'session.items.changed');
     await sub.cancel();
   });
@@ -245,7 +242,6 @@ void main() {
       final sub = engine.sessionEvents.listen(events.add);
       await engine.subscribeSession('s1');
       sessions.refreshedItems.clear();
-      sessions.refreshReconciles.clear();
 
       final event = {
         'type': 'session.message_delta',
@@ -364,7 +360,6 @@ class _FakeSessions implements SessionSyncStore {
   final cursors = <String, String?>{};
   final revisions = <String, int>{};
   final refreshedItems = <String>[];
-  final refreshReconciles = <bool>[];
   final refreshedSessions = <String>[];
   final appliedEvents = <Map<String, dynamic>>[];
   final refreshCompleters = <Completer<List<Map<String, dynamic>>>>[];
@@ -394,12 +389,9 @@ class _FakeSessions implements SessionSyncStore {
 
   @override
   Future<List<Map<String, dynamic>>> refreshItems(
-    String sessionId, {
-    bool forceFull = false,
-    bool reconcile = true,
-  }) async {
+    String sessionId,
+  ) async {
     refreshedItems.add(sessionId);
-    refreshReconciles.add(reconcile);
     if (refreshCompleters.isNotEmpty) {
       return refreshCompleters.removeAt(0).future;
     }

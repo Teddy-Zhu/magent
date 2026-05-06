@@ -769,6 +769,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get chatContextCompacted => '对话已压缩';
 
   @override
+  String get chatLoadOlderMessages => '加载更早消息';
+
+  @override
   String chatCollapsedEvents(int count) {
     return '已折叠 $count 条更早消息';
   }

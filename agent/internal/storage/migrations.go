@@ -78,10 +78,7 @@ func (s *SQLite) migrate() error {
 
 		CREATE TABLE IF NOT EXISTS session_item_sync_state (
 			session_id TEXT PRIMARY KEY,
-			revision INTEGER NOT NULL DEFAULT 0,
-			provider_tail_hash TEXT,
-			provider_tail_item_count INTEGER NOT NULL DEFAULT 0,
-			last_reconciled_at INTEGER
+			revision INTEGER NOT NULL DEFAULT 0
 		);
 	`)
 	if err != nil {

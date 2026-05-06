@@ -133,7 +133,7 @@ class SessionApi implements SessionApiLike {
   Future<Map<String, dynamic>> getItemsPage(
     String sessionId, {
     String? cursor,
-    int limit = 200,
+    int limit = 80,
   }) async {
     final resp = await _dio.get(
       '$_apiPrefix/sessions/$sessionId/items',
@@ -146,26 +146,16 @@ class SessionApi implements SessionApiLike {
   }
 
   @override
-  Future<Map<String, dynamic>> getItemsSnapshot(String sessionId) async {
-    final resp = await _dio.get(
-      '$_apiPrefix/sessions/$sessionId/items/snapshot',
-    );
-    return Map<String, dynamic>.from(resp.data['data'] as Map? ?? {});
-  }
-
-  @override
   Future<Map<String, dynamic>> getItemChanges(
     String sessionId, {
     required int afterRevision,
     int limit = 500,
-    bool reconcile = false,
   }) async {
     final resp = await _dio.get(
       '$_apiPrefix/sessions/$sessionId/items/changes',
       queryParameters: {
         'after_revision': afterRevision,
         'limit': limit,
-        'reconcile': reconcile,
       },
     );
     return Map<String, dynamic>.from(resp.data['data'] as Map? ?? {});

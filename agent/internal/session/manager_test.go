@@ -237,12 +237,12 @@ func TestForwardEventsUpsertsCompletedItemWithoutProviderRead(t *testing.T) {
 	if providerImpl.readItemsCount != 0 {
 		t.Fatalf("ReadThreadItems called %d times, want 0", providerImpl.readItemsCount)
 	}
-	snapshot, err := manager.itemProjection.Snapshot(context.Background(), "s1")
+	items, err := manager.itemProjection.Items(context.Background(), "s1")
 	if err != nil {
-		t.Fatalf("snapshot: %v", err)
+		t.Fatalf("items: %v", err)
 	}
-	if len(snapshot.Items) != 1 || snapshot.Items[0].ItemID != "msg-1" {
-		t.Fatalf("items = %#v", snapshot.Items)
+	if len(items) != 1 || items[0].ItemID != "msg-1" {
+		t.Fatalf("items = %#v", items)
 	}
 }
 
@@ -278,12 +278,12 @@ func TestForwardEventsIgnoresDeltaProjectionSync(t *testing.T) {
 	close(events)
 	<-done
 
-	snapshot, err := manager.itemProjection.Snapshot(context.Background(), "s1")
+	items, err := manager.itemProjection.Items(context.Background(), "s1")
 	if err != nil {
-		t.Fatalf("snapshot: %v", err)
+		t.Fatalf("items: %v", err)
 	}
-	if len(snapshot.Items) != 0 {
-		t.Fatalf("delta should not create projection item: %#v", snapshot.Items)
+	if len(items) != 0 {
+		t.Fatalf("delta should not create projection item: %#v", items)
 	}
 }
 

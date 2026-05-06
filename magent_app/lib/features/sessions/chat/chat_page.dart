@@ -477,7 +477,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   bool _pendingJumpToBottom = false;
   bool _turnActive = false;
   bool _itemsRefreshInFlight = false;
-  bool _manualItemsRefreshInFlight = false;
+  bool _olderItemsLoadInFlight = false;
+  bool _hasOlderItems = false;
   int _queuedInputCount = 0;
   AppApiClient? _api;
   SessionRepository? _repo;
@@ -486,12 +487,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   GitRepository? _git;
   StreamSubscription<Map<String, dynamic>>? _sessionEventsSub;
   StreamSubscription<List<Map<String, dynamic>>>? _itemsSub;
-  StreamSubscription<int>? _itemCountSub;
   Map<String, dynamic>? _session;
   ChatTokenUsageSnapshot? _tokenUsage;
   bool _tokenUsageExpanded = false;
   int _visibleEventCount = _initialVisibleEventCount;
-  int _totalEventCount = 0;
 
   // 用户在设置面板里改过、且**与会话基线（_session 字段）不同**的待发送值。
   // 发送成功一次后会被"提升"为新基线（写回 _session）并清空，避免每次都重复
@@ -592,11 +591,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _files = FileRepository(agentId: _api!.agentId, api: _api!.file, db: db);
     _git = GitRepository(agentId: _api!.agentId, api: _api!.git, db: db);
     _subscribeItems();
-    _itemCountSub = _repo!.watchItemCount(widget.sessionId).listen((count) {
-      if (!_isActive) return;
-      if (_totalEventCount == count) return;
-      setState(() => _totalEventCount = count);
-    });
     final engine = ref.read(syncEngineProvider);
     engine?.start();
     unawaited(
@@ -1058,7 +1052,13 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (_repo == null || _itemsRefreshInFlight) return;
     _itemsRefreshInFlight = true;
     try {
-      await _repo!.refreshItems(widget.sessionId);
+      final page = await _repo!.loadLatestItemsPage(
+        widget.sessionId,
+        limit: _initialVisibleEventCount,
+      );
+      if (_isActive) {
+        setState(() => _hasOlderItems = page.hasOlder);
+      }
     } catch (e) {
       debugPrint('ChatPage: loadEvents error: $e');
       _markInitialItemsLoaded();
@@ -1075,17 +1075,27 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _flushPendingInitialBottomScroll();
   }
 
-  Future<void> _refreshItemsFull() async {
-    if (_repo == null || _manualItemsRefreshInFlight) return;
-    _manualItemsRefreshInFlight = true;
+  Future<void> _refreshItems() async {
+    if (_repo == null || _itemsRefreshInFlight) return;
+    _itemsRefreshInFlight = true;
     try {
-      await _repo!.refreshItems(widget.sessionId, forceFull: true);
+      await _repo!.resetItemWindow(widget.sessionId);
+      final page = await _repo!.loadLatestItemsPage(
+        widget.sessionId,
+        limit: _initialVisibleEventCount,
+      );
+      if (_isActive) {
+        setState(() {
+          _visibleEventCount = _initialVisibleEventCount;
+          _hasOlderItems = page.hasOlder;
+        });
+      }
       if (mounted && _loading) setState(() => _loading = false);
     } catch (e) {
       debugPrint('ChatPage: refreshEvents error: $e');
       if (mounted && _loading) setState(() => _loading = false);
     } finally {
-      _manualItemsRefreshInFlight = false;
+      _itemsRefreshInFlight = false;
     }
   }
 
@@ -1631,17 +1641,35 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   int get _hiddenEventCount {
-    if (_totalEventCount > _events.length) {
-      return _totalEventCount - _events.length + _hiddenEventCountCache;
-    }
-    return _hiddenEventCountCache;
+    return _hiddenEventCountCache + (_hasOlderItems ? 1 : 0);
   }
 
-  void _loadMoreEvents() {
-    if (_hiddenEventCount == 0) return;
+  Future<void> _loadMoreEvents() async {
+    if (_hiddenEventCount == 0 || _repo == null) return;
     if (!_isActive) return;
-    setState(() => _visibleEventCount += _eventPageSize);
-    _subscribeItems();
+    if (_hiddenEventCountCache > 0) {
+      setState(() => _visibleEventCount += _eventPageSize);
+      _subscribeItems();
+      return;
+    }
+    if (!_hasOlderItems || _olderItemsLoadInFlight) return;
+    _olderItemsLoadInFlight = true;
+    try {
+      final page = await _repo!.loadOlderItemsPage(
+        widget.sessionId,
+        limit: _eventPageSize,
+      );
+      if (!_isActive) return;
+      setState(() {
+        _visibleEventCount += _eventPageSize;
+        _hasOlderItems = page.hasOlder;
+      });
+      _subscribeItems();
+    } catch (e) {
+      debugPrint('ChatPage: load older items error: $e');
+    } finally {
+      _olderItemsLoadInFlight = false;
+    }
   }
 
   String _eventRenderKey(Map<String, dynamic> event, int index) {
@@ -2223,7 +2251,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           ),
           IconButton(
             icon: const Icon(Icons.refresh),
-            onPressed: _refreshItemsFull,
+            onPressed: _refreshItems,
             tooltip: l10n.chatRefresh,
           ),
           if (_isRunning)
@@ -3155,7 +3183,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     ref.read(syncEngineProvider)?.unsubscribeSession(widget.sessionId);
     _sessionEventsSub?.cancel();
     _itemsSub?.cancel();
-    _itemCountSub?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -3679,9 +3706,7 @@ class _LoadMoreEventsBanner extends StatelessWidget {
         child: OutlinedButton.icon(
           onPressed: onTap,
           icon: const Icon(Icons.history, size: 16),
-          label: Text(
-            AppLocalizations.of(context)!.chatCollapsedEvents(hiddenCount),
-          ),
+          label: Text(AppLocalizations.of(context)!.chatLoadOlderMessages),
           style: OutlinedButton.styleFrom(visualDensity: VisualDensity.compact),
         ),
       ),

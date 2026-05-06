@@ -273,8 +273,10 @@ func (h *SessionHandler) GetEvents(c *gin.Context) {
 
 func (h *SessionHandler) GetItems(c *gin.Context) {
 	id := c.Param("id")
+	cursor := c.Query("cursor")
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "80"))
 
-	snapshot, err := h.manager.GetItemSnapshot(c.Request.Context(), id)
+	page, err := h.manager.GetItems(c.Request.Context(), id, cursor, limit)
 	if err != nil {
 		log.Error("session", "getItems id=%s error: %v", id, err)
 		Fail(c, 500, ErrInternalError, err.Error())
@@ -282,26 +284,10 @@ func (h *SessionHandler) GetItems(c *gin.Context) {
 	}
 
 	OK(c, gin.H{
-		"session_id": snapshot.SessionID,
-		"revision":   snapshot.Revision,
-		"cursor":     strconv.FormatInt(snapshot.Revision, 10),
-		"has_more":   false,
-		"items":      itemsToAPIItems(snapshot.Items),
-	})
-}
-
-func (h *SessionHandler) GetItemSnapshot(c *gin.Context) {
-	id := c.Param("id")
-	snapshot, err := h.manager.GetItemSnapshot(c.Request.Context(), id)
-	if err != nil {
-		log.Error("session", "getItemSnapshot id=%s error: %v", id, err)
-		Fail(c, 500, ErrInternalError, err.Error())
-		return
-	}
-	OK(c, gin.H{
-		"session_id": snapshot.SessionID,
-		"revision":   snapshot.Revision,
-		"items":      itemsToAPIItems(snapshot.Items),
+		"session_id": page.SessionID,
+		"cursor":     page.Cursor,
+		"has_more":   page.HasMore,
+		"items":      itemsToAPIItems(page.Items),
 	})
 }
 
@@ -309,8 +295,7 @@ func (h *SessionHandler) GetItemChanges(c *gin.Context) {
 	id := c.Param("id")
 	afterRevision, _ := strconv.ParseInt(c.DefaultQuery("after_revision", "0"), 10, 64)
 	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "500"))
-	reconcile, _ := strconv.ParseBool(c.DefaultQuery("reconcile", "false"))
-	page, err := h.manager.GetItemChanges(c.Request.Context(), id, afterRevision, limit, reconcile)
+	page, err := h.manager.GetItemChanges(c.Request.Context(), id, afterRevision, limit)
 	if err != nil {
 		log.Error("session", "getItemChanges id=%s error: %v", id, err)
 		Fail(c, 500, ErrInternalError, err.Error())

@@ -2,11 +2,8 @@ package session
 
 import (
 	"context"
-	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"sort"
 	"sync"
 	"time"
@@ -15,12 +12,6 @@ import (
 )
 
 const defaultItemChangeLimit = 500
-
-type ItemSnapshot struct {
-	SessionID string                 `json:"session_id"`
-	Revision  int64                  `json:"revision"`
-	Items     []provider.SessionItem `json:"items"`
-}
 
 type ItemChangesPage struct {
 	SessionID     string       `json:"session_id"`
@@ -52,18 +43,6 @@ func nullableString(value string) any {
 
 func newItemProjectionStore(store *SessionStore) *itemProjectionStore {
 	return &itemProjectionStore{db: store.db.DB()}
-}
-
-func (s *itemProjectionStore) Snapshot(ctx context.Context, sessionID string) (*ItemSnapshot, error) {
-	revision, err := s.revision(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	items, err := s.items(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	return &ItemSnapshot{SessionID: sessionID, Revision: revision, Items: items}, nil
 }
 
 func (s *itemProjectionStore) Changes(ctx context.Context, sessionID string, afterRevision int64, limit int) (*ItemChangesPage, error) {
@@ -145,12 +124,8 @@ func (s *itemProjectionStore) Changes(ctx context.Context, sessionID string, aft
 	}, nil
 }
 
-func (s *itemProjectionStore) Reconcile(ctx context.Context, sessionID string, snapshot []provider.SessionItem) (*ItemChangesPage, error) {
-	return s.applyItems(ctx, sessionID, snapshot, true)
-}
-
 func (s *itemProjectionStore) Upsert(ctx context.Context, sessionID string, item provider.SessionItem) (*ItemChangesPage, error) {
-	return s.applyItems(ctx, sessionID, []provider.SessionItem{item}, false)
+	return s.applyItems(ctx, sessionID, []provider.SessionItem{item})
 }
 
 func (s *itemProjectionStore) NextOrderKey(ctx context.Context, sessionID string) (int, error) {
@@ -181,18 +156,18 @@ func (s *itemProjectionStore) ItemOrderKey(ctx context.Context, sessionID, itemI
 	return int(orderKey.Int64), true, nil
 }
 
-func (s *itemProjectionStore) applyItems(ctx context.Context, sessionID string, snapshot []provider.SessionItem, deleteMissing bool) (*ItemChangesPage, error) {
+func (s *itemProjectionStore) applyItems(ctx context.Context, sessionID string, incomingItems []provider.SessionItem) (*ItemChangesPage, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	sort.SliceStable(snapshot, func(i, j int) bool {
-		if snapshot[i].Index != snapshot[j].Index {
-			return snapshot[i].Index < snapshot[j].Index
+	sort.SliceStable(incomingItems, func(i, j int) bool {
+		if incomingItems[i].Index != incomingItems[j].Index {
+			return incomingItems[i].Index < incomingItems[j].Index
 		}
-		if !snapshot[i].CreatedAt.Equal(snapshot[j].CreatedAt) {
-			return snapshot[i].CreatedAt.Before(snapshot[j].CreatedAt)
+		if !incomingItems[i].CreatedAt.Equal(incomingItems[j].CreatedAt) {
+			return incomingItems[i].CreatedAt.Before(incomingItems[j].CreatedAt)
 		}
-		return snapshot[i].ItemID < snapshot[j].ItemID
+		return incomingItems[i].ItemID < incomingItems[j].ItemID
 	})
 
 	currentRevision, err := s.revision(ctx, sessionID)
@@ -213,8 +188,7 @@ func (s *itemProjectionStore) applyItems(ctx context.Context, sessionID string, 
 	defer tx.Rollback()
 
 	changes := make([]ItemChange, 0)
-	seen := make(map[string]bool, len(snapshot))
-	for _, incoming := range snapshot {
+	for _, incoming := range incomingItems {
 		if incoming.ItemID == "" {
 			continue
 		}
@@ -225,8 +199,6 @@ func (s *itemProjectionStore) applyItems(ctx context.Context, sessionID string, 
 		if incoming.UpdatedAt.IsZero() {
 			incoming.UpdatedAt = incoming.CreatedAt
 		}
-		seen[incoming.ItemID] = true
-
 		previous, ok := existing[incoming.ItemID]
 		if ok && sessionItemEqual(previous, incoming) {
 			delete(existing, incoming.ItemID)
@@ -277,51 +249,12 @@ func (s *itemProjectionStore) applyItems(ctx context.Context, sessionID string, 
 		delete(existing, incoming.ItemID)
 	}
 
-	if deleteMissing {
-		for itemID, previous := range existing {
-			if seen[itemID] {
-				continue
-			}
-			currentRevision++
-			if _, err := tx.ExecContext(ctx, `
-				UPDATE session_items
-				SET revision = ?, deleted_at = ?, updated_at = ?
-				WHERE session_id = ? AND item_id = ? AND deleted_at IS NULL`,
-				currentRevision, now, now, sessionID, itemID); err != nil {
-				return nil, err
-			}
-			if _, err := tx.ExecContext(ctx, `
-				INSERT INTO session_item_changes (session_id, revision, op, item_id, item_json, created_at)
-				VALUES (?, ?, 'delete', ?, NULL, ?)`, sessionID, currentRevision, itemID, now); err != nil {
-				return nil, err
-			}
-			changes = append(changes, ItemChange{Revision: currentRevision, Op: "delete", ItemID: previous.ItemID})
-		}
-	}
-
-	if deleteMissing {
-		tailHash := hashSessionItems(snapshot)
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO session_item_sync_state (
-				session_id, revision, provider_tail_hash, provider_tail_item_count, last_reconciled_at
-			)
-			VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT(session_id) DO UPDATE SET
-				revision = excluded.revision,
-				provider_tail_hash = excluded.provider_tail_hash,
-				provider_tail_item_count = excluded.provider_tail_item_count,
-				last_reconciled_at = excluded.last_reconciled_at`,
-			sessionID, currentRevision, tailHash, len(snapshot), now); err != nil {
-			return nil, err
-		}
-	} else {
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO session_item_sync_state (session_id, revision, last_reconciled_at)
-			VALUES (?, ?, COALESCE((SELECT last_reconciled_at FROM session_item_sync_state WHERE session_id = ?), ?))
-			ON CONFLICT(session_id) DO UPDATE SET revision = excluded.revision`,
-			sessionID, currentRevision, sessionID, now); err != nil {
-			return nil, err
-		}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO session_item_sync_state (session_id, revision)
+		VALUES (?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET revision = excluded.revision`,
+		sessionID, currentRevision); err != nil {
+		return nil, err
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -351,7 +284,7 @@ func (s *itemProjectionStore) revision(ctx context.Context, sessionID string) (i
 	return revision.Int64, nil
 }
 
-func (s *itemProjectionStore) items(ctx context.Context, sessionID string) ([]provider.SessionItem, error) {
+func (s *itemProjectionStore) Items(ctx context.Context, sessionID string) ([]provider.SessionItem, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT item_id, turn_id, order_key, revision, type, status, role, summary, content_json, provider_cursor, created_at, updated_at
 		FROM session_items
@@ -458,15 +391,4 @@ func jsonStableEqual(a, b any) bool {
 		return false
 	}
 	return string(aj) == string(bj)
-}
-
-func hashSessionItems(items []provider.SessionItem) string {
-	h := sha256.New()
-	for _, item := range items {
-		fmt.Fprintf(h, "%s\x00%s\x00%d\x00%s\x00%s\x00", item.TurnID, item.ItemID, item.Index, item.Type, item.Status)
-		contentJSON, _ := json.Marshal(item.Content)
-		h.Write(contentJSON)
-		h.Write([]byte{0})
-	}
-	return hex.EncodeToString(h.Sum(nil))
 }

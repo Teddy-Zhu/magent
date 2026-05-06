@@ -118,7 +118,7 @@ class SyncEngine {
       return;
     }
     if (type == 'session.items.changed') {
-      _beginSessionCatchUp(sessionId, reconcile: false);
+      _beginSessionCatchUp(sessionId);
       _sessionEvents.add(event);
       return;
     }
@@ -169,13 +169,9 @@ class SyncEngine {
   Future<void> _beginSessionCatchUp(
     String sessionId, {
     Future<void> Function()? beforeRefresh,
-    bool reconcile = true,
   }) {
     final gate = _gateFor(sessionId);
     if (gate.syncing) {
-      if (reconcile) {
-        gate.pendingReconcile = true;
-      }
       if (beforeRefresh != null && !gate.subscriptionSent) {
         beforeRefresh().catchError((error) {
           debugPrint('SyncEngine: session subscribe failed: $error');
@@ -189,7 +185,6 @@ class SyncEngine {
       sessionId,
       gate,
       beforeRefresh: beforeRefresh,
-      reconcile: reconcile,
     );
     gate.syncFuture = sync;
     return sync;
@@ -199,7 +194,6 @@ class SyncEngine {
     String sessionId,
     _SessionRealtimeGate gate, {
     Future<void> Function()? beforeRefresh,
-    bool reconcile = true,
   }) async {
     var refreshed = false;
     var startRevision = 0;
@@ -210,7 +204,7 @@ class SyncEngine {
       }
       startRevision = await sessions.getItemRevision(sessionId);
       await gate.applyTail;
-      await sessions.refreshItems(sessionId, reconcile: reconcile);
+      await sessions.refreshItems(sessionId);
       endRevision = await sessions.getItemRevision(sessionId);
       refreshed = true;
     } catch (error) {
@@ -218,11 +212,10 @@ class SyncEngine {
     }
 
     if (!refreshed) {
-      _retrySessionCatchUp(sessionId, gate, reconcile: reconcile);
+      _retrySessionCatchUp(sessionId, gate);
       return;
     }
 
-    var runPendingReconcile = false;
     try {
       await _drainBufferedSessionEvents(
         sessionId,
@@ -231,26 +224,12 @@ class SyncEngine {
         endRevision: endRevision,
       );
     } finally {
-      if (gate.pendingReconcile && !reconcile) {
-        gate.pendingReconcile = false;
-        runPendingReconcile = true;
-      } else {
-        gate.syncing = false;
-        gate.syncFuture = null;
-      }
-    }
-    if (runPendingReconcile) {
-      final sync = _runSessionCatchUp(sessionId, gate, reconcile: true);
-      gate.syncFuture = sync;
-      await sync;
+      gate.syncing = false;
+      gate.syncFuture = null;
     }
   }
 
-  void _retrySessionCatchUp(
-    String sessionId,
-    _SessionRealtimeGate gate, {
-    required bool reconcile,
-  }) {
+  void _retrySessionCatchUp(String sessionId, _SessionRealtimeGate gate) {
     if (!gate.subscribed && gate.buffer.isEmpty) {
       gate.syncing = false;
       gate.syncFuture = null;
@@ -264,9 +243,7 @@ class SyncEngine {
         gate.syncFuture = null;
         return Future<void>.value();
       }
-      final nextReconcile = reconcile || gate.pendingReconcile;
-      gate.pendingReconcile = false;
-      return _runSessionCatchUp(sessionId, gate, reconcile: nextReconcile);
+      return _runSessionCatchUp(sessionId, gate);
     });
   }
 
@@ -320,7 +297,7 @@ class SyncEngine {
           currentRevision >= toRevision) {
         return;
       }
-      await sessions.refreshItems(sessionId, reconcile: false);
+      await sessions.refreshItems(sessionId);
       _sessionEvents.add(event);
       return;
     }
@@ -428,5 +405,4 @@ class _SessionRealtimeGate {
   bool subscribed = false;
   bool subscriptionSent = false;
   bool syncing = false;
-  bool pendingReconcile = false;
 }

@@ -785,6 +785,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get chatContextCompacted => 'Conversation compressed';
 
   @override
+  String get chatLoadOlderMessages => 'Load earlier messages';
+
+  @override
   String chatCollapsedEvents(int count) {
     return '$count older messages hidden';
   }

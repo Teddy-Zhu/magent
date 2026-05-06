@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/Teddy-Zhu/magent/agent/internal/log"
@@ -14,7 +13,8 @@ import (
 )
 
 const (
-	itemReconcileDebounce = 500 * time.Millisecond
+	defaultSessionItemPageLimit = 80
+	maxSessionItemPageLimit     = 200
 )
 
 type Manager struct {
@@ -22,8 +22,6 @@ type Manager struct {
 	registry       *provider.Registry
 	wsHub          *ws.Hub
 	itemProjection *itemProjectionStore
-	itemSyncMu     sync.Mutex
-	itemSyncTimers map[string]*time.Timer
 }
 
 func NewManager(store *SessionStore, registry *provider.Registry, hub *ws.Hub) *Manager {
@@ -32,7 +30,6 @@ func NewManager(store *SessionStore, registry *provider.Registry, hub *ws.Hub) *
 		registry:       registry,
 		wsHub:          hub,
 		itemProjection: newItemProjectionStore(store),
-		itemSyncTimers: make(map[string]*time.Timer),
 	}
 	return manager
 }
@@ -103,7 +100,6 @@ func (m *Manager) CreateSession(ctx context.Context, req CreateSessionRequest) (
 
 	// Start live event forwarding to WebSocket
 	go m.forwardEvents(session.ID, p)
-	m.scheduleItemReconcile(session.ID)
 
 	m.wsHub.Broadcast(map[string]any{
 		"type":       "session.created",
@@ -348,112 +344,30 @@ func (m *Manager) GetEvents(ctx context.Context, sessionID, cursor string, limit
 	return p.ReadThreadEvents(ctx, threadID, cursor, limit)
 }
 
-// GetItems reads the provider-backed item projection for a session.
+// GetItems reads a provider-backed window of items for a session. The cursor is
+// provider-owned; an empty cursor returns the latest window, and the returned
+// cursor can be used to request older items.
 func (m *Manager) GetItems(ctx context.Context, sessionID, cursor string, limit int) (*provider.ItemPage, error) {
-	snapshot, err := m.GetItemSnapshot(ctx, sessionID)
-	if err != nil {
-		return nil, err
+	if limit <= 0 {
+		limit = defaultSessionItemPageLimit
 	}
-	return &provider.ItemPage{
-		SessionID: sessionID,
-		Cursor:    fmt.Sprintf("%d", snapshot.Revision),
-		HasMore:   false,
-		Items:     snapshot.Items,
-	}, nil
-}
-
-func sessionItemTailSummary(items []provider.SessionItem, limit int) string {
-	if len(items) == 0 {
-		return "[]"
+	if limit > maxSessionItemPageLimit {
+		limit = maxSessionItemPageLimit
 	}
-	if limit <= 0 || limit > len(items) {
-		limit = len(items)
-	}
-	start := len(items) - limit
-	parts := make([]string, 0, limit)
-	for _, item := range items[start:] {
-		parts = append(parts, fmt.Sprintf("%s:%s:%s:%d", item.ItemID, item.Type, item.Status, item.Index))
-	}
-	return "[" + strings.Join(parts, ", ") + "]"
-}
-
-func (m *Manager) GetItemSnapshot(ctx context.Context, sessionID string) (*ItemSnapshot, error) {
-	if _, err := m.ReconcileSessionItems(ctx, sessionID); err != nil {
-		return nil, err
-	}
-	snapshot, err := m.itemProjection.Snapshot(ctx, sessionID)
-	if err != nil {
-		return nil, err
-	}
-	log.Debug("session", "GetItemSnapshot: session=%s revision=%d items=%d tail=%s", sessionID, snapshot.Revision, len(snapshot.Items), sessionItemTailSummary(snapshot.Items, 8))
-	return snapshot, nil
-}
-
-func (m *Manager) GetItemChanges(ctx context.Context, sessionID string, afterRevision int64, limit int, reconcile bool) (*ItemChangesPage, error) {
-	if reconcile {
-		if _, err := m.ReconcileSessionItems(ctx, sessionID); err != nil {
-			return nil, err
-		}
-	}
-	page, err := m.itemProjection.Changes(ctx, sessionID, afterRevision, limit)
-	if err != nil {
-		return nil, err
-	}
-	log.Debug("session", "GetItemChanges: session=%s after=%d to=%d changes=%d reset=%t reconcile=%t", sessionID, afterRevision, page.ToRevision, len(page.Changes), page.ResetRequired, reconcile)
-	return page, nil
-}
-
-func (m *Manager) ReconcileSessionItems(ctx context.Context, sessionID string) (*ItemChangesPage, error) {
 	p, threadID, err := m.getProviderAndThreadForSession(sessionID)
 	if err != nil {
 		return nil, err
 	}
-	var page *provider.ItemPage
-	if reader, ok := p.(provider.ThreadItemSnapshotReader); ok {
-		page, err = reader.ReadThreadItemsSnapshot(ctx, threadID, 500)
-	} else {
-		page, err = p.ReadThreadItems(ctx, threadID, "", 500)
-	}
-	if err != nil {
-		log.Error("session", "ReconcileSessionItems: session=%s provider=%s thread=%s error=%v", sessionID, p.Name(), threadID, err)
-		return nil, err
-	}
-	changes, err := m.itemProjection.Reconcile(ctx, sessionID, page.Items)
+	return p.ReadThreadItems(ctx, threadID, cursor, limit)
+}
+
+func (m *Manager) GetItemChanges(ctx context.Context, sessionID string, afterRevision int64, limit int) (*ItemChangesPage, error) {
+	page, err := m.itemProjection.Changes(ctx, sessionID, afterRevision, limit)
 	if err != nil {
 		return nil, err
 	}
-	if len(changes.Changes) > 0 {
-		log.Info("session", "ReconcileSessionItems: session=%s provider=%s items=%d changes=%d revision=%d tail=%s", sessionID, p.Name(), len(page.Items), len(changes.Changes), changes.ToRevision, sessionItemTailSummary(page.Items, 8))
-	}
-	return changes, nil
-}
-
-func (m *Manager) scheduleItemReconcile(sessionID string) {
-	if sessionID == "" {
-		return
-	}
-	m.itemSyncMu.Lock()
-	if timer := m.itemSyncTimers[sessionID]; timer != nil {
-		timer.Reset(itemReconcileDebounce)
-		m.itemSyncMu.Unlock()
-		return
-	}
-	m.itemSyncTimers[sessionID] = time.AfterFunc(itemReconcileDebounce, func() {
-		m.itemSyncMu.Lock()
-		delete(m.itemSyncTimers, sessionID)
-		m.itemSyncMu.Unlock()
-		m.reconcileSessionItemsAndBroadcast(context.Background(), sessionID)
-	})
-	m.itemSyncMu.Unlock()
-}
-
-func (m *Manager) reconcileSessionItemsAndBroadcast(ctx context.Context, sessionID string) {
-	changes, err := m.ReconcileSessionItems(ctx, sessionID)
-	if err != nil {
-		log.Warn("session", "reconcile scheduled items failed session=%s: %v", sessionID, err)
-		return
-	}
-	m.broadcastItemChanges(sessionID, changes)
+	log.Debug("session", "GetItemChanges: session=%s after=%d to=%d changes=%d reset=%t", sessionID, afterRevision, page.ToRevision, len(page.Changes), page.ResetRequired)
+	return page, nil
 }
 
 func (m *Manager) applyProviderEventProjection(sessionID string, event provider.ProviderEvent) {
@@ -465,17 +379,11 @@ func (m *Manager) applyProviderEventProjection(sessionID string, event provider.
 	}
 	item, ok := m.sessionItemFromProviderEvent(context.Background(), sessionID, event)
 	if !ok {
-		if requiresProjectionReconcile(event.Type) {
-			m.scheduleItemReconcile(sessionID)
-		}
 		return
 	}
 	changes, err := m.itemProjection.Upsert(context.Background(), sessionID, item)
 	if err != nil {
 		log.Warn("session", "upsert runtime item failed session=%s item=%s type=%s: %v", sessionID, item.ItemID, event.Type, err)
-		if requiresProjectionReconcile(event.Type) {
-			m.scheduleItemReconcile(sessionID)
-		}
 		return
 	}
 	m.broadcastItemChanges(sessionID, changes)
@@ -536,15 +444,6 @@ func isRealtimeOnlyProjectionEvent(eventType string) bool {
 		string(provider.EventItemStarted),
 		string(provider.EventTurnStarted),
 		string(provider.EventTurnCompleted):
-		return true
-	default:
-		return false
-	}
-}
-
-func requiresProjectionReconcile(eventType string) bool {
-	switch eventType {
-	case string(provider.EventTurnFailed):
 		return true
 	default:
 		return false

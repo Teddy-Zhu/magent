@@ -50,7 +50,7 @@ void main() {
         'updated_at': DateTime(2026, 5, 1).toIso8601String(),
       },
     ];
-    await repo.refreshItems('s1', forceFull: true);
+    await repo.loadLatestItemsPage('s1');
 
     final items = await db.getItemsBySession('agent-a', 's1');
 
@@ -379,7 +379,7 @@ void main() {
     expect(item.content, contains('commandActions'));
   });
 
-  test('snapshot replaces cached provider item content', () async {
+  test('window refresh replaces cached provider item content', () async {
     await db.insertOrUpdateItem(
       SessionItemEntriesCompanion.insert(
         agentId: 'agent-a',
@@ -421,9 +421,14 @@ void main() {
   });
 
   test(
-    'refresh items reconciles history even when a cursor was stored',
+    'latest window ignores older-page cursor state',
     () async {
-      await db.setSyncCursor('agent-a', 'session_items', 's1', 'newer:old');
+      await db.setSyncCursor(
+        'agent-a',
+        'session_items_older',
+        's1',
+        'newer:old',
+      );
       fakeApi.items = [
         {
           'item_id': 'cmd-1',
@@ -443,7 +448,7 @@ void main() {
         },
       ];
 
-      await repo.refreshItems('s1', forceFull: true);
+      await repo.loadLatestItemsPage('s1');
 
       expect(fakeApi.itemRequestCursors, [isNull]);
       final item = await db.getItem('agent-a', 's1', 'cmd-1');
@@ -471,7 +476,7 @@ void main() {
       },
     ];
 
-    await repo.refreshItems('s1', forceFull: true);
+    await repo.loadLatestItemsPage('s1');
     await db.deleteSessionCache('agent-a', 's1');
 
     expect(await repo.getRealtimeCursor('s1'), isNull);
@@ -503,7 +508,6 @@ void main() {
     await repo.refreshItems('s1');
 
     expect(fakeApi.itemChangeRequestRevisions, [1]);
-    expect(fakeApi.itemChangeRequestReconciles, [true]);
     final items = await db.getItemsBySession('agent-a', 's1');
     expect(items.map((item) => item.itemId), ['msg-next']);
     expect(await repo.getItemRevision('s1'), 2);
@@ -571,7 +575,7 @@ void main() {
       },
     ];
 
-    await repo.refreshItems('s1', forceFull: true);
+    await repo.loadLatestItemsPage('s1');
 
     final commandA = await db.getItem(
       'agent-a',
@@ -600,9 +604,7 @@ void main() {
     expect(fileChange.content, contains('"diff":"@@ -271'));
   });
 
-  test(
-    'force refresh replaces stale realtime items with provider snapshot',
-    () async {
+  test('reset item window removes stale items and keeps pending input', () async {
       await db.insertOrUpdateItem(
         SessionItemEntriesCompanion.insert(
           agentId: 'agent-a',
@@ -636,7 +638,8 @@ void main() {
         },
       ];
 
-      await repo.refreshItems('s1', forceFull: true);
+      await repo.resetItemWindow('s1');
+      await repo.loadLatestItemsPage('s1');
 
       expect(await db.getItem('agent-a', 's1', 'stale-realtime'), isNull);
       expect(
@@ -645,9 +648,7 @@ void main() {
       );
       final items = await db.getItemsBySession('agent-a', 's1');
       expect(items.any((item) => item.itemId.startsWith('local-')), isTrue);
-    },
-  );
-
+  });
   test('refresh items skips unchanged cached rows', () async {
     final createdAt = DateTime(2026, 5, 1);
     final updatedAt = DateTime(2026, 5, 1, 0, 0, 1);
@@ -664,9 +665,9 @@ void main() {
       },
     ];
 
-    await repo.refreshItems('s1', forceFull: true);
+    await repo.loadLatestItemsPage('s1');
     final first = await db.getItem('agent-a', 's1', 'msg-1');
-    await repo.refreshItems('s1', forceFull: true);
+    await repo.loadLatestItemsPage('s1');
     final second = await db.getItem('agent-a', 's1', 'msg-1');
 
     expect(second, isNotNull);
@@ -688,7 +689,7 @@ void main() {
         'updated_at': DateTime(2026, 5, 1, 0, 0, 1).toIso8601String(),
       },
     ];
-    await repo.refreshItems('s1', forceFull: true);
+    await repo.loadLatestItemsPage('s1');
     final first = await db.getItem('agent-a', 's1', 'msg-1');
 
     fakeApi.items = [
@@ -703,7 +704,7 @@ void main() {
         'updated_at': DateTime(2026, 5, 1, 0, 0, 2).toIso8601String(),
       },
     ];
-    await repo.refreshItems('s1', forceFull: true);
+    await repo.loadLatestItemsPage('s1');
     final second = await db.getItem('agent-a', 's1', 'msg-1');
 
     expect(second, isNotNull);
@@ -789,7 +790,7 @@ void main() {
     expect(session?['sandbox_mode'], 'workspace-write');
   });
 
-  test('active and archived session refreshes reconcile separately', () async {
+  test('active and archived session refreshes sync separately', () async {
     fakeApi.sessions = [
       {
         'id': 'active-1',
@@ -841,7 +842,6 @@ class _FakeSessionApi implements SessionApiLike {
   final Map<String?, bool> pageHasMore = {};
   final List<String?> itemRequestCursors = [];
   final List<int> itemChangeRequestRevisions = [];
-  final List<bool> itemChangeRequestReconciles = [];
 
   @override
   Future<void> approve(
@@ -889,20 +889,12 @@ class _FakeSessionApi implements SessionApiLike {
   }
 
   @override
-  Future<Map<String, dynamic>> getItemsSnapshot(String sessionId) async {
-    itemRequestCursors.add(null);
-    return {'items': itemsByCursor[null] ?? items, 'revision': revision};
-  }
-
-  @override
   Future<Map<String, dynamic>> getItemChanges(
     String sessionId, {
     required int afterRevision,
     int limit = 500,
-    bool reconcile = false,
   }) async {
     itemChangeRequestRevisions.add(afterRevision);
-    itemChangeRequestReconciles.add(reconcile);
     return {
       'changes': changes,
       'to_revision': revision,

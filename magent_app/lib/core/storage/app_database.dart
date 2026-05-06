@@ -436,6 +436,7 @@ class AppDatabase extends _$AppDatabase {
               t.agentId.equals(agentId) &
               (t.scope.equals('session_events') |
                   t.scope.equals('session_items') |
+                  t.scope.equals('session_items_older') |
                   t.scope.equals('session_ws') |
                   t.scope.equals('session_ws_epoch')),
         ))
@@ -615,6 +616,7 @@ class AppDatabase extends _$AppDatabase {
                 t.key.equals(sessionId) &
                 (t.scope.equals('session_events') |
                     t.scope.equals('session_items') |
+                    t.scope.equals('session_items_older') |
                     t.scope.equals('session_ws') |
                     t.scope.equals('session_ws_epoch')),
           ))

@@ -1562,6 +1562,12 @@ abstract class AppLocalizations {
   /// **'Conversation compressed'**
   String get chatContextCompacted;
 
+  /// No description provided for @chatLoadOlderMessages.
+  ///
+  /// In en, this message translates to:
+  /// **'Load earlier messages'**
+  String get chatLoadOlderMessages;
+
   /// No description provided for @chatCollapsedEvents.
   ///
   /// In en, this message translates to:
