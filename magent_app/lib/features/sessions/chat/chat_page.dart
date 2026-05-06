@@ -472,10 +472,21 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return (value == null || value.isEmpty) ? '' : value;
   }
 
-  String get _activeModel =>
-      (_pendingModel?.isNotEmpty ?? false) ? _pendingModel! : _sessionField('model');
-  String get _activeEffort =>
-      (_pendingEffort?.isNotEmpty ?? false) ? _pendingEffort! : _sessionField('effort');
+  String _sessionTitleText(AppLocalizations l10n) {
+    if (_session == null) return l10n.chatTitle;
+    for (final key in const ['title', 'last_text', 'lastText', 'preview']) {
+      final text = _readableOneLine(_session![key]);
+      if (text.isNotEmpty) return text;
+    }
+    return l10n.chatTitle;
+  }
+
+  String get _activeModel => (_pendingModel?.isNotEmpty ?? false)
+      ? _pendingModel!
+      : _sessionField('model');
+  String get _activeEffort => (_pendingEffort?.isNotEmpty ?? false)
+      ? _pendingEffort!
+      : _sessionField('effort');
   String get _activeApproval => (_pendingApproval?.isNotEmpty ?? false)
       ? _pendingApproval!
       : _sessionField('approval_policy');
@@ -496,7 +507,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     setState(() {
       _pendingModel = diff(r.model, _sessionField('model'));
       _pendingEffort = diff(r.effort, _sessionField('effort'));
-      _pendingApproval = diff(r.approvalPolicy, _sessionField('approval_policy'));
+      _pendingApproval = diff(
+        r.approvalPolicy,
+        _sessionField('approval_policy'),
+      );
       _pendingSandbox = diff(r.sandboxMode, _sessionField('sandbox_mode'));
     });
   }
@@ -547,7 +561,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (_api == null) return;
     final providerId = _session == null
         ? 'codex'
-        : (canonicalProviderId(Map<String, dynamic>.from(_session!)) ?? 'codex');
+        : (canonicalProviderId(Map<String, dynamic>.from(_session!)) ??
+              'codex');
     try {
       final resp = await _api!.client.dio.get(
         '/api/v1/providers/$providerId/config',
@@ -2088,7 +2103,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   Widget build(BuildContext context) {
     final l10n = AppLocalizations.of(context)!;
     final status = SessionStatuses.normalizeOrStopped(_session?['status']);
-    final title = _session?['title'] as String? ?? l10n.chatTitle;
+    final title = _sessionTitleText(l10n);
     final provider = _session == null
         ? null
         : canonicalProviderId(Map<String, dynamic>.from(_session!));
@@ -2098,31 +2113,47 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+        title: Row(
           children: [
-            Text(title, style: const TextStyle(fontSize: 16)),
-            Row(
-              children: [
-                _StatusDot(status: status),
-                const SizedBox(width: 4),
-                Text(
-                  _sessionStatusLabel(l10n, status),
-                  style: TextStyle(fontSize: 12, color: _statusColor(status)),
-                ),
-                if (provider != null && provider.isNotEmpty) ...[
-                  Text(
-                    ' · ',
-                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant.withValues(alpha: 0.6)),
-                  ),
-                  Text(
-                    provider,
-                    style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
-                  ),
-                ],
-              ],
+            Expanded(
+              flex: 3,
+              child: Text(
+                title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(fontSize: 16),
+              ),
             ),
+            const SizedBox(width: 8),
+            _StatusDot(status: status),
+            const SizedBox(width: 4),
+            Text(
+              _sessionStatusLabel(l10n, status),
+              maxLines: 1,
+              style: TextStyle(fontSize: 12, color: _statusColor(status)),
+            ),
+            if (provider != null && provider.isNotEmpty) ...[
+              Text(
+                ' · ',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(
+                    context,
+                  ).colorScheme.onSurfaceVariant.withValues(alpha: 0.6),
+                ),
+              ),
+              Flexible(
+                child: Text(
+                  provider,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            ],
           ],
         ),
         actions: [
@@ -2211,11 +2242,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(Icons.chat_bubble_outline, size: 64, color: Theme.of(context).colorScheme.outlineVariant),
+          Icon(
+            Icons.chat_bubble_outline,
+            size: 64,
+            color: Theme.of(context).colorScheme.outlineVariant,
+          ),
           const SizedBox(height: 12),
           Text(
             _isExited ? l10n.chatSessionEnded : l10n.chatNoMessages,
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 15),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 15,
+            ),
           ),
           if (_isExited) ...[
             const SizedBox(height: 16),
@@ -2256,7 +2294,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           const SizedBox(height: 8),
           Text(
             l10n.chatSessionNotStarted,
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 14),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 14,
+            ),
           ),
           const SizedBox(height: 12),
           FilledButton.icon(
@@ -2292,11 +2333,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       ),
       child: Row(
         children: [
-          Icon(Icons.info_outline, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+          Icon(
+            Icons.info_outline,
+            size: 16,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
           const SizedBox(width: 8),
           Text(
             '${l10n.settingsSession}${_sessionStatusLabel(l10n, status)}',
-            style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant, fontSize: 13),
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 13,
+            ),
           ),
           const Spacer(),
           TextButton.icon(
@@ -2444,7 +2492,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         final output = _toolText(data?['delta'] ?? _commandOutputValue(data));
         return _ToolCallCard(
           icon: _commandIcon(data),
-          title: _commandActionTitle(data) ??
+          title:
+              _commandActionTitle(data) ??
               _commandTitle(
                 _commandValue(data),
                 fallback: l10n.chatCommandOutput,
@@ -2469,7 +2518,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         final output = _commandCompletedOutput(data);
         return _ToolCallCard(
           icon: _commandIcon(data),
-          title: _commandActionTitle(data) ??
+          title:
+              _commandActionTitle(data) ??
               _commandTitle(_commandValue(data), fallback: l10n.chatCommand),
           output: output,
           summary: _commandSummary(data, output),
@@ -2577,7 +2627,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           child: Center(
             child: Text(
               l10n.chatExited(data?['exit_code'] ?? 0),
-              style: TextStyle(color: Theme.of(context).colorScheme.onSurfaceVariant),
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
             ),
           ),
         );
@@ -3448,10 +3500,7 @@ class _WorkspaceFilePickerSheetState extends State<_WorkspaceFilePickerSheet> {
               ),
             ),
             if (_loading)
-              const Padding(
-                padding: EdgeInsets.all(24),
-                child: AppLoading(),
-              )
+              const Padding(padding: EdgeInsets.all(24), child: AppLoading())
             else if (_error.isNotEmpty)
               Padding(padding: const EdgeInsets.all(24), child: Text(_error))
             else
@@ -3546,9 +3595,9 @@ class _SheetHeader extends StatelessWidget {
                 title,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
               ),
             ),
           ],
@@ -3685,7 +3734,10 @@ class _TokenUsagePanel extends StatelessWidget {
                       usageText,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
                     ),
                   ),
                   Icon(
@@ -3700,7 +3752,10 @@ class _TokenUsagePanel extends StatelessWidget {
                 detailText,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
-                style: TextStyle(fontSize: 12, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ),
             ],
           ),
@@ -3731,14 +3786,18 @@ class _InfoChip extends StatelessWidget {
           Icon(
             icon,
             size: 14,
-            color: isError ? AppStatusColors.of(context).error.foreground : Theme.of(context).colorScheme.onSurfaceVariant,
+            color: isError
+                ? AppStatusColors.of(context).error.foreground
+                : Theme.of(context).colorScheme.onSurfaceVariant,
           ),
           const SizedBox(width: 4),
           Text(
             label,
             style: TextStyle(
               fontSize: 12,
-              color: isError ? AppStatusColors.of(context).error.foreground : Theme.of(context).colorScheme.onSurfaceVariant,
+              color: isError
+                  ? AppStatusColors.of(context).error.foreground
+                  : Theme.of(context).colorScheme.onSurfaceVariant,
             ),
           ),
         ],
@@ -3800,11 +3859,7 @@ class _MessageBubble extends StatelessWidget {
   final String? phase;
   final MarkdownTapLinkCallback? onTapLink;
 
-  const _MessageBubble({
-    required this.content,
-    this.phase,
-    this.onTapLink,
-  });
+  const _MessageBubble({required this.content, this.phase, this.onTapLink});
 
   bool get _isCommentary => phase == 'commentary';
 
@@ -3899,19 +3954,16 @@ class _CommentaryLineState extends State<_CommentaryLine> {
             children: [
               Padding(
                 padding: const EdgeInsets.only(top: 2),
-                child: Icon(
-                  Icons.short_text,
-                  size: 14,
-                  color: scheme.outline,
-                ),
+                child: Icon(Icons.short_text, size: 14, color: scheme.outline),
               ),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
                   widget.content.trim(),
                   maxLines: collapsed ? _collapsedLines : null,
-                  overflow:
-                      collapsed ? TextOverflow.ellipsis : TextOverflow.clip,
+                  overflow: collapsed
+                      ? TextOverflow.ellipsis
+                      : TextOverflow.clip,
                   style: TextStyle(
                     fontSize: 12,
                     height: 1.4,
@@ -4078,7 +4130,9 @@ class _ToolCallCard extends StatefulWidget {
 class _ToolCallCardState extends State<_ToolCallCard> {
   @override
   Widget build(BuildContext context) {
-    final color = widget.success ? AppStatusColors.of(context).running.foreground : Theme.of(context).colorScheme.error;
+    final color = widget.success
+        ? AppStatusColors.of(context).running.foreground
+        : Theme.of(context).colorScheme.error;
     final title = widget.title.trim().isEmpty
         ? AppLocalizations.of(context)!.approvalUnknownAction
         : widget.title.trim();
@@ -4131,7 +4185,9 @@ class _ToolCallCardState extends State<_ToolCallCard> {
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
                             fontSize: 12,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                           ),
                         ),
                       ],
@@ -4139,7 +4195,11 @@ class _ToolCallCardState extends State<_ToolCallCard> {
                   ),
                 ),
                 const SizedBox(width: 8),
-                Icon(Icons.open_in_full, size: 16, color: Theme.of(context).colorScheme.onSurfaceVariant),
+                Icon(
+                  Icons.open_in_full,
+                  size: 16,
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
               ],
             ),
           ),
@@ -4239,7 +4299,13 @@ class _SessionDetailSheetState extends State<_SessionDetailSheet> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
       decoration: BoxDecoration(
-        border: Border(bottom: BorderSide(color: Theme.of(context).colorScheme.outlineVariant.withValues(alpha: 0.5))),
+        border: Border(
+          bottom: BorderSide(
+            color: Theme.of(
+              context,
+            ).colorScheme.outlineVariant.withValues(alpha: 0.5),
+          ),
+        ),
       ),
       child: Row(
         children: [
@@ -4264,7 +4330,10 @@ class _SessionDetailSheetState extends State<_SessionDetailSheet> {
             ),
             child: Text(
               widget.language,
-              style: TextStyle(fontSize: 10, color: AppStatusColors.of(context).info.foreground),
+              style: TextStyle(
+                fontSize: 10,
+                color: AppStatusColors.of(context).info.foreground,
+              ),
             ),
           ),
           Tooltip(
@@ -4525,7 +4594,9 @@ class _StructuredInfoCardState extends State<_StructuredInfoCard> {
                           Icon(
                             Icons.open_in_full,
                             size: 16,
-                            color: Theme.of(context).colorScheme.onSurfaceVariant,
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
                           ),
                         ],
                       ),
@@ -4535,7 +4606,11 @@ class _StructuredInfoCardState extends State<_StructuredInfoCard> {
                           summary,
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
-                          style: textStyle.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+                          style: textStyle.copyWith(
+                            color: Theme.of(
+                              context,
+                            ).colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ],
                     ],
@@ -4716,43 +4791,51 @@ class _SessionStrategyBar extends StatelessWidget {
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
     final l10n = AppLocalizations.of(context)!;
+    final displayModel = _readableOneLine(model);
 
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: 0.5),
       child: InkWell(
         onTap: onTap,
         child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
           child: Row(
             children: [
-              Icon(
-                Icons.tune,
-                size: 14,
-                color: scheme.onSurfaceVariant,
-              ),
+              Icon(Icons.tune, size: 14, color: scheme.onSurfaceVariant),
               const SizedBox(width: 8),
               Expanded(
-                child: Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
-                  crossAxisAlignment: WrapCrossAlignment.center,
+                child: Row(
                   children: [
-                    _StrategyChip(
-                      label: model.isEmpty ? '—' : model,
-                      tone: scheme.primary,
+                    Expanded(
+                      child: _StrategyChip(
+                        label: displayModel.isEmpty ? '—' : displayModel,
+                        tone: scheme.primary,
+                      ),
                     ),
-                    if (effort.isNotEmpty)
-                      _StrategyChip(label: effort, tone: scheme.secondary),
-                    if (approvalPolicy.isNotEmpty)
+                    if (effort.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      _StrategyChip(
+                        label: _readableOneLine(effort),
+                        tone: scheme.secondary,
+                        maxWidth: 70,
+                      ),
+                    ],
+                    if (approvalPolicy.isNotEmpty) ...[
+                      const SizedBox(width: 6),
                       _StrategyChip(
                         label: _approvalLabel(l10n, approvalPolicy),
                         tone: scheme.tertiary,
+                        maxWidth: 82,
                       ),
-                    if (sandboxMode.isNotEmpty)
+                    ],
+                    if (sandboxMode.isNotEmpty) ...[
+                      const SizedBox(width: 6),
                       _StrategyChip(
                         label: _sandboxLabel(l10n, sandboxMode),
                         tone: scheme.tertiary,
+                        maxWidth: 82,
                       ),
+                    ],
                   ],
                 ),
               ),
@@ -4773,12 +4856,13 @@ class _SessionStrategyBar extends StatelessWidget {
 class _StrategyChip extends StatelessWidget {
   final String label;
   final Color tone;
+  final double? maxWidth;
 
-  const _StrategyChip({required this.label, required this.tone});
+  const _StrategyChip({required this.label, required this.tone, this.maxWidth});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    final chip = Container(
       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
       decoration: BoxDecoration(
         color: tone.withValues(alpha: 0.10),
@@ -4788,13 +4872,18 @@ class _StrategyChip extends StatelessWidget {
         label,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
+        softWrap: false,
         style: TextStyle(
           color: tone,
           fontSize: 11,
           fontWeight: FontWeight.w600,
-          letterSpacing: 0.1,
         ),
       ),
+    );
+    if (maxWidth == null) return chip;
+    return ConstrainedBox(
+      constraints: BoxConstraints(maxWidth: maxWidth!),
+      child: chip,
     );
   }
 }
@@ -4810,7 +4899,7 @@ String _approvalLabel(AppLocalizations l10n, String value) {
     case SessionApprovalPolicies.never:
       return l10n.approvalAuto;
     default:
-      return value;
+      return _readableOneLine(value);
   }
 }
 
@@ -4823,8 +4912,70 @@ String _sandboxLabel(AppLocalizations l10n, String value) {
     case SessionSandboxModes.dangerFullAccess:
       return l10n.sandboxFull;
     default:
-      return value;
+      return _readableOneLine(value);
   }
+}
+
+String _readableOneLine(Object? value) {
+  if (value == null) return '';
+  if (value is String) {
+    final trimmed = value.trim();
+    if (trimmed.isEmpty) return '';
+    final decoded = _tryDecodeJson(trimmed);
+    if (decoded != null && decoded != value) {
+      final text = _readableOneLine(decoded);
+      if (text.isNotEmpty) return text;
+    }
+    return _collapseWhitespace(trimmed);
+  }
+  if (value is Map) {
+    for (final key in const [
+      'name',
+      'id',
+      'title',
+      'summary',
+      'text',
+      'content',
+      'message',
+      'value',
+      'path',
+    ]) {
+      final text = _readableOneLine(value[key]);
+      if (text.isNotEmpty) return text;
+    }
+    final pairs = value.entries
+        .where((entry) => entry.value != null)
+        .take(3)
+        .map((entry) {
+          final text = _readableOneLine(entry.value);
+          return text.isEmpty ? '' : '${entry.key}: $text';
+        })
+        .where((text) => text.isNotEmpty)
+        .join(' · ');
+    if (pairs.isNotEmpty) return pairs;
+  }
+  if (value is Iterable) {
+    final text = value
+        .map(_readableOneLine)
+        .where((item) => item.isNotEmpty)
+        .take(3)
+        .join(' · ');
+    if (text.isNotEmpty) return text;
+  }
+  return _collapseWhitespace(value.toString());
+}
+
+Object? _tryDecodeJson(String value) {
+  if (!value.startsWith('{') && !value.startsWith('[')) return null;
+  try {
+    return jsonDecode(value);
+  } catch (_) {
+    return null;
+  }
+}
+
+String _collapseWhitespace(String value) {
+  return value.replaceAll(RegExp(r'\s+'), ' ').trim();
 }
 
 /// 设置面板返回值。
@@ -4840,6 +4991,22 @@ class _SessionSettingsResult {
     this.approvalPolicy,
     this.sandboxMode,
   });
+}
+
+class _DropdownOptionText extends StatelessWidget {
+  final String text;
+
+  const _DropdownOptionText(this.text);
+
+  @override
+  Widget build(BuildContext context) {
+    return Text(
+      _readableOneLine(text),
+      maxLines: 1,
+      overflow: TextOverflow.ellipsis,
+      softWrap: false,
+    );
+  }
 }
 
 /// 会话设置弹窗：选择 model / effort / approval / sandbox。返回 null 表示取消。
@@ -4888,19 +5055,37 @@ class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
     if (match == null) return const [];
     final raw = match['reasoning_efforts'];
     if (raw is! List) return const [];
-    return raw.map((e) => e.toString()).toList();
+    return _stringOptions(raw);
   }
 
   List<String> get _approvalPolicies {
     final raw = widget.config?['approval_policies'];
     if (raw is! List) return const [];
-    return raw.map((e) => e.toString()).toList();
+    return _stringOptions(raw);
   }
 
   List<String> get _sandboxModes {
     final raw = widget.config?['sandbox_modes'];
     if (raw is! List) return const [];
-    return raw.map((e) => e.toString()).toList();
+    return _stringOptions(raw);
+  }
+
+  List<String> _stringOptions(List<dynamic> raw) {
+    final values = <String>[];
+    for (final item in raw) {
+      final value = switch (item) {
+        String() => item,
+        num() => item.toString(),
+        bool() => item.toString(),
+        Map() => item['id']?.toString() ?? item['value']?.toString() ?? '',
+        _ => '',
+      };
+      final normalized = _readableOneLine(value);
+      if (normalized.isNotEmpty && !values.contains(normalized)) {
+        values.add(normalized);
+      }
+    }
+    return values;
   }
 
   @override
@@ -4909,7 +5094,9 @@ class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
     final scheme = Theme.of(context).colorScheme;
 
     final modelOptions = <String>{
-      ..._models.map((m) => m['id']?.toString() ?? '').where((s) => s.isNotEmpty),
+      ..._models
+          .map((m) => _readableOneLine(m['id']))
+          .where((s) => s.isNotEmpty),
       if (_model.isNotEmpty) _model,
     }.toList();
     final effortOptions = <String>{
@@ -4946,18 +5133,23 @@ class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
             const SizedBox(height: 4),
             Text(
               l10n.chatSettingsHint,
-              style: TextStyle(
-                fontSize: 12,
-                color: scheme.onSurfaceVariant,
-              ),
+              style: TextStyle(fontSize: 12, color: scheme.onSurfaceVariant),
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<String>(
+              isExpanded: true,
               initialValue: safeValue(_model, modelOptions),
               decoration: InputDecoration(labelText: l10n.chatSettingsModel),
               items: modelOptions
-                  .map((id) => DropdownMenuItem(value: id, child: Text(id)))
+                  .map(
+                    (id) => DropdownMenuItem(
+                      value: id,
+                      child: _DropdownOptionText(id),
+                    ),
+                  )
                   .toList(),
+              selectedItemBuilder: (_) =>
+                  modelOptions.map((id) => _DropdownOptionText(id)).toList(),
               onChanged: (value) {
                 if (value == null) return;
                 setState(() {
@@ -4971,15 +5163,19 @@ class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
+              isExpanded: true,
               initialValue: safeValue(_effort, effortOptions),
               decoration: InputDecoration(labelText: l10n.chatSettingsEffort),
               items: effortOptions
                   .map(
                     (e) => DropdownMenuItem(
                       value: e,
-                      child: Text(_effortLabel(l10n, e)),
+                      child: _DropdownOptionText(_effortLabel(l10n, e)),
                     ),
                   )
+                  .toList(),
+              selectedItemBuilder: (_) => effortOptions
+                  .map((e) => _DropdownOptionText(_effortLabel(l10n, e)))
                   .toList(),
               onChanged: effortOptions.isEmpty
                   ? null
@@ -4989,15 +5185,19 @@ class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
+              isExpanded: true,
               initialValue: safeValue(_approval, approvalOptions),
               decoration: InputDecoration(labelText: l10n.chatSettingsApproval),
               items: approvalOptions
                   .map(
                     (id) => DropdownMenuItem(
                       value: id,
-                      child: Text(_approvalLabel(l10n, id)),
+                      child: _DropdownOptionText(_approvalLabel(l10n, id)),
                     ),
                   )
+                  .toList(),
+              selectedItemBuilder: (_) => approvalOptions
+                  .map((id) => _DropdownOptionText(_approvalLabel(l10n, id)))
                   .toList(),
               onChanged: approvalOptions.isEmpty
                   ? null
@@ -5007,15 +5207,19 @@ class _SessionSettingsSheetState extends State<_SessionSettingsSheet> {
             ),
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
+              isExpanded: true,
               initialValue: safeValue(_sandbox, sandboxOptions),
               decoration: InputDecoration(labelText: l10n.chatSettingsSandbox),
               items: sandboxOptions
                   .map(
                     (id) => DropdownMenuItem(
                       value: id,
-                      child: Text(_sandboxLabel(l10n, id)),
+                      child: _DropdownOptionText(_sandboxLabel(l10n, id)),
                     ),
                   )
+                  .toList(),
+              selectedItemBuilder: (_) => sandboxOptions
+                  .map((id) => _DropdownOptionText(_sandboxLabel(l10n, id)))
                   .toList(),
               onChanged: sandboxOptions.isEmpty
                   ? null

@@ -28,52 +28,99 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
   BootstrapRepository? _bootstrap;
   String _activeAgentName = '';
   StreamSubscription<List<Map<String, dynamic>>>? _projectsSub;
+  ProviderSubscription<AsyncValue<AppApiClient?>>? _activeApiSub;
+  int _activeApiGeneration = 0;
 
   @override
   void initState() {
     super.initState();
-    _init();
+    _activeApiSub = ref.listenManual<AsyncValue<AppApiClient?>>(
+      activeApiProvider,
+      (_, next) => _handleActiveApi(next),
+      fireImmediately: true,
+    );
   }
 
-  Future<void> _init() async {
-    _api = await loadActiveApi(ref);
-    if (_api == null) {
-      if (mounted) setState(() => _loading = false);
+  Future<void> _handleActiveApi(AsyncValue<AppApiClient?> activeApi) async {
+    final generation = ++_activeApiGeneration;
+    switch (activeApi) {
+      case AsyncLoading():
+        if (mounted && _api == null) setState(() => _loading = true);
+        return;
+      case AsyncError():
+        await _resetActiveAgentState(loading: false);
+        return;
+      case AsyncData(:final value):
+        await _configureActiveApi(value, generation);
+        return;
+    }
+  }
+
+  Future<void> _configureActiveApi(AppApiClient? api, int generation) async {
+    await _projectsSub?.cancel();
+    _projectsSub = null;
+
+    if (api == null) {
+      if (generation == _activeApiGeneration) {
+        await _resetActiveAgentState(loading: false);
+      }
       return;
     }
+
     final activeAgent = await ref.read(secureStorageProvider).getActiveAgent();
+    if (!mounted || generation != _activeApiGeneration) return;
+
     final agentName = activeAgent?['name']?.trim() ?? '';
-    if (mounted) {
-      setState(() {
-        _activeAgentName = agentName.isEmpty
-            ? (activeAgent?['url'] ?? '')
-            : agentName;
-      });
-    }
+    _api = api;
+    _bootstrap = createBootstrapRepository(ref, api);
+
+    setState(() {
+      _activeAgentName = agentName.isEmpty
+          ? (activeAgent?['url'] ?? '')
+          : agentName;
+      _projects = [];
+      _loading = true;
+    });
+
     ref.read(syncEngineProvider)?.start();
-    _bootstrap = createBootstrapRepository(ref, _api!);
     _projectsSub = _bootstrap!.watchProjects().listen((projects) {
-      if (!mounted) return;
+      if (!mounted || generation != _activeApiGeneration) return;
       setState(() {
         _projects = projects;
         _loading = false;
       });
     });
-    await _loadProjects();
+    await _loadProjects(generation: generation);
   }
 
-  Future<void> _loadProjects() async {
+  Future<void> _resetActiveAgentState({required bool loading}) async {
+    await _projectsSub?.cancel();
+    _projectsSub = null;
+    if (!mounted) return;
+    setState(() {
+      _api = null;
+      _bootstrap = null;
+      _activeAgentName = '';
+      _projects = [];
+      _loading = loading;
+    });
+  }
+
+  Future<void> _loadProjects({int? generation}) async {
     if (_bootstrap == null) return;
+    final requestGeneration = generation ?? _activeApiGeneration;
     try {
       final projects = await _bootstrap!.getProjects();
-      if (mounted) {
+      if (mounted && requestGeneration == _activeApiGeneration) {
         setState(() {
           _projects = projects;
           _loading = false;
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted && requestGeneration == _activeApiGeneration) {
+        setState(() => _loading = false);
+      }
     }
   }
 
@@ -102,10 +149,7 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: Text(
-              l10n.delete,
-              style: TextStyle(color: scheme.error),
-            ),
+            child: Text(l10n.delete, style: TextStyle(color: scheme.error)),
           ),
         ],
       ),
@@ -135,6 +179,7 @@ class _ProjectListPageState extends ConsumerState<ProjectListPage> {
 
   @override
   void dispose() {
+    _activeApiSub?.close();
     _projectsSub?.cancel();
     super.dispose();
   }
@@ -248,11 +293,7 @@ class _ProjectCard extends StatelessWidget {
               const SizedBox(width: 8),
             ],
             Expanded(
-              child: Text(
-                title,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
             const SizedBox(width: 8),
             AppPill(
@@ -272,11 +313,7 @@ class _ProjectCard extends StatelessWidget {
             ),
             const SizedBox(width: 5),
             Expanded(
-              child: Text(
-                path,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-              ),
+              child: Text(path, maxLines: 1, overflow: TextOverflow.ellipsis),
             ),
           ],
         ),

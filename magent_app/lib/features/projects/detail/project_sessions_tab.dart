@@ -54,13 +54,13 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
     final l10n = AppLocalizations.of(context)!;
     final scheme = Theme.of(context).colorScheme;
     final statusColors = AppStatusColors.of(context);
-    final sessions = widget.sessions;
+    final sessions = [...widget.sessions]..sort(_compareSessionsNewestFirst);
 
     final hidden = sessions.length > _visibleCount
         ? sessions.length - _visibleCount
         : 0;
     final visibleSessions = hidden > 0
-        ? sessions.skip(hidden).toList(growable: false)
+        ? sessions.take(_visibleCount).toList(growable: false)
         : sessions;
 
     return RefreshIndicator(
@@ -73,7 +73,7 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
         addRepaintBoundaries: false,
         itemCount: sessions.isEmpty
             ? 2
-            : visibleSessions.length + (hidden > 0 ? 1 : 0) + 1,
+            : visibleSessions.length + 1 + (hidden > 0 ? 1 : 0),
         itemBuilder: (context, index) {
           if (index == 0) {
             return _SessionArchiveToggle(
@@ -94,7 +94,7 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
             );
           }
           final listIndex = index - 1;
-          if (hidden > 0 && listIndex == 0) {
+          if (hidden > 0 && listIndex == visibleSessions.length) {
             return _LoadMoreSessionsBanner(
               hiddenCount: hidden,
               onTap: () {
@@ -103,7 +103,7 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
             );
           }
 
-          final sessionIndex = hidden > 0 ? listIndex - 1 : listIndex;
+          final sessionIndex = listIndex;
           final s = visibleSessions[sessionIndex];
           final id = s['id'] as String? ?? '';
           final title = _sessionTitle(s, l10n);
@@ -183,6 +183,36 @@ class _ProjectSessionsTabState extends State<ProjectSessionsTab> {
         },
       ),
     );
+  }
+
+  int _compareSessionsNewestFirst(dynamic a, dynamic b) {
+    return _sessionSortTime(b).compareTo(_sessionSortTime(a));
+  }
+
+  DateTime _sessionSortTime(dynamic session) {
+    if (session is! Map) return DateTime.fromMillisecondsSinceEpoch(0);
+    for (final key in const [
+      'updated_at',
+      'updatedAt',
+      'created_at',
+      'createdAt',
+    ]) {
+      final value = session[key];
+      final parsed = _parseSessionTime(value);
+      if (parsed != null) return parsed;
+    }
+    return DateTime.fromMillisecondsSinceEpoch(0);
+  }
+
+  DateTime? _parseSessionTime(dynamic value) {
+    if (value == null) return null;
+    if (value is DateTime) return value;
+    if (value is int) {
+      return DateTime.fromMillisecondsSinceEpoch(
+        value > 1000000000000 ? value : value * 1000,
+      );
+    }
+    return DateTime.tryParse(value.toString());
   }
 
   String _sessionTitle(dynamic session, AppLocalizations l10n) {
@@ -497,10 +527,7 @@ class _SessionMetaLine extends StatelessWidget {
       );
     }
 
-    return Row(
-      mainAxisSize: MainAxisSize.max,
-      children: children,
-    );
+    return Row(mainAxisSize: MainAxisSize.max, children: children);
   }
 }
 
@@ -615,8 +642,9 @@ class _EmptySessionsState extends StatelessWidget {
     return AppEmptyState(
       icon: archived ? Icons.archive_outlined : Icons.chat_bubble_outline,
       title: archived ? l10n.sessionsArchivedEmpty : l10n.sessionsEmptyYet,
-      subtitle:
-          archived ? l10n.sessionsArchivedEmptySub : l10n.sessionsEmptySub,
+      subtitle: archived
+          ? l10n.sessionsArchivedEmptySub
+          : l10n.sessionsEmptySub,
       topGap: MediaQuery.sizeOf(context).height * 0.06,
       action: archived
           ? null
@@ -676,21 +704,16 @@ class _SwipeActionBackground extends StatelessWidget {
   Widget build(BuildContext context) {
     final isLeft = alignment == Alignment.centerLeft;
     final scheme = Theme.of(context).colorScheme;
-    final onColor = ThemeData.estimateBrightnessForColor(color) == Brightness.dark
+    final onColor =
+        ThemeData.estimateBrightnessForColor(color) == Brightness.dark
         ? scheme.onPrimary
         : scheme.onError;
-    final labelStyle = TextStyle(
-      color: onColor,
-      fontWeight: FontWeight.w700,
-    );
+    final labelStyle = TextStyle(color: onColor, fontWeight: FontWeight.w700);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       padding: const EdgeInsets.symmetric(horizontal: 20),
       alignment: alignment,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: AppRadius.rmd,
-      ),
+      decoration: BoxDecoration(color: color, borderRadius: AppRadius.rmd),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
