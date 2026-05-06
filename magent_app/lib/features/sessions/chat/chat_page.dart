@@ -236,12 +236,13 @@ String _chatSingleLine(String text) {
 bool chatTurnActiveFromItemSnapshot({
   required bool currentTurnActive,
   required bool snapshotHasActiveItem,
+  required int queuedInputCount,
   required Object? sessionStatus,
 }) {
   if (snapshotHasActiveItem) return true;
-  if (!currentTurnActive) return false;
-  final status = SessionStatuses.normalize(sessionStatus);
-  return status == null || status == SessionStatuses.running;
+  return queuedInputCount > 0 &&
+      currentTurnActive &&
+      SessionStatuses.isRunning(sessionStatus);
 }
 
 @visibleForTesting
@@ -663,6 +664,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
           final nextTurnActive = chatTurnActiveFromItemSnapshot(
             currentTurnActive: _turnActive,
             snapshotHasActiveItem: _itemsContainActiveTurn(items),
+            queuedInputCount: _queuedInputCount,
             sessionStatus: _session?['status'],
           );
           final turnActiveChanged = _turnActive != nextTurnActive;
@@ -758,6 +760,9 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     switch (type) {
       case SessionEventTypes.started:
       case SessionEventTypes.statusChanged:
+      case SessionEventTypes.turnStarted:
+      case SessionEventTypes.turnCompleted:
+      case SessionEventTypes.turnFailed:
       case SessionEventTypes.tokenUsageUpdated:
         return false;
       default:

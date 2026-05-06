@@ -1075,6 +1075,12 @@ class AppLocalizationsEn extends AppLocalizations {
   String get filesLoadFailed => 'Load failed';
 
   @override
+  String get filesPreviewTooLarge => 'File is too large to preview';
+
+  @override
+  String get filesPreviewBinaryUnsupported => 'Binary file cannot be previewed';
+
+  @override
   String get filesNoSubdirectories => 'No subdirectories';
 
   @override

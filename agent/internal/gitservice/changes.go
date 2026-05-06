@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 )
@@ -46,12 +48,14 @@ func (s *Service) computeChanges(ctx context.Context, projectPath string, versio
 
 	for _, l := range parseNumstat(string(stagedOut)) {
 		f := l.toFileChange(true)
+		f.Size = fileSize(projectPath, f.Path)
 		f.DiffHash = s.computePathDiffHash(ctx, projectPath, f.Path, true)
 		files = append(files, f)
 	}
 
 	for _, l := range parseNumstat(string(unstagedOut)) {
 		f := l.toFileChange(false)
+		f.Size = fileSize(projectPath, f.Path)
 		f.DiffHash = s.computePathDiffHash(ctx, projectPath, f.Path, false)
 		files = append(files, f)
 	}
@@ -59,11 +63,25 @@ func (s *Service) computeChanges(ctx context.Context, projectPath string, versio
 	for _, path := range strings.Split(strings.TrimSpace(string(untrackedOut)), "\n") {
 		if path != "" {
 			out, _ := s.Git(ctx, projectPath, "hash-object", "--no-filters", "--", path)
+			numstatOut, _ := s.Git(ctx, projectPath, "diff", "--no-index", "--numstat", "--", "/dev/null", path)
+			numstat := parseNumstat(string(numstatOut))
+			additions, deletions := 0, 0
+			binary := false
+			if len(numstat) > 0 {
+				change := numstat[0].toFileChange(false)
+				additions = change.Additions
+				deletions = change.Deletions
+				binary = change.Binary
+			}
 			files = append(files, FileChange{
-				Path:     path,
-				Status:   "untracked",
-				NewHash:  strings.TrimSpace(string(out)),
-				DiffHash: s.computeUntrackedDiffHash(ctx, projectPath, path),
+				Path:      path,
+				Status:    "untracked",
+				Additions: additions,
+				Deletions: deletions,
+				Binary:    binary,
+				NewHash:   strings.TrimSpace(string(out)),
+				DiffHash:  s.computeUntrackedDiffHash(ctx, projectPath, path),
+				Size:      fileSize(projectPath, path),
 			})
 		}
 	}
@@ -96,11 +114,14 @@ func parseNumstat(output string) []numstatLine {
 }
 
 func (l numstatLine) toFileChange(staged bool) FileChange {
+	binary := l.Additions == "-" || l.Deletions == "-"
 	additions, _ := strconv.Atoi(l.Additions)
 	deletions, _ := strconv.Atoi(l.Deletions)
 
 	status := "modified"
-	if additions > 0 && deletions == 0 {
+	if binary {
+		status = "modified"
+	} else if additions > 0 && deletions == 0 {
 		status = "added"
 	} else if additions == 0 && deletions > 0 {
 		status = "deleted"
@@ -112,7 +133,16 @@ func (l numstatLine) toFileChange(staged bool) FileChange {
 		Staged:    staged,
 		Additions: additions,
 		Deletions: deletions,
+		Binary:    binary,
 	}
+}
+
+func fileSize(projectPath, path string) int64 {
+	info, err := os.Stat(filepath.Join(projectPath, path))
+	if err != nil || info.IsDir() {
+		return 0
+	}
+	return info.Size()
 }
 
 func ComputeDiffHash(path, oldHash, newHash, mode string) string {

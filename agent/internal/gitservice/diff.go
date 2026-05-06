@@ -47,7 +47,11 @@ func (s *Service) GetFileDiff(ctx context.Context, projectID, projectPath, fileP
 		s.diffCache.Add(cacheKey, lines)
 	}
 
-	return s.paginateDiff(lines, actualHash, offset, limit), nil
+	result := s.paginateDiff(lines, actualHash, offset, limit)
+	result.Path = filePath
+	result.Encoding = "text"
+	result.Binary = diffOutputIsBinary(string(out))
+	return result, nil
 }
 
 func diffCacheKey(projectID, filePath, diffHash string, staged bool) string {
@@ -118,4 +122,13 @@ func parseDiffOutput(diff string) []DiffLine {
 		}
 	}
 	return lines
+}
+
+func diffOutputIsBinary(diff string) bool {
+	for _, line := range strings.Split(diff, "\n") {
+		if strings.HasPrefix(line, "Binary files ") || strings.HasPrefix(line, "GIT binary patch") {
+			return true
+		}
+	}
+	return false
 }

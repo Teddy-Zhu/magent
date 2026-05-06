@@ -1,6 +1,7 @@
 package fileservice
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -11,11 +12,15 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/Teddy-Zhu/magent/agent/internal/storage"
 )
 
 const DefaultRawFileLimit = 2 * 1024 * 1024
+const DefaultPreviewFileLimit = 2 * 1024 * 1024
+
+const binarySniffLimit = 8 * 1024
 
 type Service struct {
 	db             *storage.SQLite
@@ -187,6 +192,19 @@ func (s *Service) ReadFile(ctx context.Context, projectPath, relPath, knownHash 
 	if err != nil {
 		return nil, 404, err
 	}
+	if info.IsDir() {
+		return nil, 400, fmt.Errorf("path is a directory")
+	}
+	if info.Size() > DefaultPreviewFileLimit {
+		return nil, 413, fmt.Errorf("file is too large to preview")
+	}
+	binary, err := isLikelyBinaryFile(fullPath)
+	if err != nil {
+		return nil, 500, err
+	}
+	if binary {
+		return nil, 415, fmt.Errorf("binary file cannot be previewed")
+	}
 
 	hash := s.fileHash(fullPath, info)
 
@@ -203,8 +221,14 @@ func (s *Service) ReadFile(ctx context.Context, projectPath, relPath, knownHash 
 	if limit <= 0 {
 		limit = 1000
 	}
+	if offset < 0 {
+		offset = 0
+	}
 
-	lines, totalLines := readLines(f, offset, limit)
+	lines, totalLines, err := readLines(f, offset, limit)
+	if err != nil {
+		return nil, 500, err
+	}
 
 	return &FileContent{
 		Path:       relPath,
@@ -229,6 +253,16 @@ func (s *Service) ReadRawFile(ctx context.Context, projectPath, relPath, knownHa
 	}
 	if info.IsDir() {
 		return nil, 400, fmt.Errorf("path is a directory")
+	}
+	if limit <= 0 && info.Size() > DefaultRawFileLimit {
+		return nil, 413, fmt.Errorf("file is too large to preview")
+	}
+	binary, err := isLikelyBinaryFile(fullPath)
+	if err != nil {
+		return nil, 500, err
+	}
+	if binary && !IsPreviewImageExtension(strings.ToLower(filepath.Ext(fullPath))) {
+		return nil, 415, fmt.Errorf("binary file cannot be previewed")
 	}
 
 	hash := s.fileHash(fullPath, info)
@@ -271,32 +305,91 @@ func (s *Service) ReadRawFile(ctx context.Context, projectPath, relPath, knownHa
 	}, 200, nil
 }
 
-func readLines(f *os.File, offset, limit int) ([]string, int) {
+func readLines(f *os.File, offset, limit int) ([]string, int, error) {
 	var lines []string
 	totalLines := 0
-	reader := io.Reader(f)
-	buf := make([]byte, 32*1024)
-	lineStart := 0
-	currentLine := 0
-
+	if offset < 0 {
+		offset = 0
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	reader := bufio.NewReaderSize(f, 32*1024)
 	for {
-		n, err := reader.Read(buf)
-		if n > 0 {
-			for i := 0; i < n; i++ {
-				if buf[i] == '\n' {
-					totalLines++
-					if currentLine >= offset && currentLine < offset+limit {
-						lines = append(lines, string(buf[lineStart:i]))
-					}
-					currentLine++
-					lineStart = i + 1
-				}
+		line, err := reader.ReadString('\n')
+		if len(line) > 0 {
+			line = strings.TrimSuffix(line, "\n")
+			line = strings.TrimSuffix(line, "\r")
+			if totalLines >= offset && totalLines < offset+limit {
+				lines = append(lines, line)
 			}
+			totalLines++
+		}
+		if err == io.EOF {
+			break
 		}
 		if err != nil {
-			break
+			return nil, totalLines, err
 		}
 	}
 
-	return lines, totalLines
+	return lines, totalLines, nil
+}
+
+func isLikelyBinaryFile(path string) (bool, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return false, err
+	}
+	defer f.Close()
+
+	buf := make([]byte, binarySniffLimit)
+	n, err := f.Read(buf)
+	if err != nil && err != io.EOF {
+		return false, err
+	}
+	if n == 0 {
+		return false, nil
+	}
+	sample := buf[:n]
+	if bytes.IndexByte(sample, 0) >= 0 {
+		return true, nil
+	}
+	return !validUTF8Prefix(sample), nil
+}
+
+func validUTF8Prefix(data []byte) bool {
+	if utf8.Valid(data) {
+		return true
+	}
+	for trim := 1; trim <= 3 && trim < len(data); trim++ {
+		if utf8.Valid(data[:len(data)-trim]) {
+			return true
+		}
+	}
+	return false
+}
+
+func IsKnownBinaryExtension(ext string) bool {
+	if IsPreviewImageExtension(ext) {
+		return true
+	}
+	switch ext {
+	case ".pdf", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar", ".jar",
+		".exe", ".dll", ".so", ".dylib", ".bin", ".dat",
+		".mp3", ".mp4", ".avi", ".mov", ".mkv", ".wav", ".flac",
+		".ttf", ".otf", ".woff", ".woff2", ".eot":
+		return true
+	default:
+		return false
+	}
+}
+
+func IsPreviewImageExtension(ext string) bool {
+	switch ext {
+	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".svg":
+		return true
+	default:
+		return false
+	}
 }

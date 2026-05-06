@@ -2120,6 +2120,18 @@ abstract class AppLocalizations {
   /// **'Load failed'**
   String get filesLoadFailed;
 
+  /// No description provided for @filesPreviewTooLarge.
+  ///
+  /// In en, this message translates to:
+  /// **'File is too large to preview'**
+  String get filesPreviewTooLarge;
+
+  /// No description provided for @filesPreviewBinaryUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'Binary file cannot be previewed'**
+  String get filesPreviewBinaryUnsupported;
+
   /// No description provided for @filesNoSubdirectories.
   ///
   /// In en, this message translates to:

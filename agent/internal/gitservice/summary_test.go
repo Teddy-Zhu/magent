@@ -27,3 +27,12 @@ func TestComputeDiffContentHashUsesContent(t *testing.T) {
 		t.Fatalf("expected diff hash to change when diff content changes")
 	}
 }
+
+func TestDiffOutputIsBinary(t *testing.T) {
+	if !diffOutputIsBinary("Binary files /dev/null and image.bin differ\n") {
+		t.Fatalf("expected binary diff output")
+	}
+	if diffOutputIsBinary("diff --git a/a.txt b/a.txt\n+hello\n") {
+		t.Fatalf("expected text diff output")
+	}
+}

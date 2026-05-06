@@ -7,17 +7,34 @@ void main() {
       chatTurnActiveFromItemSnapshot(
         currentTurnActive: true,
         snapshotHasActiveItem: false,
+        queuedInputCount: 1,
         sessionStatus: 'running',
       ),
       isTrue,
     );
   });
 
+  test(
+    'completed item snapshot clears active running turn when nothing queued',
+    () {
+      expect(
+        chatTurnActiveFromItemSnapshot(
+          currentTurnActive: true,
+          snapshotHasActiveItem: false,
+          queuedInputCount: 0,
+          sessionStatus: 'running',
+        ),
+        isFalse,
+      );
+    },
+  );
+
   test('active item snapshot can mark turn active', () {
     expect(
       chatTurnActiveFromItemSnapshot(
         currentTurnActive: false,
         snapshotHasActiveItem: true,
+        queuedInputCount: 0,
         sessionStatus: 'running',
       ),
       isTrue,
@@ -29,6 +46,7 @@ void main() {
       chatTurnActiveFromItemSnapshot(
         currentTurnActive: true,
         snapshotHasActiveItem: false,
+        queuedInputCount: 0,
         sessionStatus: 'completed',
       ),
       isFalse,

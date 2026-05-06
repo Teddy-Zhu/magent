@@ -462,6 +462,8 @@
 
   "filesReadFailed": "读取失败",
   "filesLoadFailed": "加载失败",
+  "filesPreviewTooLarge": "文件过大，无法预览",
+  "filesPreviewBinaryUnsupported": "二进制文件无法预览",
   "filesNoSubdirectories": "没有子目录",
   "filesSelectPath": "选择：{path}",
   "@filesSelectPath": {

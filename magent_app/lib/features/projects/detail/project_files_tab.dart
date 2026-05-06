@@ -7,6 +7,7 @@ import 'package:flutter_highlight/themes/github.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:dio/dio.dart';
 import 'package:magent_app/core/api/error_messages.dart';
 import 'package:magent_app/core/providers/app_settings_provider.dart';
 import 'package:magent_app/core/repositories/file_repository.dart';
@@ -31,6 +32,8 @@ class ProjectFilesTab extends StatefulWidget {
 }
 
 class _ProjectFilesTabState extends State<ProjectFilesTab> {
+  static const _previewSizeLimit = 2 * 1024 * 1024;
+
   final List<String> _pathStack = [''];
   final List<Map<String, dynamic>> _items = [];
   bool _loading = true;
@@ -348,7 +351,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                             if (isDir) {
                               _navigateToDir(name);
                             } else {
-                              _openFile(name);
+                              _openFile(name, size: item['size'] as int? ?? 0);
                             }
                           },
                         );
@@ -361,10 +364,17 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
     );
   }
 
-  void _openFile(String name) {
+  void _openFile(String name, {int size = 0}) {
     final filePath = _currentPath.isEmpty ? name : '$_currentPath/$name';
     final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
     final fileType = _getFileType(ext);
+    if (size > _previewSizeLimit && fileType != _FileType.image) {
+      _showUnsupportedPreview(
+        filePath,
+        AppLocalizations.of(context)!.filesPreviewTooLarge,
+      );
+      return;
+    }
 
     if (fileType == _FileType.image) {
       _showImageFile(filePath);
@@ -390,13 +400,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       }
     } catch (e) {
       if (mounted) {
-        _showSnackBar(
-          localizedErrorMessage(
-            AppLocalizations.of(context)!,
-            e,
-            action: AppLocalizations.of(context)!.filesReadFailed,
-          ),
-        );
+        _showPreviewError(path, e);
       }
     }
   }
@@ -465,13 +469,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       }
     } catch (e) {
       if (mounted) {
-        _showSnackBar(
-          localizedErrorMessage(
-            AppLocalizations.of(context)!,
-            e,
-            action: AppLocalizations.of(context)!.filesReadFailed,
-          ),
-        );
+        _showPreviewError(path, e);
       }
     }
   }
@@ -509,15 +507,44 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       }
     } catch (e) {
       if (mounted) {
-        _showSnackBar(
-          localizedErrorMessage(
-            AppLocalizations.of(context)!,
-            e,
-            action: AppLocalizations.of(context)!.filesReadFailed,
-          ),
-        );
+        _showPreviewError(path, e);
       }
     }
+  }
+
+  void _showPreviewError(String path, Object error) {
+    final unsupported = _unsupportedPreviewMessage(error);
+    if (unsupported != null) {
+      _showUnsupportedPreview(path, unsupported);
+      return;
+    }
+    _showSnackBar(
+      localizedErrorMessage(
+        AppLocalizations.of(context)!,
+        error,
+        action: AppLocalizations.of(context)!.filesReadFailed,
+      ),
+    );
+  }
+
+  String? _unsupportedPreviewMessage(Object error) {
+    if (error is DioException) {
+      switch (error.response?.statusCode) {
+        case 413:
+          return AppLocalizations.of(context)!.filesPreviewTooLarge;
+        case 415:
+          return AppLocalizations.of(context)!.filesPreviewBinaryUnsupported;
+      }
+    }
+    return null;
+  }
+
+  void _showUnsupportedPreview(String path, String message) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (_) => _UnsupportedPreviewSheet(path: path, message: message),
+    );
   }
 
   void _showSnackBar(String msg) {
@@ -1379,6 +1406,79 @@ class _CommitFileDiffSheet2State extends State<_CommitFileDiffSheet2> {
 enum _FileType { image, markdown, code, text }
 
 // --- File viewer sheets (reused from original file_browser_page.dart) ---
+
+class _UnsupportedPreviewSheet extends StatelessWidget {
+  final String path;
+  final String message;
+
+  const _UnsupportedPreviewSheet({required this.path, required this.message});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return DraggableScrollableSheet(
+      initialChildSize: 0.36,
+      maxChildSize: 0.55,
+      minChildSize: 0.25,
+      expand: false,
+      builder: (context, scrollController) {
+        return Column(
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
+              decoration: BoxDecoration(
+                border: Border(
+                  bottom: BorderSide(
+                    color: scheme.outlineVariant.withValues(alpha: 0.5),
+                  ),
+                ),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.insert_drive_file_outlined, size: 18),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      path,
+                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                  _ViewerToolbarButton(
+                    icon: Icons.close,
+                    onPressed: () => Navigator.pop(context),
+                  ),
+                ],
+              ),
+            ),
+            Expanded(
+              child: ListView(
+                controller: scrollController,
+                padding: const EdgeInsets.all(24),
+                children: [
+                  Icon(
+                    Icons.visibility_off_outlined,
+                    size: 48,
+                    color: scheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(height: 16),
+                  Text(
+                    message,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: scheme.onSurfaceVariant,
+                      fontSize: 14,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+}
 
 class _ImageSheet extends StatelessWidget {
   final String path;

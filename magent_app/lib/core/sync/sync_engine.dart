@@ -301,6 +301,10 @@ class SyncEngine {
       _sessionEvents.add(event);
       return;
     }
+    if (_isTurnRuntimeEvent(event)) {
+      _sessionEvents.add(_uiSessionEvent(event));
+      return;
+    }
     if (_isItemProjectionHintEvent(event)) {
       if (dropCoveredItemHints) return;
       _sessionEvents.add(_uiSessionEvent(event));
@@ -351,6 +355,17 @@ class SyncEngine {
       case 'session.subscribed':
       case 'session.unsubscribed':
       case 'session.replay_complete':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  bool _isTurnRuntimeEvent(Map<String, dynamic> event) {
+    switch (event['event_type']?.toString() ?? event['type']?.toString()) {
+      case 'session.turn_started':
+      case 'session.turn_completed':
+      case 'session.turn_failed':
         return true;
       default:
         return false;

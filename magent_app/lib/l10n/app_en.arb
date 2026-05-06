@@ -462,6 +462,8 @@
 
   "filesReadFailed": "Read failed",
   "filesLoadFailed": "Load failed",
+  "filesPreviewTooLarge": "File is too large to preview",
+  "filesPreviewBinaryUnsupported": "Binary file cannot be previewed",
   "filesNoSubdirectories": "No subdirectories",
   "filesSelectPath": "Select: {path}",
   "@filesSelectPath": {

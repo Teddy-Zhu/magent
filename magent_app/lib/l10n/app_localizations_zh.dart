@@ -1056,6 +1056,12 @@ class AppLocalizationsZh extends AppLocalizations {
   String get filesLoadFailed => '加载失败';
 
   @override
+  String get filesPreviewTooLarge => '文件过大，无法预览';
+
+  @override
+  String get filesPreviewBinaryUnsupported => '二进制文件无法预览';
+
+  @override
   String get filesNoSubdirectories => '没有子目录';
 
   @override

@@ -6,9 +6,9 @@ import (
 	"path/filepath"
 	"strconv"
 
-	"github.com/gin-gonic/gin"
 	"github.com/Teddy-Zhu/magent/agent/internal/fileservice"
 	"github.com/Teddy-Zhu/magent/agent/internal/project"
+	"github.com/gin-gonic/gin"
 )
 
 type FileHandler struct {
@@ -136,14 +136,5 @@ func (h *FileHandler) rawFile(c *gin.Context, projectPath string) {
 }
 
 func isBinaryFile(ext string) bool {
-	switch ext {
-	case ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".ico", ".svg",
-		".pdf", ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-		".exe", ".dll", ".so", ".dylib", ".bin", ".dat",
-		".mp3", ".mp4", ".avi", ".mov", ".mkv", ".wav", ".flac",
-		".ttf", ".otf", ".woff", ".woff2", ".eot":
-		return true
-	default:
-		return false
-	}
+	return fileservice.IsKnownBinaryExtension(ext)
 }

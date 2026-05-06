@@ -75,9 +75,7 @@ abstract class SessionSyncStore {
 
   Future<int> getItemRevision(String sessionId);
 
-  Future<List<Map<String, dynamic>>> refreshItems(
-    String sessionId,
-  );
+  Future<List<Map<String, dynamic>>> refreshItems(String sessionId);
 
   Future<List<Map<String, dynamic>>> refreshSessions(
     String projectId, {
@@ -686,11 +684,12 @@ class SessionRepository implements SessionSyncStore {
   }
 
   @override
-  Future<List<Map<String, dynamic>>> refreshItems(
-    String sessionId,
-  ) async {
+  Future<List<Map<String, dynamic>>> refreshItems(String sessionId) async {
     final revision = await getItemRevision(sessionId);
-    if (revision <= 0) return loadLatestItemsPage(sessionId);
+    if (revision <= 0) {
+      final page = await loadLatestItemsPage(sessionId);
+      return page.items;
+    }
     return _syncItemChanges(sessionId, revision);
   }
 
