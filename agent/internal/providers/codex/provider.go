@@ -1457,6 +1457,7 @@ func (p *CodexProvider) ListThreadInfosWithOptions(ctx context.Context, opts pro
 	if p.localStore != nil && p.localStore.Available() {
 		threads, err := p.localStore.ListThreads(ctx, listOpts)
 		if err == nil {
+			p.mergeAppServerThreadStatus(ctx, listOpts, threads)
 			return threads, nil
 		}
 		log.Warn("codex", "local thread store unavailable, falling back to appserver: %v", err)
@@ -1467,6 +1468,47 @@ func (p *CodexProvider) ListThreadInfosWithOptions(ctx context.Context, opts pro
 		return nil, err
 	}
 	return client.ListThreadsWithOptions(ctx, listOpts)
+}
+
+func (p *CodexProvider) mergeAppServerThreadStatus(ctx context.Context, opts ListThreadsOptions, threads []ThreadInfo) {
+	if len(threads) == 0 {
+		return
+	}
+	client, err := p.appServerClient(ctx)
+	if err != nil {
+		log.Debug("codex", "thread status merge skipped: %v", err)
+		return
+	}
+	appThreads, err := client.ListThreadsWithOptions(ctx, opts)
+	if err != nil {
+		log.Debug("codex", "thread status merge failed: %v", err)
+		return
+	}
+	byID := make(map[string]ThreadInfo, len(appThreads))
+	for _, thread := range appThreads {
+		if thread.ID != "" {
+			byID[thread.ID] = thread
+		}
+	}
+	for i := range threads {
+		appThread, ok := byID[threads[i].ID]
+		if !ok {
+			continue
+		}
+		threads[i].Status = appThread.Status
+		if appThread.UpdatedAt > threads[i].UpdatedAt {
+			threads[i].UpdatedAt = appThread.UpdatedAt
+		}
+		if appThread.CreatedAt > 0 && threads[i].CreatedAt == 0 {
+			threads[i].CreatedAt = appThread.CreatedAt
+		}
+		if appThread.Preview != "" && threads[i].Preview == "" {
+			threads[i].Preview = appThread.Preview
+		}
+		if appThread.Name != "" && threads[i].Name == "" {
+			threads[i].Name = appThread.Name
+		}
+	}
 }
 
 // ListThreads queries codex for threads and converts them to provider.Session.
@@ -1671,15 +1713,17 @@ func codexSessionRolloutFiles(threadID string) ([]string, error) {
 }
 
 func codexListedThreadStatus(status ThreadStatus, active bool) string {
-	// Codex thread/list can report historical, unsubscribed threads as "idle".
-	// In Magent, "running" means this agent process owns an active provider
-	// session for the thread and can accept input. Otherwise list status should
-	// match GetSession, which treats unloaded provider threads as stopped.
-	if !active {
+	normalized := provider.NormalizeSessionStatus(status.Type)
+	if normalized == string(provider.SessionStatusRunning) {
+		return normalized
+	}
+	if active {
+		return string(provider.SessionStatusRunning)
+	}
+	if normalized == "" {
 		return string(provider.SessionStatusStopped)
 	}
-	_ = status
-	return string(provider.SessionStatusRunning)
+	return normalized
 }
 
 func (p *CodexProvider) Close() error {

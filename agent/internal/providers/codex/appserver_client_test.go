@@ -571,7 +571,7 @@ func TestCodexTurnsToItemsPreservesAppServerToolCallIDs(t *testing.T) {
 	}
 }
 
-func TestCodexListedThreadStatusRequiresActiveSessionForRunning(t *testing.T) {
+func TestCodexListedThreadStatusUsesProviderStatus(t *testing.T) {
 	tests := []struct {
 		name   string
 		status ThreadStatus
@@ -579,10 +579,10 @@ func TestCodexListedThreadStatusRequiresActiveSessionForRunning(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "idle historical thread is stopped",
+			name:   "idle historical thread is running",
 			status: ThreadStatus{Type: "idle"},
 			active: false,
-			want:   string(provider.SessionStatusStopped),
+			want:   string(provider.SessionStatusRunning),
 		},
 		{
 			name:   "idle active provider session is running",
@@ -607,6 +607,18 @@ func TestCodexListedThreadStatusRequiresActiveSessionForRunning(t *testing.T) {
 			status: ThreadStatus{Type: "completed"},
 			active: true,
 			want:   string(provider.SessionStatusRunning),
+		},
+		{
+			name:   "not loaded thread is stopped",
+			status: ThreadStatus{Type: "notLoaded"},
+			active: false,
+			want:   string(provider.SessionStatusStopped),
+		},
+		{
+			name:   "completed inactive thread is completed",
+			status: ThreadStatus{Type: "completed"},
+			active: false,
+			want:   string(provider.SessionStatusCompleted),
 		},
 	}
 

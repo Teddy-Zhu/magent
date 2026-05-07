@@ -65,9 +65,29 @@ void main() {
   });
 
   test(
-    'session sync required triggers item catch-up and event dispatch',
+    'session sync required with no revision only dispatches sync hint',
     () async {
       final events = <Map<String, dynamic>>[];
+      engine.start();
+      final sub = engine.sessionEvents.listen(events.add);
+      await engine.subscribeSession('s1');
+      await engine.completeSessionInitialItemsSync('s1');
+      sessions.refreshedItems.clear();
+
+      realtime.emit({'type': 'session.sync_required', 'session_id': 's1'});
+      await Future<void>.delayed(Duration.zero);
+
+      expect(sessions.refreshedItems, isEmpty);
+      expect(events.single['type'], 'session.sync_required');
+      await sub.cancel();
+    },
+  );
+
+  test(
+    'session sync required with revision triggers item catch-up and event dispatch',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      sessions.revisions['s1'] = 1;
       engine.start();
       final sub = engine.sessionEvents.listen(events.add);
       await engine.subscribeSession('s1');
@@ -258,6 +278,7 @@ void main() {
     'sync required buffers following session events during catch-up',
     () async {
       final events = <Map<String, dynamic>>[];
+      sessions.revisions['s1'] = 1;
       engine.start();
       await Future<void>.delayed(Duration.zero);
       await engine.subscribeSession('s1');
@@ -297,6 +318,7 @@ void main() {
 
   test('session items changed triggers catch-up once', () async {
     final events = <Map<String, dynamic>>[];
+    sessions.revisions['s1'] = 1;
     engine.start();
     final sub = engine.sessionEvents.listen(events.add);
     await engine.subscribeSession('s1');
@@ -585,6 +607,14 @@ class _FakeSessions implements SessionSyncStore {
       return refreshCompleters.removeAt(0).future;
     }
     return [];
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> refreshItemsIfChanged(
+    String sessionId,
+  ) async {
+    if ((revisions[sessionId] ?? 0) <= 0) return [];
+    return refreshItems(sessionId);
   }
 
   @override

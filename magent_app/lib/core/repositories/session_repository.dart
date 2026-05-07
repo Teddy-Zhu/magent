@@ -84,6 +84,8 @@ abstract class SessionSyncStore {
 
   Future<List<Map<String, dynamic>>> refreshItems(String sessionId);
 
+  Future<List<Map<String, dynamic>>> refreshItemsIfChanged(String sessionId);
+
   Future<List<Map<String, dynamic>>> refreshSessions(
     String projectId, {
     bool archived = false,
@@ -735,7 +737,22 @@ class SessionRepository implements SessionSyncStore {
 
   @override
   Future<List<Map<String, dynamic>>> refreshItems(String sessionId) async {
+    return _refreshItems(sessionId, skipZeroRevision: false);
+  }
+
+  @override
+  Future<List<Map<String, dynamic>>> refreshItemsIfChanged(
+    String sessionId,
+  ) async {
+    return _refreshItems(sessionId, skipZeroRevision: true);
+  }
+
+  Future<List<Map<String, dynamic>>> _refreshItems(
+    String sessionId, {
+    required bool skipZeroRevision,
+  }) async {
     final revision = await getItemRevision(sessionId);
+    if (skipZeroRevision && revision <= 0) return const [];
     final key = '$agentId|$sessionId|$revision';
     final inFlight = _itemChangeLoads[key];
     if (inFlight != null) return inFlight;
@@ -798,6 +815,14 @@ class SessionRepository implements SessionSyncStore {
     int limit = 1,
   }) async {
     return _loadItemsPage(sessionId, cursor: null, limit: limit);
+  }
+
+  Future<SessionItemPageState> reloadLatestItemsPage(
+    String sessionId, {
+    int limit = 1,
+  }) async {
+    await resetItemWindow(sessionId);
+    return loadLatestItemsPage(sessionId, limit: limit);
   }
 
   Future<SessionItemPageState> loadOlderItemsPage(
@@ -911,30 +936,15 @@ class SessionRepository implements SessionSyncStore {
           agentId,
           _itemsOlderScope,
           sessionId,
-          hasOlder ? olderCursor! : '',
+          hasOlder ? olderCursor : '',
         );
       } else if (hasOlder) {
-        final cachedTurnCount = await _db.getTurnCountBySession(
-          agentId,
-          sessionId,
-        );
-        final existingCursor = await _db.getSyncCursor(
+        await _db.setSyncCursor(
           agentId,
           _itemsOlderScope,
           sessionId,
+          olderCursor,
         );
-        if (existingCursor != null &&
-            existingCursor.isNotEmpty &&
-            cachedTurnCount > limit) {
-          olderCursor = existingCursor;
-        } else {
-          await _db.setSyncCursor(
-            agentId,
-            _itemsOlderScope,
-            sessionId,
-            olderCursor!,
-          );
-        }
       } else {
         await _db.setSyncCursor(agentId, _itemsOlderScope, sessionId, '');
       }
@@ -963,8 +973,7 @@ class SessionRepository implements SessionSyncStore {
         afterRevision: afterRevision,
       );
       if (page['reset_required'] == true || page['resetRequired'] == true) {
-        await resetItemWindow(sessionId);
-        final loaded = await loadLatestItemsPage(sessionId);
+        final loaded = await reloadLatestItemsPage(sessionId);
         return loaded.items;
       }
       final result = await _applyItemChangesPage(sessionId, page);

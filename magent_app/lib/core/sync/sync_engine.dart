@@ -111,7 +111,7 @@ class SyncEngine {
         gate.catchUpQueued = false;
         gate.subscriptionSent = false;
         await _sendSessionSubscription(sessionId, gate);
-        await sessions.refreshItems(sessionId);
+        await sessions.refreshItemsIfChanged(sessionId);
       }
       final endRevision = await sessions.getItemRevision(sessionId);
       await _drainBufferedSessionEvents(
@@ -184,7 +184,8 @@ class SyncEngine {
       final applied = await sessions.applyRealtimeItemChanges(sessionId, event);
       await _trackAppliedRealtimeCursor(sessionId, event);
       if (!applied) {
-        _beginSessionCatchUp(sessionId);
+        await sessions.refreshItems(sessionId);
+        await _trackAppliedRealtimeCursor(sessionId, event);
       }
       _sessionEvents.add(event);
       return;
@@ -254,7 +255,7 @@ class SyncEngine {
       }
       if (!refreshed) {
         await gate.applyTail;
-        await sessions.refreshItems(sessionId);
+        await sessions.refreshItemsIfChanged(sessionId);
         endRevision = await sessions.getItemRevision(sessionId);
         refreshed = true;
       }

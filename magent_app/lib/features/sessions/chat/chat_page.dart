@@ -459,6 +459,7 @@ String _cleanDiffPath(String path) {
 
 class _ChatPageState extends ConsumerState<ChatPage> {
   static const _initialBottomJumpFrames = 8;
+  static const _runningHistoryPollInterval = Duration(seconds: 3);
   static const _sendModeQueue = 'queue';
   static const _sendModeInterruptThenSend = 'interrupt_then_send';
 
@@ -497,6 +498,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   StreamSubscription<Map<String, dynamic>>? _sessionEventsSub;
   StreamSubscription<List<Map<String, dynamic>>>? _itemsSub;
   StreamSubscription<int>? _itemCountSub;
+  Timer? _runningHistoryPollTimer;
   Map<String, dynamic>? _session;
   ChatTokenUsageSnapshot? _tokenUsage;
   bool _tokenUsageExpanded = false;
@@ -613,6 +615,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _subscribeItems();
     _syncEngine = ref.read(syncEngineProvider);
     _syncEngine?.start();
+    _startRunningHistoryPolling();
     final sessionLoad = _loadSession().then((_) {
       if (_isActive) unawaited(_refreshProviderConfigAndSkills());
     });
@@ -1169,12 +1172,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     }
     _itemsRefreshInFlight = true;
     try {
-      final page = await _repo!.loadLatestItemsPage(
+      final page = await _repo!.reloadLatestItemsPage(
         widget.sessionId,
         limit: _turnPageSize,
       );
       if (_isActive) {
-        setState(() => _hasOlderItems = page.hasOlder);
+        setState(() {
+          _visibleTurnCount = _turnPageSize;
+          _hasOlderItems = page.hasOlder;
+        });
       }
     } catch (e) {
       debugPrint('ChatPage: loadEvents error: $e');
@@ -1188,21 +1194,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (_repo == null || _itemsRefreshInFlight) {
       _markInitialItemsLoaded();
       return;
-    }
-    try {
-      final cachedTurns = await _repo!.getCachedTurnCount(widget.sessionId);
-      if (!_isActive) return;
-      final sessionRunning = SessionStatuses.isRunning(_session?['status']);
-      final activeTail = await _repo!.hasActiveTailTurn(widget.sessionId);
-      if (!_isActive) return;
-      if (cachedTurns > 0 && !sessionRunning && !activeTail) {
-        if (_loading) setState(() => _loading = false);
-        await _refreshOlderItemsState();
-        _flushPendingInitialBottomScroll();
-        return;
-      }
-    } catch (e) {
-      debugPrint('ChatPage: check cached items error: $e');
     }
     await _loadItems();
   }
@@ -1219,8 +1210,8 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     if (_repo == null || _itemsRefreshInFlight) return;
     _itemsRefreshInFlight = true;
     try {
-      await _repo!.resetItemWindow(widget.sessionId);
-      final page = await _repo!.loadLatestItemsPage(
+      await _loadSession();
+      final page = await _repo!.reloadLatestItemsPage(
         widget.sessionId,
         limit: _turnPageSize,
       );
@@ -1237,6 +1228,36 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     } finally {
       _itemsRefreshInFlight = false;
     }
+  }
+
+  void _startRunningHistoryPolling() {
+    _runningHistoryPollTimer?.cancel();
+    _runningHistoryPollTimer = Timer.periodic(
+      _runningHistoryPollInterval,
+      (_) => unawaited(_pollRunningHistory()),
+    );
+  }
+
+  Future<void> _pollRunningHistory() async {
+    if (!_isActive || _repo == null || _itemsRefreshInFlight) return;
+    if (!_needsProviderHistoryPolling) return;
+    if (!_turnActive && !_isRunning) return;
+    if (!_isNearBottom()) return;
+    try {
+      await _loadSession();
+      if (!_needsProviderHistoryPolling) return;
+      if (!_isActive || (!_turnActive && !_isRunning)) return;
+      if (!_isNearBottom()) return;
+      await _loadItems();
+    } catch (e) {
+      debugPrint('ChatPage: poll running history error: $e');
+    }
+  }
+
+  bool get _needsProviderHistoryPolling {
+    final source = _sessionField('source');
+    if (source.isEmpty) return false;
+    return source != 'appServer';
   }
 
   bool _itemsContainActiveTurn(List<Map<String, dynamic>> items) {
@@ -3382,6 +3403,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _sessionEventsSub?.cancel();
     _itemsSub?.cancel();
     _itemCountSub?.cancel();
+    _runningHistoryPollTimer?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();

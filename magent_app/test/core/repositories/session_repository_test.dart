@@ -482,57 +482,164 @@ void main() {
     expect(await repo.hasOlderItems('s1'), isTrue);
   });
 
-  test('latest page keeps deeper cached older cursor', () async {
-    fakeApi.items = [
-      for (var i = 0; i < 3; i++)
+  test(
+    'latest page replaces older cursor with current window cursor',
+    () async {
+      fakeApi.items = [
+        for (var i = 0; i < 3; i++)
+          {
+            'item_id': 'cached-$i',
+            'turn_id': 'turn-$i',
+            'index': i,
+            'type': 'agent_message',
+            'status': 'completed',
+            'content': {
+              'id': 'cached-$i',
+              'type': 'agentMessage',
+              'text': 'cached $i',
+            },
+            'created_at': DateTime(2026, 5, 1, 0, 0, i).toIso8601String(),
+            'updated_at': DateTime(2026, 5, 1, 0, 0, i).toIso8601String(),
+          },
+      ];
+      fakeApi.pageCursors[null] = 'older:after-latest';
+      fakeApi.pageHasMore[null] = true;
+
+      await repo.loadLatestItemsPage('s1', limit: 3);
+      expect(
+        await db.getSyncCursor('agent-a', 'session_items_older', 's1'),
+        'older:after-latest',
+      );
+
+      fakeApi.items = [
         {
-          'item_id': 'cached-$i',
-          'turn_id': 'turn-$i',
-          'index': i,
+          'item_id': 'cached-2',
+          'turn_id': 'turn-2',
+          'index': 2,
           'type': 'agent_message',
           'status': 'completed',
           'content': {
-            'id': 'cached-$i',
+            'id': 'cached-2',
             'type': 'agentMessage',
-            'text': 'cached $i',
+            'text': 'cached 2',
           },
-          'created_at': DateTime(2026, 5, 1, 0, 0, i).toIso8601String(),
-          'updated_at': DateTime(2026, 5, 1, 0, 0, i).toIso8601String(),
+          'created_at': DateTime(2026, 5, 1, 0, 0, 2).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 1, 0, 0, 2).toIso8601String(),
         },
+      ];
+      fakeApi.pageCursors[null] = 'older:after-one';
+
+      await repo.loadLatestItemsPage('s1', limit: 1);
+
+      expect(
+        await db.getSyncCursor('agent-a', 'session_items_older', 's1'),
+        'older:after-one',
+      );
+    },
+  );
+
+  test('reload latest item window keeps a continuous tail window', () async {
+    await db.insertOrUpdateItems([
+      SessionItemEntriesCompanion.insert(
+        agentId: 'agent-a',
+        sessionId: 's1',
+        itemId: 'old-1',
+        turnId: const Value('turn-old'),
+        type: 'agent_message',
+        status: const Value('completed'),
+        content: const Value('{"text":"old"}'),
+        itemIndex: const Value(1),
+        createdAt: DateTime(2026, 5, 1),
+        updatedAt: DateTime(2026, 5, 1),
+      ),
+      SessionItemEntriesCompanion.insert(
+        agentId: 'agent-a',
+        sessionId: 's1',
+        itemId: 'old-2',
+        turnId: const Value('turn-older'),
+        type: 'agent_message',
+        status: const Value('completed'),
+        content: const Value('{"text":"older"}'),
+        itemIndex: const Value(2),
+        createdAt: DateTime(2026, 5, 1, 0, 0, 1),
+        updatedAt: DateTime(2026, 5, 1, 0, 0, 1),
+      ),
+    ]);
+    await repo.addPendingUserMessage('s1', 'pending input');
+    await db.setSyncCursor(
+      'agent-a',
+      'session_items_older',
+      's1',
+      'older:stale',
+    );
+    await db.setSyncState('agent-a', 'session_items', 's1', revision: 42);
+
+    fakeApi.items = [
+      {
+        'item_id': 'latest-1',
+        'turn_id': 'turn-latest',
+        'index': 100,
+        'type': 'agent_message',
+        'status': 'completed',
+        'content': {'id': 'latest-1', 'type': 'agentMessage', 'text': 'latest'},
+        'created_at': DateTime(2026, 5, 1, 0, 2).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1, 0, 2).toIso8601String(),
+      },
     ];
     fakeApi.pageCursors[null] = 'older:after-latest';
     fakeApi.pageHasMore[null] = true;
 
-    await repo.loadLatestItemsPage('s1', limit: 3);
+    final page = await repo.reloadLatestItemsPage('s1', limit: 1);
+    final items = await db.getItemsBySession('agent-a', 's1');
+
+    expect(page.hasOlder, isTrue);
+    expect(page.olderCursor, 'older:after-latest');
+    expect(items.map((item) => item.itemId), contains('latest-1'));
+    expect(items.any((item) => item.itemId.startsWith('local-')), isTrue);
+    expect(items.map((item) => item.itemId), isNot(contains('old-1')));
+    expect(items.map((item) => item.itemId), isNot(contains('old-2')));
     expect(
       await db.getSyncCursor('agent-a', 'session_items_older', 's1'),
       'older:after-latest',
     );
+    expect(await repo.getItemRevision('s1'), 0);
+  });
 
-    fakeApi.items = [
+  test('older page continues from reloaded latest window cursor', () async {
+    fakeApi.itemsByCursor[null] = [
       {
-        'item_id': 'cached-2',
-        'turn_id': 'turn-2',
-        'index': 2,
+        'item_id': 'latest-1',
+        'turn_id': 'turn-latest',
+        'index': 100,
         'type': 'agent_message',
         'status': 'completed',
-        'content': {
-          'id': 'cached-2',
-          'type': 'agentMessage',
-          'text': 'cached 2',
-        },
-        'created_at': DateTime(2026, 5, 1, 0, 0, 2).toIso8601String(),
-        'updated_at': DateTime(2026, 5, 1, 0, 0, 2).toIso8601String(),
+        'content': {'id': 'latest-1', 'type': 'agentMessage', 'text': 'latest'},
+        'created_at': DateTime(2026, 5, 1, 0, 2).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1, 0, 2).toIso8601String(),
       },
     ];
-    fakeApi.pageCursors[null] = 'older:after-one';
+    fakeApi.itemsByCursor['older:after-latest'] = [
+      {
+        'item_id': 'older-1',
+        'turn_id': 'turn-older',
+        'index': 99,
+        'type': 'agent_message',
+        'status': 'completed',
+        'content': {'id': 'older-1', 'type': 'agentMessage', 'text': 'older'},
+        'created_at': DateTime(2026, 5, 1, 0, 1).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1, 0, 1).toIso8601String(),
+      },
+    ];
+    fakeApi.pageCursors[null] = 'older:after-latest';
+    fakeApi.pageHasMore[null] = true;
 
-    await repo.loadLatestItemsPage('s1', limit: 1);
+    await repo.reloadLatestItemsPage('s1', limit: 1);
+    final olderPage = await repo.loadOlderItemsPage('s1', limit: 1);
+    final items = await db.getItemsBySession('agent-a', 's1');
 
-    expect(
-      await db.getSyncCursor('agent-a', 'session_items_older', 's1'),
-      'older:after-latest',
-    );
+    expect(fakeApi.itemRequestCursors, [isNull, 'older:after-latest']);
+    expect(olderPage.items.map((item) => item['item_id']), ['older-1']);
+    expect(items.map((item) => item.itemId), ['older-1', 'latest-1']);
   });
 
   test('turn watch window includes all items from a cached turn', () async {
