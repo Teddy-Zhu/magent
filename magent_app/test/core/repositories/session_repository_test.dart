@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:drift/drift.dart' show Value;
 import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -472,6 +474,240 @@ void main() {
     expect(await db.getSyncCursor('agent-a', 'session_items_older', 's1'), '');
   });
 
+  test('has older items reflects stored older-page cursor', () async {
+    expect(await repo.hasOlderItems('s1'), isFalse);
+
+    await db.setSyncCursor('agent-a', 'session_items_older', 's1', 'older-1');
+
+    expect(await repo.hasOlderItems('s1'), isTrue);
+  });
+
+  test('latest page keeps deeper cached older cursor', () async {
+    fakeApi.items = [
+      for (var i = 0; i < 3; i++)
+        {
+          'item_id': 'cached-$i',
+          'turn_id': 'turn-$i',
+          'index': i,
+          'type': 'agent_message',
+          'status': 'completed',
+          'content': {
+            'id': 'cached-$i',
+            'type': 'agentMessage',
+            'text': 'cached $i',
+          },
+          'created_at': DateTime(2026, 5, 1, 0, 0, i).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 1, 0, 0, i).toIso8601String(),
+        },
+    ];
+    fakeApi.pageCursors[null] = 'older:after-latest';
+    fakeApi.pageHasMore[null] = true;
+
+    await repo.loadLatestItemsPage('s1', limit: 3);
+    expect(
+      await db.getSyncCursor('agent-a', 'session_items_older', 's1'),
+      'older:after-latest',
+    );
+
+    fakeApi.items = [
+      {
+        'item_id': 'cached-2',
+        'turn_id': 'turn-2',
+        'index': 2,
+        'type': 'agent_message',
+        'status': 'completed',
+        'content': {
+          'id': 'cached-2',
+          'type': 'agentMessage',
+          'text': 'cached 2',
+        },
+        'created_at': DateTime(2026, 5, 1, 0, 0, 2).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1, 0, 0, 2).toIso8601String(),
+      },
+    ];
+    fakeApi.pageCursors[null] = 'older:after-one';
+
+    await repo.loadLatestItemsPage('s1', limit: 1);
+
+    expect(
+      await db.getSyncCursor('agent-a', 'session_items_older', 's1'),
+      'older:after-latest',
+    );
+  });
+
+  test('turn watch window includes all items from a cached turn', () async {
+    fakeApi.items = List.generate(73, (index) {
+      return {
+        'item_id': 'msg-$index',
+        'turn_id': 'turn-1',
+        'index': index,
+        'type': 'agent_message',
+        'status': 'completed',
+        'content': {
+          'id': 'msg-$index',
+          'type': 'agentMessage',
+          'text': 'message $index',
+        },
+        'created_at': DateTime(2026, 5, 1, 0, 0, index).toIso8601String(),
+        'updated_at': DateTime(2026, 5, 1, 0, 0, index).toIso8601String(),
+      };
+    });
+
+    await repo.loadLatestItemsPage('s1', limit: 1);
+
+    final recent = await repo.watchItems('s1', turnLimit: 1).first;
+    final turnCount = await repo.watchTurnCount('s1').first;
+
+    expect(fakeApi.itemRequestLimits, [1]);
+    expect(recent, hasLength(73));
+    expect(turnCount, 1);
+  });
+
+  test('turn watch window includes complete recent turns only', () async {
+    fakeApi.items = [
+      for (final spec in const [
+        ('turn-1', 0, 2),
+        ('turn-2', 2, 3),
+        ('turn-3', 5, 1),
+      ])
+        for (var offset = 0; offset < spec.$3; offset++)
+          {
+            'item_id': 'msg-${spec.$2 + offset}',
+            'turn_id': spec.$1,
+            'index': spec.$2 + offset,
+            'type': 'agent_message',
+            'status': 'completed',
+            'content': {
+              'id': 'msg-${spec.$2 + offset}',
+              'type': 'agentMessage',
+              'text': 'message ${spec.$2 + offset}',
+            },
+            'created_at': DateTime(
+              2026,
+              5,
+              1,
+              0,
+              0,
+              spec.$2 + offset,
+            ).toIso8601String(),
+            'updated_at': DateTime(
+              2026,
+              5,
+              1,
+              0,
+              0,
+              spec.$2 + offset,
+            ).toIso8601String(),
+          },
+    ];
+
+    await repo.loadLatestItemsPage('s1', limit: 3);
+
+    final recent = await repo.watchItems('s1', turnLimit: 2).first;
+
+    expect(recent.map((item) => item['item_id']), [
+      'msg-2',
+      'msg-3',
+      'msg-4',
+      'msg-5',
+    ]);
+  });
+
+  test(
+    'cached turn lookup returns current and adjacent turns locally',
+    () async {
+      fakeApi.items = [
+        for (final turn in const ['turn-1', 'turn-2', 'turn-3'])
+          {
+            'item_id': 'msg-$turn',
+            'turn_id': turn,
+            'index': const {'turn-1': 1, 'turn-2': 2, 'turn-3': 3}[turn],
+            'type': 'agent_message',
+            'status': 'completed',
+            'content': {
+              'id': 'msg-$turn',
+              'type': 'agentMessage',
+              'text': turn,
+            },
+            'created_at': DateTime(
+              2026,
+              5,
+              1,
+              0,
+              0,
+              const {'turn-1': 1, 'turn-2': 2, 'turn-3': 3}[turn]!,
+            ).toIso8601String(),
+            'updated_at': DateTime(
+              2026,
+              5,
+              1,
+              0,
+              0,
+              const {'turn-1': 1, 'turn-2': 2, 'turn-3': 3}[turn]!,
+            ).toIso8601String(),
+          },
+      ];
+
+      await repo.loadLatestItemsPage('s1', limit: 3);
+
+      expect(await repo.hasCachedTurn('s1', 'turn-2'), isTrue);
+      expect(await repo.hasCachedTurn('s1', 'missing'), isFalse);
+
+      final current = await repo.getCachedTurnItems('s1', 'turn-2');
+      final older = await repo.getAdjacentCachedTurnItems(
+        's1',
+        'turn-2',
+        newer: false,
+      );
+      final newer = await repo.getAdjacentCachedTurnItems(
+        's1',
+        'turn-2',
+        newer: true,
+      );
+
+      expect(current.map((item) => item['turn_id']), ['turn-2']);
+      expect(older.map((item) => item['turn_id']), ['turn-1']);
+      expect(newer.map((item) => item['turn_id']), ['turn-3']);
+      expect(fakeApi.itemRequestCursors, [isNull]);
+    },
+  );
+
+  test('active tail turn reflects latest cached turn item status', () async {
+    await db.insertOrUpdateItems([
+      SessionItemEntriesCompanion.insert(
+        agentId: 'agent-a',
+        sessionId: 's1',
+        itemId: 'completed-1',
+        turnId: const Value('turn-1'),
+        type: 'agent_message',
+        status: const Value('completed'),
+        content: const Value('{"text":"done"}'),
+        itemIndex: const Value(1),
+        createdAt: DateTime(2026, 5, 1),
+        updatedAt: DateTime(2026, 5, 1),
+      ),
+    ]);
+
+    expect(await repo.hasActiveTailTurn('s1'), isFalse);
+
+    await db.insertOrUpdateItems([
+      SessionItemEntriesCompanion.insert(
+        agentId: 'agent-a',
+        sessionId: 's1',
+        itemId: 'running-1',
+        turnId: const Value('turn-2'),
+        type: 'agent_message',
+        status: const Value('in_progress'),
+        content: const Value('{"text":"running"}'),
+        itemIndex: const Value(2),
+        createdAt: DateTime(2026, 5, 1, 0, 0, 1),
+        updatedAt: DateTime(2026, 5, 1, 0, 0, 1),
+      ),
+    ]);
+
+    expect(await repo.hasActiveTailTurn('s1'), isTrue);
+  });
+
   test('delete session cache clears websocket epoch cursor', () async {
     await db.setSyncCursor('agent-a', 'session_ws', 's1', 'old:24');
     await db.setSyncCursor('agent-a', 'session_ws_epoch', 's1', 'old');
@@ -550,6 +786,38 @@ void main() {
       expect(await db.getItemsBySession('agent-a', 's1'), isEmpty);
     },
   );
+
+  test('refresh items is deduplicated for same session revision', () async {
+    fakeApi.changes = [
+      {
+        'revision': 47,
+        'op': 'upsert',
+        'item_id': 'msg-1',
+        'item': {
+          'item_id': 'msg-1',
+          'type': 'agent_message',
+          'status': 'completed',
+          'content': {'id': 'msg-1', 'type': 'agentMessage', 'text': 'hello'},
+          'created_at': DateTime(2026, 5, 1).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+        },
+      },
+    ];
+    fakeApi.revision = 47;
+    fakeApi.itemChangeCompleter = Completer<Map<String, dynamic>>();
+
+    final first = repo.refreshItems('s1');
+    final second = repo.refreshItems('s1');
+
+    await Future<void>.delayed(Duration.zero);
+    expect(fakeApi.itemChangeRequestRevisions, [0]);
+
+    fakeApi.completeItemChanges();
+
+    expect((await first).map((item) => item['item_id']), ['msg-1']);
+    expect((await second).map((item) => item['item_id']), ['msg-1']);
+    expect(fakeApi.itemChangeRequestRevisions, [0]);
+  });
 
   test('refresh items stores codex app-server tool call projections', () async {
     fakeApi.items = [
@@ -871,6 +1139,34 @@ void main() {
     expect(archived.map((s) => s.id), ['archived-1']);
     expect(archived.single.archivedAt, isNotNull);
   });
+
+  test(
+    'session list sync is deduplicated for same project and archive state',
+    () async {
+      fakeApi.sessions = [
+        {
+          'id': 's1',
+          'provider_id': 'codex',
+          'project_id': 'p1',
+          'status': {'type': 'notLoaded'},
+          'created_at': DateTime(2026, 5, 1).toIso8601String(),
+          'updated_at': DateTime(2026, 5, 1).toIso8601String(),
+        },
+      ];
+      fakeApi.sessionListCompleter = Completer<List<dynamic>>();
+
+      final cached = repo.getSessions('p1');
+      final refreshed = repo.refreshSessions('p1');
+
+      await Future<void>.delayed(Duration.zero);
+      expect(fakeApi.sessionListRequests, 1);
+
+      fakeApi.completeSessionList();
+
+      expect(await cached, isEmpty);
+      expect((await refreshed).map((s) => s['id']), ['s1']);
+    },
+  );
 }
 
 class _FakeSessionApi implements SessionApiLike {
@@ -878,10 +1174,14 @@ class _FakeSessionApi implements SessionApiLike {
   List<dynamic> items = [];
   List<dynamic> changes = [];
   int revision = 1;
+  int sessionListRequests = 0;
+  Completer<List<dynamic>>? sessionListCompleter;
+  Completer<Map<String, dynamic>>? itemChangeCompleter;
   final Map<String?, List<dynamic>> itemsByCursor = {};
   final Map<String?, String?> pageCursors = {};
   final Map<String?, bool> pageHasMore = {};
   final List<String?> itemRequestCursors = [];
+  final List<int> itemRequestLimits = [];
   final List<int> itemChangeRequestRevisions = [];
 
   @override
@@ -919,9 +1219,10 @@ class _FakeSessionApi implements SessionApiLike {
   Future<Map<String, dynamic>> getItemsPage(
     String sessionId, {
     String? cursor,
-    int limit = 80,
+    int limit = 1,
   }) async {
     itemRequestCursors.add(cursor);
+    itemRequestLimits.add(limit);
     return {
       'items': itemsByCursor[cursor] ?? items,
       'cursor': pageCursors.containsKey(cursor) ? pageCursors[cursor] : cursor,
@@ -936,12 +1237,26 @@ class _FakeSessionApi implements SessionApiLike {
     int limit = 500,
   }) async {
     itemChangeRequestRevisions.add(afterRevision);
+    final completer = itemChangeCompleter;
+    if (completer != null) return completer.future;
     return {
       'changes': changes,
       'to_revision': revision,
       'has_more': false,
       'reset_required': false,
     };
+  }
+
+  void completeItemChanges() {
+    final completer = itemChangeCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete({
+        'changes': changes,
+        'to_revision': revision,
+        'has_more': false,
+        'reset_required': false,
+      });
+    }
   }
 
   @override
@@ -954,7 +1269,19 @@ class _FakeSessionApi implements SessionApiLike {
   Future<List<dynamic>> listSessions(
     String projectId, {
     bool archived = false,
-  }) async => sessions;
+  }) async {
+    sessionListRequests++;
+    final completer = sessionListCompleter;
+    if (completer != null) return completer.future;
+    return sessions;
+  }
+
+  void completeSessionList() {
+    final completer = sessionListCompleter;
+    if (completer != null && !completer.isCompleted) {
+      completer.complete(sessions);
+    }
+  }
 
   @override
   Future<void> deleteSession(String sessionId) async {}

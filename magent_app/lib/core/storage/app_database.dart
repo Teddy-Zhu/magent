@@ -194,6 +194,13 @@ class CacheBucketStats {
   const CacheBucketStats({required this.entries, required this.bytes});
 }
 
+class _SessionTurnSlice {
+  final String? turnId;
+  final List<SessionItemEntry> items;
+
+  const _SessionTurnSlice({required this.turnId, required this.items});
+}
+
 @DriftDatabase(
   tables: [
     ProjectEntries,
@@ -437,6 +444,7 @@ class AppDatabase extends _$AppDatabase {
               (t.scope.equals('session_events') |
                   t.scope.equals('session_items') |
                   t.scope.equals('session_items_older') |
+                  t.scope.equals('session_items_newer') |
                   t.scope.equals('session_ws') |
                   t.scope.equals('session_ws_epoch')),
         ))
@@ -617,6 +625,7 @@ class AppDatabase extends _$AppDatabase {
                 (t.scope.equals('session_events') |
                     t.scope.equals('session_items') |
                     t.scope.equals('session_items_older') |
+                    t.scope.equals('session_items_newer') |
                     t.scope.equals('session_ws') |
                     t.scope.equals('session_ws_epoch')),
           ))
@@ -695,6 +704,15 @@ class AppDatabase extends _$AppDatabase {
     return rows.reversed.toList(growable: false);
   }
 
+  Future<List<SessionItemEntry>> getRecentTurnItemsBySession(
+    String agentId,
+    String sessionId,
+    int turnLimit,
+  ) async {
+    final rows = await _itemsBySessionQuery(agentId, sessionId).get();
+    return _recentTurnItemsFromDescRows(rows, turnLimit);
+  }
+
   Stream<List<SessionItemEntry>> watchRecentItemsBySession(
     String agentId,
     String sessionId,
@@ -703,6 +721,179 @@ class AppDatabase extends _$AppDatabase {
     return (_itemsBySessionQuery(agentId, sessionId)..limit(limit)).watch().map(
       (rows) => rows.reversed.toList(growable: false),
     );
+  }
+
+  Stream<List<SessionItemEntry>> watchRecentTurnItemsBySession(
+    String agentId,
+    String sessionId,
+    int turnLimit,
+  ) {
+    return _itemsBySessionQuery(
+      agentId,
+      sessionId,
+    ).watch().map((rows) => _recentTurnItemsFromDescRows(rows, turnLimit));
+  }
+
+  Stream<int> watchTurnCountBySession(String agentId, String sessionId) {
+    return _itemsBySessionQuery(
+      agentId,
+      sessionId,
+    ).watch().map(_turnCountFromDescRows);
+  }
+
+  Future<int> getTurnCountBySession(String agentId, String sessionId) async {
+    final rows = await _itemsBySessionQuery(agentId, sessionId).get();
+    return _turnCountFromDescRows(rows);
+  }
+
+  Future<bool> hasActiveTailTurnBySession(
+    String agentId,
+    String sessionId,
+  ) async {
+    final rows = await _itemsBySessionQuery(agentId, sessionId).get();
+    final turns = _turnSlicesFromDescRows(rows);
+    if (turns.isEmpty) return false;
+    return turns.last.items.any(_isActiveSessionItem);
+  }
+
+  Future<bool> hasCachedTurnBySession(
+    String agentId,
+    String sessionId,
+    String turnId,
+  ) async {
+    final normalizedTurnId = turnId.trim();
+    if (normalizedTurnId.isEmpty) return false;
+    final row =
+        await (select(sessionItemEntries)
+              ..where(
+                (t) =>
+                    t.agentId.equals(agentId) &
+                    t.sessionId.equals(sessionId) &
+                    t.turnId.equals(normalizedTurnId),
+              )
+              ..limit(1))
+            .getSingleOrNull();
+    return row != null;
+  }
+
+  Future<List<SessionItemEntry>> getTurnItemsBySession(
+    String agentId,
+    String sessionId,
+    String turnId,
+  ) {
+    final normalizedTurnId = turnId.trim();
+    if (normalizedTurnId.isEmpty) return Future.value(const []);
+    return (select(sessionItemEntries)
+          ..where(
+            (t) =>
+                t.agentId.equals(agentId) &
+                t.sessionId.equals(sessionId) &
+                t.turnId.equals(normalizedTurnId),
+          )
+          ..orderBy([
+            (t) => OrderingTerm.asc(t.itemIndex),
+            (t) => OrderingTerm.asc(t.createdAt),
+            (t) => OrderingTerm.asc(t.itemId),
+          ]))
+        .get();
+  }
+
+  Future<List<SessionItemEntry>> getAdjacentCachedTurnItemsBySession(
+    String agentId,
+    String sessionId,
+    String turnId, {
+    required bool newer,
+  }) async {
+    final normalizedTurnId = turnId.trim();
+    if (normalizedTurnId.isEmpty) return const [];
+    final rows = await _itemsBySessionQuery(agentId, sessionId).get();
+    final turns = _turnSlicesFromDescRows(rows);
+    final index = turns.indexWhere((turn) => turn.turnId == normalizedTurnId);
+    if (index < 0) return const [];
+    final targetIndex = newer ? index + 1 : index - 1;
+    if (targetIndex < 0 || targetIndex >= turns.length) return const [];
+    return List<SessionItemEntry>.unmodifiable(turns[targetIndex].items);
+  }
+
+  List<SessionItemEntry> _recentTurnItemsFromDescRows(
+    List<SessionItemEntry> rows,
+    int turnLimit,
+  ) {
+    final selectedTurnKeys = <String>{};
+    final selected = <SessionItemEntry>[];
+    final effectiveLimit = turnLimit < 0 ? 0 : turnLimit;
+    for (final item in rows) {
+      if (_isLocalPendingItem(item)) {
+        selected.add(item);
+        continue;
+      }
+      final turnKey = _sessionItemTurnKey(item);
+      if (turnKey == null) continue;
+      if (selectedTurnKeys.contains(turnKey)) {
+        selected.add(item);
+        continue;
+      }
+      if (selectedTurnKeys.length >= effectiveLimit) continue;
+      selectedTurnKeys.add(turnKey);
+      selected.add(item);
+    }
+    return selected.reversed.toList(growable: false);
+  }
+
+  int _turnCountFromDescRows(List<SessionItemEntry> rows) {
+    final turnKeys = <String>{};
+    for (final item in rows) {
+      if (_isLocalPendingItem(item)) continue;
+      final turnKey = _sessionItemTurnKey(item);
+      if (turnKey != null) turnKeys.add(turnKey);
+    }
+    return turnKeys.length;
+  }
+
+  List<_SessionTurnSlice> _turnSlicesFromDescRows(List<SessionItemEntry> rows) {
+    final turns = <_SessionTurnSlice>[];
+    final indexByKey = <String, int>{};
+    for (final item in rows.reversed) {
+      if (_isLocalPendingItem(item)) continue;
+      final turnKey = _sessionItemTurnKey(item);
+      if (turnKey == null) continue;
+      final index = indexByKey[turnKey];
+      if (index == null) {
+        indexByKey[turnKey] = turns.length;
+        turns.add(_SessionTurnSlice(turnId: item.turnId, items: [item]));
+      } else {
+        turns[index].items.add(item);
+      }
+    }
+    return turns;
+  }
+
+  bool _isLocalPendingItem(SessionItemEntry item) {
+    return item.itemId.startsWith('local-') &&
+        item.type == 'user_message' &&
+        item.status == 'pending';
+  }
+
+  bool _isActiveSessionItem(SessionItemEntry item) {
+    final status = item.status?.trim().toLowerCase();
+    switch (status) {
+      case 'in_progress':
+      case 'inprogress':
+      case 'running':
+      case 'active':
+      case 'pending':
+        return true;
+      default:
+        return false;
+    }
+  }
+
+  String? _sessionItemTurnKey(SessionItemEntry item) {
+    final turnId = item.turnId?.trim();
+    if (turnId != null && turnId.isNotEmpty) return 'turn:$turnId';
+    final itemId = item.itemId.trim();
+    if (itemId.isEmpty) return null;
+    return 'item:$itemId';
   }
 
   Stream<int> watchItemCountBySession(String agentId, String sessionId) {

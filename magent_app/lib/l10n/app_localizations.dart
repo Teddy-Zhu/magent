@@ -776,6 +776,24 @@ abstract class AppLocalizations {
   /// **'Show the last conversation when entering a session'**
   String get settingsSessionOpenAtBottomSub;
 
+  /// No description provided for @settingsSessionTurnPageSize.
+  ///
+  /// In en, this message translates to:
+  /// **'Session turn page size'**
+  String get settingsSessionTurnPageSize;
+
+  /// No description provided for @settingsSessionTurnPageSizeSub.
+  ///
+  /// In en, this message translates to:
+  /// **'Control how many turns are fetched when opening a session or loading older messages'**
+  String get settingsSessionTurnPageSizeSub;
+
+  /// No description provided for @settingsSessionTurnPageSizeValue.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} turns per fetch'**
+  String settingsSessionTurnPageSizeValue(int count);
+
   /// No description provided for @settingsShowAiCommitSessions.
   ///
   /// In en, this message translates to:

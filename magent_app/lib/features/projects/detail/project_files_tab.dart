@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/github.dart';
 import 'package:flutter_highlight/themes/atom-one-dark.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
@@ -14,6 +13,7 @@ import 'package:magent_app/core/repositories/file_repository.dart';
 import 'package:magent_app/core/repositories/git_repository.dart';
 import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_highlight_view.dart';
 
 class ProjectFilesTab extends StatefulWidget {
   final String projectId;
@@ -330,9 +330,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
                         final item = _items[itemIndex];
                         final isDir = item['type'] == 'dir';
                         final name = item['name'] as String? ?? '';
-                        final ext = name.contains('.')
-                            ? name.split('.').last.toLowerCase()
-                            : '';
+                        final ext = _fileExtension(name);
                         final fileType = isDir ? null : _getFileType(ext);
 
                         return _FileRow(
@@ -366,7 +364,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
 
   void _openFile(String name, {int size = 0}) {
     final filePath = _currentPath.isEmpty ? name : '$_currentPath/$name';
-    final ext = name.contains('.') ? name.split('.').last.toLowerCase() : '';
+    final ext = _fileExtension(name);
     final fileType = _getFileType(ext);
     if (size > _previewSizeLimit && fileType != _FileType.image) {
       _showUnsupportedPreview(
@@ -383,7 +381,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
     } else if (fileType == _FileType.code) {
       _showCodeFile(filePath, _highlightLanguage(ext));
     } else {
-      _showTextFile(filePath);
+      _showTextFile(filePath, detectLanguage: ext.isEmpty);
     }
   }
 
@@ -474,7 +472,7 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
     }
   }
 
-  Future<void> _showTextFile(String path) async {
+  Future<void> _showTextFile(String path, {bool detectLanguage = false}) async {
     try {
       final cached = await widget.file.getCachedFile(widget.projectId, path);
       ValueNotifier<String>? contentNotifier;
@@ -486,7 +484,13 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         showModalBottomSheet(
           context: context,
           isScrollControlled: true,
-          builder: (_) => _TextFileSheet(path: path, content: contentNotifier!),
+          builder: (_) => _TextFileSheet(
+            path: path,
+            content: contentNotifier!,
+            detectLanguage: detectLanguage
+                ? _detectExtensionlessTextLanguage
+                : null,
+          ),
         ).whenComplete(() {
           sheetClosed = true;
           contentNotifier?.dispose();
@@ -502,7 +506,13 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
         showModalBottomSheet(
           context: context,
           isScrollControlled: true,
-          builder: (_) => _TextFileSheet(path: path, content: notifier),
+          builder: (_) => _TextFileSheet(
+            path: path,
+            content: notifier,
+            detectLanguage: detectLanguage
+                ? _detectExtensionlessTextLanguage
+                : null,
+          ),
         ).whenComplete(notifier.dispose);
       }
     } catch (e) {
@@ -639,6 +649,13 @@ class _ProjectFilesTabState extends State<ProjectFilesTab> {
       'json': 'json',
     };
     return map[ext] ?? 'plaintext';
+  }
+
+  String _fileExtension(String path) {
+    final name = path.split('/').last;
+    final dot = name.lastIndexOf('.');
+    if (dot <= 0 || dot == name.length - 1) return '';
+    return name.substring(dot + 1).toLowerCase();
   }
 
   IconData _getFileIcon(String ext, _FileType? type) {
@@ -782,39 +799,86 @@ class _ViewerToolbarButton extends StatelessWidget {
   }
 }
 
-const _viewerTextPadding = EdgeInsets.fromLTRB(8, 12, 12, 12);
-const _viewerLinePadding = EdgeInsets.symmetric(horizontal: 8, vertical: 1);
+const _viewerTextPadding = EdgeInsets.fromLTRB(6, 12, 12, 12);
+const _viewerLinePadding = EdgeInsets.fromLTRB(6, 1, 0, 1);
+
+String? _detectExtensionlessTextLanguage(String content) {
+  final sample = content.trimLeft();
+  if (sample.isEmpty) return null;
+
+  final firstLine = sample.split('\n').first.trim();
+  if (firstLine.startsWith('#!')) {
+    final shebang = firstLine.toLowerCase();
+    if (shebang.contains('sh') ||
+        shebang.contains('bash') ||
+        shebang.contains('zsh') ||
+        shebang.contains('env -s')) {
+      return 'bash';
+    }
+  }
+
+  final prefix = sample.length > 512 ? sample.substring(0, 512) : sample;
+  final shellSignals = <RegExp>[
+    RegExp(r'^(set\s+-(e|u|x|o|pipefail)|export\s+\w+=)', multiLine: true),
+    RegExp(r'^(if|for|while|case)\s+.+\b(then|do|in)\b', multiLine: true),
+    RegExp(r'^[\w.-]+\(\)\s*\{', multiLine: true),
+    RegExp("\\b(source|\\.)\\s+[\"']?[\\w./-]+", multiLine: true),
+  ];
+  return shellSignals.any((pattern) => pattern.hasMatch(prefix))
+      ? 'bash'
+      : null;
+}
 
 Widget _buildViewerScrollBody({
   required ScrollController scrollController,
   required bool wrap,
-  required Widget child,
+  required Widget Function(double minWidth) childBuilder,
 }) {
-  Widget content({required bool shrinkWidth}) {
-    return Padding(
-      padding: _viewerTextPadding,
-      child: Align(
-        alignment: Alignment.topLeft,
-        widthFactor: shrinkWidth ? 1 : null,
-        heightFactor: 1,
-        child: child,
-      ),
-    );
-  }
+  return LayoutBuilder(
+    builder: (context, constraints) {
+      final minContentWidth =
+          (constraints.maxWidth - _viewerTextPadding.horizontal).clamp(
+            0.0,
+            double.infinity,
+          );
+      final content = Padding(
+        padding: _viewerTextPadding,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minWidth: minContentWidth),
+          child: Align(
+            alignment: Alignment.topLeft,
+            widthFactor: wrap ? null : 1,
+            child: childBuilder(minContentWidth),
+          ),
+        ),
+      );
 
-  if (wrap) {
-    return SingleChildScrollView(
-      controller: scrollController,
-      child: content(shrinkWidth: false),
+      final vertical = SingleChildScrollView(
+        controller: scrollController,
+        child: content,
+      );
+      if (wrap) return vertical;
+      return SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: vertical,
+      );
+    },
+  );
+}
+
+class _ViewerAlignedCode extends StatelessWidget {
+  final Widget child;
+  final double minWidth;
+
+  const _ViewerAlignedCode({required this.child, required this.minWidth});
+
+  @override
+  Widget build(BuildContext context) {
+    return ConstrainedBox(
+      constraints: BoxConstraints(minWidth: minWidth),
+      child: child,
     );
   }
-  return SingleChildScrollView(
-    controller: scrollController,
-    child: SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: content(shrinkWidth: true),
-    ),
-  );
 }
 
 // --- Git Log Sheet ---
@@ -1608,20 +1672,23 @@ class _MarkdownSheetState extends ConsumerState<_MarkdownSheet> {
     double fontScale,
     bool isDark,
   ) {
-    final codeView = HighlightView(
-      content,
-      language: 'markdown',
-      theme: isDark ? atomOneDarkTheme : githubTheme,
-      textStyle: TextStyle(
-        fontFamily: 'monospace',
-        fontSize: 12 * fontScale,
-        height: 1.45,
-      ),
-    );
     return _buildViewerScrollBody(
       scrollController: scrollController,
       wrap: _wrap,
-      child: codeView,
+      childBuilder: (minWidth) => _ViewerAlignedCode(
+        minWidth: minWidth,
+        child: AppHighlightView(
+          content,
+          language: 'markdown',
+          theme: isDark ? atomOneDarkTheme : githubTheme,
+          minWidth: minWidth,
+          textStyle: TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 12 * fontScale,
+            height: 1.45,
+          ),
+        ),
+      ),
     );
   }
 
@@ -1715,16 +1782,6 @@ class _CodeSheetState extends ConsumerState<_CodeSheet> {
         return ValueListenableBuilder<String>(
           valueListenable: widget.content,
           builder: (context, content, _) {
-            final codeView = HighlightView(
-              content,
-              language: widget.language,
-              theme: isDark ? atomOneDarkTheme : githubTheme,
-              textStyle: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12 * fontScale,
-                height: 1.45,
-              ),
-            );
             return Column(
               children: [
                 Container(
@@ -1799,7 +1856,20 @@ class _CodeSheetState extends ConsumerState<_CodeSheet> {
                   child: _buildViewerScrollBody(
                     scrollController: scrollController,
                     wrap: _wrap,
-                    child: codeView,
+                    childBuilder: (minWidth) => _ViewerAlignedCode(
+                      minWidth: minWidth,
+                      child: AppHighlightView(
+                        content,
+                        language: widget.language,
+                        theme: isDark ? atomOneDarkTheme : githubTheme,
+                        minWidth: minWidth,
+                        textStyle: TextStyle(
+                          fontFamily: 'monospace',
+                          fontSize: 12 * fontScale,
+                          height: 1.45,
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ],
@@ -1811,10 +1881,54 @@ class _CodeSheetState extends ConsumerState<_CodeSheet> {
   }
 }
 
+class _PlainTextView extends StatelessWidget {
+  final String content;
+  final bool wrap;
+  final TextStyle style;
+  final double minWidth;
+
+  const _PlainTextView({
+    required this.content,
+    required this.wrap,
+    required this.style,
+    required this.minWidth,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final lines = content.split('\n');
+    return SizedBox(
+      width: wrap ? double.infinity : null,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (final line in lines)
+            ConstrainedBox(
+              constraints: BoxConstraints(minWidth: minWidth),
+              child: Text(
+                line.isEmpty ? ' ' : line,
+                textAlign: TextAlign.start,
+                style: style,
+                softWrap: wrap,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
 class _TextFileSheet extends ConsumerStatefulWidget {
   final String path;
   final ValueListenable<String> content;
-  const _TextFileSheet({required this.path, required this.content});
+  final String? Function(String content)? detectLanguage;
+
+  const _TextFileSheet({
+    required this.path,
+    required this.content,
+    this.detectLanguage,
+  });
 
   @override
   ConsumerState<_TextFileSheet> createState() => _TextFileSheetState();
@@ -1828,6 +1942,7 @@ class _TextFileSheetState extends ConsumerState<_TextFileSheet> {
     final fontScale = ref
         .watch(viewerFontScaleControllerProvider)
         .maybeWhen(data: (v) => v, orElse: () => 1.0);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return DraggableScrollableSheet(
       initialChildSize: 0.8,
       maxChildSize: 0.95,
@@ -1837,13 +1952,11 @@ class _TextFileSheetState extends ConsumerState<_TextFileSheet> {
         return ValueListenableBuilder<String>(
           valueListenable: widget.content,
           builder: (context, content, _) {
-            final textView = SelectableText(
-              content,
-              style: TextStyle(
-                fontFamily: 'monospace',
-                fontSize: 12 * fontScale,
-                height: 1.45,
-              ),
+            final language = widget.detectLanguage?.call(content);
+            final textStyle = TextStyle(
+              fontFamily: 'monospace',
+              fontSize: 12 * fontScale,
+              height: 1.45,
             );
             return Column(
               children: [
@@ -1869,6 +1982,28 @@ class _TextFileSheetState extends ConsumerState<_TextFileSheet> {
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
+                      if (language != null) ...[
+                        Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 6,
+                            vertical: 2,
+                          ),
+                          decoration: BoxDecoration(
+                            color: AppStatusColors.of(context).info.background,
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Text(
+                            language,
+                            style: TextStyle(
+                              fontSize: 10,
+                              color: AppStatusColors.of(
+                                context,
+                              ).info.foreground,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                      ],
                       _ViewerToolbarButton(
                         tooltip: _wrap
                             ? AppLocalizations.of(context)!.noWrap
@@ -1901,7 +2036,23 @@ class _TextFileSheetState extends ConsumerState<_TextFileSheet> {
                   child: _buildViewerScrollBody(
                     scrollController: scrollController,
                     wrap: _wrap,
-                    child: textView,
+                    childBuilder: (minWidth) => language == null
+                        ? _PlainTextView(
+                            content: content,
+                            wrap: _wrap,
+                            style: textStyle,
+                            minWidth: minWidth,
+                          )
+                        : _ViewerAlignedCode(
+                            minWidth: minWidth,
+                            child: AppHighlightView(
+                              content,
+                              language: language,
+                              theme: isDark ? atomOneDarkTheme : githubTheme,
+                              minWidth: minWidth,
+                              textStyle: textStyle,
+                            ),
+                          ),
                   ),
                 ),
               ],

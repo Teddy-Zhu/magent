@@ -126,6 +126,16 @@
   "settingsSession": "Sessions",
   "settingsSessionOpenAtBottom": "Open sessions at the latest message",
   "settingsSessionOpenAtBottomSub": "Show the last conversation when entering a session",
+  "settingsSessionTurnPageSize": "Session turn page size",
+  "settingsSessionTurnPageSizeSub": "Control how many turns are fetched when opening a session or loading older messages",
+  "settingsSessionTurnPageSizeValue": "{count} turns per fetch",
+  "@settingsSessionTurnPageSizeValue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsShowAiCommitSessions": "Show AI commit sessions",
   "settingsShowAiCommitSessionsSub": "Include sessions created only for commit message generation",
   "settingsAppearance": "Appearance",

@@ -76,6 +76,27 @@ class SessionStatuses {
   }
 }
 
+class SessionItemStatuses {
+  const SessionItemStatuses._();
+
+  static bool isActive(dynamic status) {
+    final raw = status is Map
+        ? status['type']?.toString() ?? status['status']?.toString()
+        : status?.toString();
+    switch (raw?.trim()) {
+      case 'active':
+      case 'inProgress':
+      case 'in_progress':
+      case 'inprogress':
+      case 'pending':
+      case 'running':
+        return true;
+      default:
+        return false;
+    }
+  }
+}
+
 class SessionPurposes {
   static const aiCommit = 'ai_commit';
 

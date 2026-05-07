@@ -13,8 +13,8 @@ import (
 )
 
 const (
-	defaultSessionItemPageLimit = 80
-	maxSessionItemPageLimit     = 200
+	defaultSessionTurnPageLimit = 1
+	maxSessionTurnPageLimit     = 200
 )
 
 type Manager struct {
@@ -344,15 +344,14 @@ func (m *Manager) GetEvents(ctx context.Context, sessionID, cursor string, limit
 	return p.ReadThreadEvents(ctx, threadID, cursor, limit)
 }
 
-// GetItems reads a provider-backed window of items for a session. The cursor is
-// provider-owned; an empty cursor returns the latest window, and the returned
-// cursor can be used to request older items.
+// GetItems reads a provider-backed turn window for a session. The cursor is in
+// Magent pagination format; each provider maps it to its native history cursor.
 func (m *Manager) GetItems(ctx context.Context, sessionID, cursor string, limit int) (*provider.ItemPage, error) {
 	if limit <= 0 {
-		limit = defaultSessionItemPageLimit
+		limit = defaultSessionTurnPageLimit
 	}
-	if limit > maxSessionItemPageLimit {
-		limit = maxSessionItemPageLimit
+	if limit > maxSessionTurnPageLimit {
+		limit = maxSessionTurnPageLimit
 	}
 	p, threadID, err := m.getProviderAndThreadForSession(sessionID)
 	if err != nil {

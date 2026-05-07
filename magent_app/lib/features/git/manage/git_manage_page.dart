@@ -11,7 +11,7 @@ import 'package:magent_app/features/git/widgets/commit_sheet.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
 import 'package:magent_app/shared/widgets/app_loading.dart';
 
-const _viewerLinePadding = EdgeInsets.symmetric(horizontal: 8, vertical: 1);
+const _viewerLinePadding = EdgeInsets.fromLTRB(6, 1, 0, 1);
 
 class GitManagePage extends ConsumerStatefulWidget {
   final String projectId;

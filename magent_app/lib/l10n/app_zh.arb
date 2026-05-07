@@ -126,6 +126,16 @@
   "settingsSession": "会话",
   "settingsSessionOpenAtBottom": "进入会话默认定位到底部",
   "settingsSessionOpenAtBottomSub": "打开会话时自动显示最后一条对话",
+  "settingsSessionTurnPageSize": "会话每次拉取 Turn 数",
+  "settingsSessionTurnPageSizeSub": "控制进入会话和加载更早消息时每次拉取的 turn 数量",
+  "settingsSessionTurnPageSizeValue": "每次 {count} 个 turn",
+  "@settingsSessionTurnPageSizeValue": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsShowAiCommitSessions": "显示 AI 生成提交信息会话",
   "settingsShowAiCommitSessionsSub": "在会话列表中包含仅用于生成提交信息的会话",
   "settingsAppearance": "外观",

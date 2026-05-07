@@ -5,7 +5,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_highlight/flutter_highlight.dart';
 import 'package:flutter_highlight/themes/github.dart';
 import 'package:go_router/go_router.dart';
 import 'package:dio/dio.dart';
@@ -18,10 +17,12 @@ import 'package:magent_app/core/repositories/session_repository.dart';
 import 'package:magent_app/core/session/session_language.dart';
 import 'package:magent_app/core/services/app_settings_service.dart';
 import 'package:magent_app/core/services/message_template_service.dart';
+import 'package:magent_app/core/sync/sync_engine.dart';
 import 'package:magent_app/core/theme/theme.dart';
 import 'package:magent_app/features/git/widgets/diff_sheet.dart';
 import 'package:magent_app/features/sessions/widgets/message_template_sheet.dart';
 import 'package:magent_app/l10n/app_localizations.dart';
+import 'package:magent_app/shared/widgets/app_highlight_view.dart';
 import 'package:magent_app/shared/widgets/app_loading.dart';
 import 'package:magent_app/shared/widgets/app_sheet_header.dart';
 import 'package:magent_app/shared/widgets/app_status_dot.dart';
@@ -246,6 +247,11 @@ bool chatTurnActiveFromItemSnapshot({
 }
 
 @visibleForTesting
+bool chatItemStatusIsActive(Object? status) {
+  return SessionItemStatuses.isActive(status);
+}
+
+@visibleForTesting
 ChatTokenUsageSnapshot? chatTokenUsageFromEventData(Object? data) {
   if (data is! Map) return null;
   final map = Map<String, dynamic>.from(data);
@@ -452,8 +458,6 @@ String _cleanDiffPath(String path) {
 }
 
 class _ChatPageState extends ConsumerState<ChatPage> {
-  static const _initialVisibleEventCount = 80;
-  static const _eventPageSize = 80;
   static const _initialBottomJumpFrames = 8;
   static const _sendModeQueue = 'queue';
   static const _sendModeInterruptThenSend = 'interrupt_then_send';
@@ -478,20 +482,26 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   bool _pendingJumpToBottom = false;
   bool _turnActive = false;
   bool _itemsRefreshInFlight = false;
+  bool _sessionInitialItemsSyncCompleted = false;
   bool _olderItemsLoadInFlight = false;
+  bool _olderItemsStateRefreshInFlight = false;
   bool _hasOlderItems = false;
   int _queuedInputCount = 0;
+  int _cachedTurnCount = 0;
   AppApiClient? _api;
   SessionRepository? _repo;
   BootstrapRepository? _bootstrap;
   FileRepository? _files;
   GitRepository? _git;
+  SyncEngine? _syncEngine;
   StreamSubscription<Map<String, dynamic>>? _sessionEventsSub;
   StreamSubscription<List<Map<String, dynamic>>>? _itemsSub;
+  StreamSubscription<int>? _itemCountSub;
   Map<String, dynamic>? _session;
   ChatTokenUsageSnapshot? _tokenUsage;
   bool _tokenUsageExpanded = false;
-  int _visibleEventCount = _initialVisibleEventCount;
+  int _turnPageSize = AppSettingsService.sessionTurnPageSizeDefault;
+  int _visibleTurnCount = AppSettingsService.sessionTurnPageSizeDefault;
 
   // 用户在设置面板里改过、且**与会话基线（_session 字段）不同**的待发送值。
   // 发送成功一次后会被"提升"为新基线（写回 _session）并清空，避免每次都重复
@@ -502,6 +512,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   String? _pendingApproval;
   String? _pendingSandbox;
   Map<String, dynamic>? _providerConfig;
+  String? _providerConfigId;
+  String? _providerConfigLoadId;
+  Object? _providerConfigLoadToken;
+  Future<Map<String, dynamic>?>? _providerConfigLoad;
 
   bool get _isRunning {
     return SessionStatuses.isRunning(_session?['status']);
@@ -572,11 +586,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void initState() {
     super.initState();
+    _scrollController.addListener(_handleEventsScrollPosition);
     _init();
   }
 
   Future<void> _init() async {
     _openAtBottom = await _settings.getSessionOpenAtBottom();
+    _turnPageSize = await _settings.getSessionTurnPageSize();
+    _visibleTurnCount = _turnPageSize;
+    if (!_isActive) return;
     _api = await loadActiveApi(ref);
     if (_api == null || !_isActive) {
       if (_isActive) setState(() => _loading = false);
@@ -591,45 +609,95 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _bootstrap = createBootstrapRepository(ref, _api!);
     _files = FileRepository(agentId: _api!.agentId, api: _api!.file, db: db);
     _git = GitRepository(agentId: _api!.agentId, api: _api!.git, db: db);
+    _subscribeItemCount();
     _subscribeItems();
-    final engine = ref.read(syncEngineProvider);
-    engine?.start();
-    unawaited(
-      _loadSession().then((_) {
-        if (_isActive) unawaited(_refreshSkills());
-        if (_isActive) unawaited(_loadProviderConfig());
-      }),
-    );
+    _syncEngine = ref.read(syncEngineProvider);
+    _syncEngine?.start();
+    final sessionLoad = _loadSession().then((_) {
+      if (_isActive) unawaited(_refreshProviderConfigAndSkills());
+    });
+    unawaited(sessionLoad);
     unawaited(_connectSessionEvents());
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_isActive) unawaited(_loadItems());
+      if (_isActive) {
+        unawaited(
+          sessionLoad
+              .whenComplete(_loadInitialItemsForSync)
+              .whenComplete(_completeInitialItemsSync),
+        );
+      }
     });
   }
 
-  Future<void> _loadProviderConfig() async {
-    if (_api == null) return;
-    final providerId = _session == null
+  String _currentProviderId() {
+    return _session == null
         ? 'codex'
-        : (canonicalProviderId(Map<String, dynamic>.from(_session!)) ??
-              'codex');
+        : canonicalProviderId(Map<String, dynamic>.from(_session!)) ?? 'codex';
+  }
+
+  Future<Map<String, dynamic>?> _ensureProviderConfig({
+    bool force = false,
+  }) async {
+    final bootstrap = _bootstrap;
+    if (bootstrap == null) return _providerConfig;
+    final providerId = _currentProviderId();
+
+    if (!force && _providerConfig != null && _providerConfigId == providerId) {
+      return _providerConfig;
+    }
+
+    final inFlight = _providerConfigLoad;
+    if (!force && inFlight != null && _providerConfigLoadId == providerId) {
+      return inFlight;
+    }
+
+    final token = Object();
+    final load = _loadAndStoreProviderConfig(
+      bootstrap,
+      providerId,
+      force: force,
+      token: token,
+    );
+    _providerConfigLoad = load;
+    _providerConfigLoadId = providerId;
+    _providerConfigLoadToken = token;
+    return load;
+  }
+
+  Future<Map<String, dynamic>?> _loadAndStoreProviderConfig(
+    BootstrapRepository bootstrap,
+    String providerId, {
+    bool force = false,
+    required Object token,
+  }) async {
     try {
-      final resp = await _api!.client.dio.get(
-        '/api/v1/providers/$providerId/config',
+      final config = await bootstrap.fetchProviderConfig(
+        providerId,
+        force: force,
       );
-      if (!_isActive) return;
-      final data = resp.data is Map ? resp.data['data'] : null;
-      if (data is Map) {
-        setState(() => _providerConfig = Map<String, dynamic>.from(data));
+      if (!_isActive) return null;
+      final nextConfig = Map<String, dynamic>.from(config);
+      if (mounted) {
+        setState(() {
+          _providerConfig = nextConfig;
+          _providerConfigId = providerId;
+        });
       }
+      return nextConfig;
     } catch (e) {
       debugPrint('ChatPage: load provider config error: $e');
+      return null;
+    } finally {
+      if (identical(_providerConfigLoadToken, token)) {
+        _providerConfigLoad = null;
+        _providerConfigLoadId = null;
+        _providerConfigLoadToken = null;
+      }
     }
   }
 
   Future<void> _openSettingsSheet() async {
-    if (_providerConfig == null) {
-      await _loadProviderConfig();
-    }
+    await _ensureProviderConfig();
     if (!mounted) return;
     final result = await showModalBottomSheet<_SessionSettingsResult>(
       context: context,
@@ -648,10 +716,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     _applySettingsResult(result);
   }
 
+  Future<void> _refreshProviderConfigAndSkills() async {
+    final config = await _ensureProviderConfig();
+    if (config == null || !_isActive) return;
+    _applySkillsConfig(config);
+  }
+
   void _subscribeItems() {
     _itemsSub?.cancel();
     _itemsSub = _repo!
-        .watchItems(widget.sessionId, limit: _visibleEventCount)
+        .watchItems(widget.sessionId, turnLimit: _visibleTurnCount)
         .listen((items) {
           if (!_isActive) return;
           final nextEvents = items.map(_itemToEvent).toList(growable: false);
@@ -694,12 +768,35 @@ class _ChatPageState extends ConsumerState<ChatPage> {
             _scrollToBottom();
           }
         });
+    unawaited(_refreshOlderItemsState());
+  }
+
+  void _subscribeItemCount() {
+    _itemCountSub?.cancel();
+    _itemCountSub = _repo!.watchTurnCount(widget.sessionId).listen((count) {
+      if (!_isActive || _cachedTurnCount == count) return;
+      setState(() => _cachedTurnCount = count);
+    });
+  }
+
+  Future<void> _refreshOlderItemsState() async {
+    if (_repo == null || _olderItemsStateRefreshInFlight) return;
+    _olderItemsStateRefreshInFlight = true;
+    try {
+      final hasOlder = await _repo!.hasOlderItems(widget.sessionId);
+      if (_isActive && _hasOlderItems != hasOlder) {
+        setState(() => _hasOlderItems = hasOlder);
+      }
+    } catch (e) {
+      debugPrint('ChatPage: refresh older items state error: $e');
+    } finally {
+      _olderItemsStateRefreshInFlight = false;
+    }
   }
 
   Future<void> _connectSessionEvents() async {
-    final engine = ref.read(syncEngineProvider);
+    final engine = _syncEngine;
     if (engine == null) {
-      _markInitialItemsLoaded();
       return;
     }
     _sessionEventsSub = engine.sessionEvents.listen((event) {
@@ -745,6 +842,18 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     });
     try {
       await engine.subscribeSession(widget.sessionId);
+    } catch (e) {
+      debugPrint('ChatPage: subscribe session events error: $e');
+    }
+  }
+
+  Future<void> _completeInitialItemsSync() async {
+    if (_sessionInitialItemsSyncCompleted) return;
+    _sessionInitialItemsSyncCompleted = true;
+    try {
+      await _syncEngine?.completeSessionInitialItemsSync(widget.sessionId);
+    } catch (e) {
+      debugPrint('ChatPage: complete initial items sync error: $e');
     } finally {
       _markInitialItemsLoaded();
     }
@@ -1054,12 +1163,15 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   Future<void> _loadItems() async {
-    if (_repo == null || _itemsRefreshInFlight) return;
+    if (_repo == null || _itemsRefreshInFlight) {
+      _markInitialItemsLoaded();
+      return;
+    }
     _itemsRefreshInFlight = true;
     try {
       final page = await _repo!.loadLatestItemsPage(
         widget.sessionId,
-        limit: _initialVisibleEventCount,
+        limit: _turnPageSize,
       );
       if (_isActive) {
         setState(() => _hasOlderItems = page.hasOlder);
@@ -1070,6 +1182,29 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     } finally {
       _itemsRefreshInFlight = false;
     }
+  }
+
+  Future<void> _loadInitialItemsForSync() async {
+    if (_repo == null || _itemsRefreshInFlight) {
+      _markInitialItemsLoaded();
+      return;
+    }
+    try {
+      final cachedTurns = await _repo!.getCachedTurnCount(widget.sessionId);
+      if (!_isActive) return;
+      final sessionRunning = SessionStatuses.isRunning(_session?['status']);
+      final activeTail = await _repo!.hasActiveTailTurn(widget.sessionId);
+      if (!_isActive) return;
+      if (cachedTurns > 0 && !sessionRunning && !activeTail) {
+        if (_loading) setState(() => _loading = false);
+        await _refreshOlderItemsState();
+        _flushPendingInitialBottomScroll();
+        return;
+      }
+    } catch (e) {
+      debugPrint('ChatPage: check cached items error: $e');
+    }
+    await _loadItems();
   }
 
   void _markInitialItemsLoaded() {
@@ -1087,11 +1222,11 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       await _repo!.resetItemWindow(widget.sessionId);
       final page = await _repo!.loadLatestItemsPage(
         widget.sessionId,
-        limit: _initialVisibleEventCount,
+        limit: _turnPageSize,
       );
       if (_isActive) {
         setState(() {
-          _visibleEventCount = _initialVisibleEventCount;
+          _visibleTurnCount = _turnPageSize;
           _hasOlderItems = page.hasOlder;
         });
       }
@@ -1106,10 +1241,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   bool _itemsContainActiveTurn(List<Map<String, dynamic>> items) {
     for (final item in items) {
-      final status = item['status']?.toString();
-      if (status == 'in_progress' || status == 'inProgress') {
-        return true;
-      }
+      if (SessionItemStatuses.isActive(item['status'])) return true;
     }
     return false;
   }
@@ -1140,7 +1272,7 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       _selectedSkills.clear();
     });
     await _repo?.addPendingUserMessage(widget.sessionId, input);
-    _visibleEventCount = _initialVisibleEventCount;
+    _visibleTurnCount = _turnPageSize;
     _scrollToBottom();
 
     // Save to recent messages
@@ -1539,6 +1671,33 @@ class _ChatPageState extends ConsumerState<ChatPage> {
     return position.maxScrollExtent - position.pixels < 180;
   }
 
+  bool _handleEventsScrollNotification(ScrollNotification notification) {
+    if (notification.depth != 0) return false;
+    if (notification is ScrollUpdateNotification ||
+        notification is OverscrollNotification) {
+      _maybeLoadMoreEventsFromScroll(notification.metrics);
+    }
+    return false;
+  }
+
+  void _handleEventsScrollPosition() {
+    if (!_scrollController.hasClients) return;
+    _maybeLoadMoreEventsFromScroll(_scrollController.position);
+  }
+
+  void _maybeLoadMoreEventsFromScroll(ScrollMetrics metrics) {
+    if (!_isActive ||
+        _loading ||
+        _repo == null ||
+        _olderItemsLoadInFlight ||
+        !_canLoadMoreEvents) {
+      return;
+    }
+    if (metrics.pixels <= metrics.minScrollExtent + 96) {
+      unawaited(_loadMoreEvents());
+    }
+  }
+
   List<Map<String, dynamic>> get _visibleEvents {
     return _visibleEventsCache;
   }
@@ -1552,9 +1711,6 @@ class _ChatPageState extends ConsumerState<ChatPage> {
       if (!_isVisibleEvent(event)) continue;
       renderableCount++;
       visible.add(event);
-      if (visible.length > _visibleEventCount) {
-        visible.removeAt(0);
-      }
     }
     final hidden = renderableCount - visible.length;
     return _VisibleEventState(
@@ -1646,35 +1802,67 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   }
 
   int get _hiddenEventCount {
-    return _hiddenEventCountCache + (_hasOlderItems ? 1 : 0);
+    return _hiddenEventCountCache +
+        _hiddenCachedTurnCount +
+        (_hasOlderItems ? 1 : 0);
+  }
+
+  int get _hiddenCachedTurnCount {
+    final hidden = _cachedTurnCount - _visibleTurnCount;
+    return hidden > 0 ? hidden : 0;
+  }
+
+  bool get _canLoadMoreEvents {
+    return _hiddenEventCount > 0 || _hasOlderItems;
   }
 
   Future<void> _loadMoreEvents() async {
-    if (_hiddenEventCount == 0 || _repo == null) return;
+    if (!_canLoadMoreEvents || _repo == null) return;
     if (!_isActive) return;
-    if (_hiddenEventCountCache > 0) {
-      setState(() => _visibleEventCount += _eventPageSize);
-      _subscribeItems();
-      return;
-    }
-    if (!_hasOlderItems || _olderItemsLoadInFlight) return;
+    if (_olderItemsLoadInFlight) return;
     _olderItemsLoadInFlight = true;
     try {
+      final beforeMaxScrollExtent = _scrollController.hasClients
+          ? _scrollController.position.maxScrollExtent
+          : null;
+      if (_hiddenEventCountCache > 0 || _hiddenCachedTurnCount > 0) {
+        setState(() => _visibleTurnCount += _turnPageSize);
+        _subscribeItems();
+        _preserveScrollOffsetAfterPrepending(beforeMaxScrollExtent);
+        return;
+      }
+      if (!_hasOlderItems) return;
       final page = await _repo!.loadOlderItemsPage(
         widget.sessionId,
-        limit: _eventPageSize,
+        limit: _turnPageSize,
       );
       if (!_isActive) return;
       setState(() {
-        _visibleEventCount += _eventPageSize;
+        _visibleTurnCount += _turnPageSize;
         _hasOlderItems = page.hasOlder;
       });
       _subscribeItems();
+      _preserveScrollOffsetAfterPrepending(beforeMaxScrollExtent);
     } catch (e) {
       debugPrint('ChatPage: load older items error: $e');
     } finally {
       _olderItemsLoadInFlight = false;
     }
+  }
+
+  void _preserveScrollOffsetAfterPrepending(double? beforeMaxScrollExtent) {
+    if (beforeMaxScrollExtent == null) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_isActive || !_scrollController.hasClients) return;
+      final position = _scrollController.position;
+      final delta = position.maxScrollExtent - beforeMaxScrollExtent;
+      if (delta <= 0) return;
+      final target = (position.pixels + delta).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      );
+      position.jumpTo(target);
+    });
   }
 
   String _eventRenderKey(Map<String, dynamic> event, int index) {
@@ -1714,19 +1902,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
 
   Future<void> _refreshSkills({bool showError = false}) async {
     if (_bootstrap == null) return;
-    final providerId = _session == null
-        ? 'codex'
-        : canonicalProviderId(Map<String, dynamic>.from(_session!)) ?? 'codex';
     try {
-      final config = await _bootstrap!.fetchProviderConfig(providerId);
-      final skills = _skillsFromConfig(config);
-      if (!mounted) return;
-      if (_eventListsEqual(_skills, skills)) return;
-      setState(() {
-        _skills
-          ..clear()
-          ..addAll(skills);
-      });
+      final config = await _ensureProviderConfig();
+      if (config == null || !mounted) return;
+      _applySkillsConfig(config);
     } catch (e) {
       if (!mounted || !showError) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1741,6 +1920,16 @@ class _ChatPageState extends ConsumerState<ChatPage> {
         ),
       );
     }
+  }
+
+  void _applySkillsConfig(Map<String, dynamic> config) {
+    final skills = _skillsFromConfig(config);
+    if (!mounted || _eventListsEqual(_skills, skills)) return;
+    setState(() {
+      _skills
+        ..clear()
+        ..addAll(skills);
+    });
   }
 
   Future<void> _openFilePicker() async {
@@ -2290,29 +2479,33 @@ class _ChatPageState extends ConsumerState<ChatPage> {
                 ? const _SessionLoadingState()
                 : !hasVisibleContent
                 ? _buildEmptyState()
-                : ListView.builder(
-                    controller: _scrollController,
-                    cacheExtent: 360,
-                    addAutomaticKeepAlives: false,
-                    addRepaintBoundaries: true,
-                    itemCount:
-                        visibleEvents.length + (hiddenEventCount > 0 ? 1 : 0),
-                    itemBuilder: (context, index) {
-                      if (hiddenEventCount > 0 && index == 0) {
-                        return _LoadMoreEventsBanner(
-                          hiddenCount: hiddenEventCount,
-                          onTap: _loadMoreEvents,
+                : NotificationListener<ScrollNotification>(
+                    onNotification: _handleEventsScrollNotification,
+                    child: ListView.builder(
+                      controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      cacheExtent: 360,
+                      addAutomaticKeepAlives: false,
+                      addRepaintBoundaries: true,
+                      itemCount:
+                          visibleEvents.length + (hiddenEventCount > 0 ? 1 : 0),
+                      itemBuilder: (context, index) {
+                        if (hiddenEventCount > 0 && index == 0) {
+                          return _LoadMoreEventsBanner(
+                            hiddenCount: hiddenEventCount,
+                            onTap: _loadMoreEvents,
+                          );
+                        }
+                        final eventIndex = hiddenEventCount > 0
+                            ? index - 1
+                            : index;
+                        final event = visibleEvents[eventIndex];
+                        return KeyedSubtree(
+                          key: ValueKey(_eventRenderKey(event, eventIndex)),
+                          child: _buildEventWidget(event),
                         );
-                      }
-                      final eventIndex = hiddenEventCount > 0
-                          ? index - 1
-                          : index;
-                      final event = visibleEvents[eventIndex];
-                      return KeyedSubtree(
-                        key: ValueKey(_eventRenderKey(event, eventIndex)),
-                        child: _buildEventWidget(event),
-                      );
-                    },
+                      },
+                    ),
                   ),
           ),
           if (_isIdle) _buildIdleBar(),
@@ -3185,9 +3378,10 @@ class _ChatPageState extends ConsumerState<ChatPage> {
   @override
   void dispose() {
     _disposed = true;
-    ref.read(syncEngineProvider)?.unsubscribeSession(widget.sessionId);
+    _syncEngine?.unsubscribeSession(widget.sessionId);
     _sessionEventsSub?.cancel();
     _itemsSub?.cancel();
+    _itemCountSub?.cancel();
     _inputController.dispose();
     _scrollController.dispose();
     super.dispose();
@@ -3921,12 +4115,12 @@ class _UserBubble extends StatelessWidget {
                 bottomLeft: Radius.circular(16),
                 bottomRight: Radius.circular(4),
               ),
-              childBuilder: (context, text, collapsed, maxLines) =>
-                  SelectableText(
-                    text,
-                    maxLines: collapsed ? maxLines : null,
-                    style: const TextStyle(height: 1.5),
-                  ),
+              childBuilder: (context, text, collapsed, maxLines) => Text(
+                text,
+                maxLines: collapsed ? maxLines : null,
+                overflow: collapsed ? TextOverflow.ellipsis : null,
+                style: const TextStyle(height: 1.5),
+              ),
             ),
           ),
           const SizedBox(width: 12),
@@ -4132,6 +4326,7 @@ class _ExpandableBubbleState extends State<_ExpandableBubble> {
       onTap: _shouldCollapse
           ? () => setState(() => _expanded = !_expanded)
           : null,
+      onLongPress: () => _showCopySheet(context),
       borderRadius: widget.borderRadius,
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
@@ -4190,6 +4385,30 @@ class _ExpandableBubbleState extends State<_ExpandableBubble> {
       value = value.substring(0, maxChars);
     }
     return '${value.trimRight()}...';
+  }
+
+  void _showCopySheet(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    showModalBottomSheet(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: ListTile(
+          leading: const Icon(Icons.copy),
+          title: Text(l10n.copy),
+          onTap: () {
+            Navigator.pop(sheetContext);
+            Clipboard.setData(ClipboardData(text: widget.content));
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text(l10n.copied),
+                duration: const Duration(seconds: 1),
+              ),
+            );
+          },
+        ),
+      ),
+    );
   }
 }
 
@@ -4436,39 +4655,61 @@ class _SessionDetailSheetState extends State<_SessionDetailSheet> {
       return _buildDiffBody(scrollController);
     }
     final highlightLanguage = _highlightLanguage(widget.language);
-    final codeView = highlightLanguage == null
-        ? Padding(
-            padding: const EdgeInsets.all(16),
-            child: SelectableText(
+    return _buildAlignedDetailBody(
+      scrollController: scrollController,
+      wrap: _wrap,
+      childBuilder: (minWidth) => highlightLanguage == null
+          ? ConstrainedBox(
+              constraints: BoxConstraints(minWidth: minWidth),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(6, 12, 12, 12),
+                child: SelectableText(
+                  widget.content,
+                  style: TextStyle(
+                    fontFamily: widget.monospace ? 'monospace' : null,
+                    fontSize: 12,
+                  ),
+                ),
+              ),
+            )
+          : AppHighlightView(
               widget.content,
-              style: TextStyle(
+              language: highlightLanguage,
+              theme: githubTheme,
+              minWidth: minWidth,
+              padding: const EdgeInsets.fromLTRB(6, 12, 12, 12),
+              textStyle: TextStyle(
                 fontFamily: widget.monospace ? 'monospace' : null,
                 fontSize: 12,
               ),
             ),
-          )
-        : HighlightView(
-            widget.content,
-            language: highlightLanguage,
-            theme: githubTheme,
-            padding: const EdgeInsets.all(16),
-            textStyle: TextStyle(
-              fontFamily: widget.monospace ? 'monospace' : null,
-              fontSize: 12,
-            ),
-          );
-    if (_wrap) {
-      return SingleChildScrollView(
-        controller: scrollController,
-        child: codeView,
-      );
-    }
-    return SingleChildScrollView(
-      controller: scrollController,
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        child: codeView,
-      ),
+    );
+  }
+
+  Widget _buildAlignedDetailBody({
+    required ScrollController scrollController,
+    required bool wrap,
+    required HighlightViewBuilder childBuilder,
+  }) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final content = ConstrainedBox(
+          constraints: BoxConstraints(minWidth: constraints.maxWidth),
+          child: Align(
+            alignment: Alignment.topLeft,
+            child: childBuilder(constraints.maxWidth),
+          ),
+        );
+        final vertical = SingleChildScrollView(
+          controller: scrollController,
+          child: content,
+        );
+        if (wrap) return vertical;
+        return SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: vertical,
+        );
+      },
     );
   }
 

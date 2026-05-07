@@ -54,7 +54,7 @@ abstract class SessionApiLike {
   Future<Map<String, dynamic>> getItemsPage(
     String sessionId, {
     String? cursor,
-    int limit = 80,
+    int limit = 1,
   });
 
   Future<Map<String, dynamic>> getItemChanges(
@@ -69,11 +69,18 @@ abstract class SessionApiLike {
 abstract class SessionSyncStore {
   Future<bool> applyRealtimeEvent(Map<String, dynamic> event);
 
+  Future<bool> applyRealtimeItemChanges(
+    String sessionId,
+    Map<String, dynamic> event,
+  );
+
   Future<String?> getRealtimeCursor(String sessionId);
 
   Future<String?> getRealtimeEpoch(String sessionId);
 
   Future<int> getItemRevision(String sessionId);
+
+  Future<bool> hasActiveTailTurn(String sessionId);
 
   Future<List<Map<String, dynamic>>> refreshItems(String sessionId);
 
@@ -100,12 +107,16 @@ class _ItemSyncPage {
 class SessionItemPageState {
   final List<Map<String, dynamic>> items;
   final String? olderCursor;
+  final String? newerCursor;
   final bool hasOlder;
+  final bool hasNewer;
 
   const SessionItemPageState({
     required this.items,
     required this.olderCursor,
+    this.newerCursor,
     required this.hasOlder,
+    this.hasNewer = false,
   });
 }
 
@@ -117,6 +128,13 @@ class _WsCursor {
 }
 
 class SessionRepository implements SessionSyncStore {
+  static const _itemsOlderScope = 'session_items_older';
+  static const _itemsNewerScope = 'session_items_newer';
+  static final Map<String, Future<List<Map<String, dynamic>>>>
+  _sessionListLoads = {};
+  static final Map<String, Future<List<Map<String, dynamic>>>>
+  _itemChangeLoads = {};
+
   final String agentId;
   final SessionApiLike _api;
   final AppDatabase _db;
@@ -145,16 +163,50 @@ class SessionRepository implements SessionSyncStore {
 
   Stream<List<Map<String, dynamic>>> watchItems(
     String sessionId, {
-    int? limit,
+    int? turnLimit,
   }) {
-    final stream = limit == null
+    final stream = turnLimit == null
         ? _db.watchItemsBySession(agentId, sessionId)
-        : _db.watchRecentItemsBySession(agentId, sessionId, limit);
+        : _db.watchRecentTurnItemsBySession(agentId, sessionId, turnLimit);
     return stream.map((rows) => rows.map(_itemToMap).toList());
   }
 
   Stream<int> watchItemCount(String sessionId) {
     return _db.watchItemCountBySession(agentId, sessionId);
+  }
+
+  Stream<int> watchTurnCount(String sessionId) {
+    return _db.watchTurnCountBySession(agentId, sessionId);
+  }
+
+  Future<int> getCachedTurnCount(String sessionId) {
+    return _db.getTurnCountBySession(agentId, sessionId);
+  }
+
+  Future<bool> hasCachedTurn(String sessionId, String turnId) {
+    return _db.hasCachedTurnBySession(agentId, sessionId, turnId);
+  }
+
+  Future<List<Map<String, dynamic>>> getCachedTurnItems(
+    String sessionId,
+    String turnId,
+  ) async {
+    final rows = await _db.getTurnItemsBySession(agentId, sessionId, turnId);
+    return rows.map(_itemToMap).toList(growable: false);
+  }
+
+  Future<List<Map<String, dynamic>>> getAdjacentCachedTurnItems(
+    String sessionId,
+    String turnId, {
+    required bool newer,
+  }) async {
+    final rows = await _db.getAdjacentCachedTurnItemsBySession(
+      agentId,
+      sessionId,
+      turnId,
+      newer: newer,
+    );
+    return rows.map(_itemToMap).toList(growable: false);
   }
 
   Future<void> addPendingUserMessage(String sessionId, String content) {
@@ -227,6 +279,25 @@ class SessionRepository implements SessionSyncStore {
 
   /// Fetches sessions from API and updates local DB. Returns the fresh list.
   Future<List<Map<String, dynamic>>> _syncSessionsFromApi(
+    String projectId, {
+    bool archived = false,
+  }) async {
+    final key = '$agentId|$projectId|$archived';
+    final inFlight = _sessionListLoads[key];
+    if (inFlight != null) return inFlight;
+
+    final load = _loadSessionsFromApi(projectId, archived: archived);
+    _sessionListLoads[key] = load;
+    try {
+      return await load;
+    } finally {
+      if (identical(_sessionListLoads[key], load)) {
+        _sessionListLoads.remove(key);
+      }
+    }
+  }
+
+  Future<List<Map<String, dynamic>>> _loadSessionsFromApi(
     String projectId, {
     bool archived = false,
   }) async {
@@ -665,7 +736,37 @@ class SessionRepository implements SessionSyncStore {
   @override
   Future<List<Map<String, dynamic>>> refreshItems(String sessionId) async {
     final revision = await getItemRevision(sessionId);
-    return _syncItemChanges(sessionId, revision);
+    final key = '$agentId|$sessionId|$revision';
+    final inFlight = _itemChangeLoads[key];
+    if (inFlight != null) return inFlight;
+
+    final load = _syncItemChanges(sessionId, revision);
+    _itemChangeLoads[key] = load;
+    try {
+      return await load;
+    } finally {
+      if (identical(_itemChangeLoads[key], load)) {
+        _itemChangeLoads.remove(key);
+      }
+    }
+  }
+
+  Future<bool> hasOlderItems(String sessionId) async {
+    final cursor = await _db.getSyncCursor(
+      agentId,
+      _itemsOlderScope,
+      sessionId,
+    );
+    return cursor != null && cursor.isNotEmpty;
+  }
+
+  Future<bool> hasNewerItems(String sessionId) async {
+    final cursor = await _db.getSyncCursor(
+      agentId,
+      _itemsNewerScope,
+      sessionId,
+    );
+    return cursor != null && cursor.isNotEmpty;
   }
 
   @override
@@ -673,20 +774,58 @@ class SessionRepository implements SessionSyncStore {
     return await _db.getSyncRevision(agentId, 'session_items', sessionId) ?? 0;
   }
 
+  @override
+  Future<bool> hasActiveTailTurn(String sessionId) {
+    return _db.hasActiveTailTurnBySession(agentId, sessionId);
+  }
+
+  @override
+  Future<bool> applyRealtimeItemChanges(
+    String sessionId,
+    Map<String, dynamic> event,
+  ) async {
+    if (event['reset_required'] == true || event['resetRequired'] == true) {
+      return false;
+    }
+    final changes = event['changes'];
+    if (changes is! List || changes.isEmpty) return false;
+    final result = await _applyItemChangesPage(sessionId, event);
+    return !result.hasMore;
+  }
+
   Future<SessionItemPageState> loadLatestItemsPage(
     String sessionId, {
-    int limit = 80,
+    int limit = 1,
   }) async {
     return _loadItemsPage(sessionId, cursor: null, limit: limit);
   }
 
   Future<SessionItemPageState> loadOlderItemsPage(
     String sessionId, {
-    int limit = 80,
+    int limit = 1,
   }) async {
     final cursor = await _db.getSyncCursor(
       agentId,
-      'session_items_older',
+      _itemsOlderScope,
+      sessionId,
+    );
+    if (cursor == null || cursor.isEmpty) {
+      return const SessionItemPageState(
+        items: [],
+        olderCursor: null,
+        hasOlder: false,
+      );
+    }
+    return _loadItemsPage(sessionId, cursor: cursor, limit: limit);
+  }
+
+  Future<SessionItemPageState> loadNewerItemsPage(
+    String sessionId, {
+    int limit = 1,
+  }) async {
+    final cursor = await _db.getSyncCursor(
+      agentId,
+      _itemsNewerScope,
       sessionId,
     );
     if (cursor == null || cursor.isEmpty) {
@@ -743,21 +882,62 @@ class SessionRepository implements SessionSyncStore {
         entries.add(next);
       }
     }
-    final olderCursor = _stringValue(page['cursor']);
-    final hasOlder =
-        (page['has_more'] == true || page['hasMore'] == true) &&
+    var olderCursor = _stringValue(
+      page['older_cursor'] ?? page['olderCursor'] ?? page['cursor'],
+    );
+    final newerCursor = _stringValue(
+      page['newer_cursor'] ?? page['newerCursor'],
+    );
+    var hasOlder =
+        _boolValue(page['has_older'] ?? page['hasOlder'] ?? page['has_more']) &&
         olderCursor != null &&
         olderCursor.isNotEmpty;
+    final hasNewer =
+        _boolValue(page['has_newer'] ?? page['hasNewer']) &&
+        newerCursor != null &&
+        newerCursor.isNotEmpty;
     await _db.transaction(() async {
       if (entries.isNotEmpty) {
         await _db.insertOrUpdateItems(entries);
       }
       await _db.setSyncCursor(
         agentId,
-        'session_items_older',
+        _itemsNewerScope,
         sessionId,
-        hasOlder ? olderCursor : '',
+        hasNewer ? newerCursor : '',
       );
+      if (cursor != null && cursor.isNotEmpty) {
+        await _db.setSyncCursor(
+          agentId,
+          _itemsOlderScope,
+          sessionId,
+          hasOlder ? olderCursor! : '',
+        );
+      } else if (hasOlder) {
+        final cachedTurnCount = await _db.getTurnCountBySession(
+          agentId,
+          sessionId,
+        );
+        final existingCursor = await _db.getSyncCursor(
+          agentId,
+          _itemsOlderScope,
+          sessionId,
+        );
+        if (existingCursor != null &&
+            existingCursor.isNotEmpty &&
+            cachedTurnCount > limit) {
+          olderCursor = existingCursor;
+        } else {
+          await _db.setSyncCursor(
+            agentId,
+            _itemsOlderScope,
+            sessionId,
+            olderCursor!,
+          );
+        }
+      } else {
+        await _db.setSyncCursor(agentId, _itemsOlderScope, sessionId, '');
+      }
     });
     for (final content in realUserMessageContents) {
       await _removeMatchingPendingUserMessage(sessionId, content);
@@ -765,7 +945,9 @@ class SessionRepository implements SessionSyncStore {
     return SessionItemPageState(
       items: entries.map(_itemCompanionToMap).toList(growable: false),
       olderCursor: hasOlder ? olderCursor : null,
+      newerCursor: hasNewer ? newerCursor : null,
       hasOlder: hasOlder,
+      hasNewer: hasNewer,
     );
   }
 
@@ -879,7 +1061,8 @@ class SessionRepository implements SessionSyncStore {
       await _db.deleteItem(agentId, sessionId, item.itemId);
     }
     await _db.setSyncState(agentId, 'session_items', sessionId, revision: 0);
-    await _db.setSyncCursor(agentId, 'session_items_older', sessionId, '');
+    await _db.setSyncCursor(agentId, _itemsOlderScope, sessionId, '');
+    await _db.setSyncCursor(agentId, _itemsNewerScope, sessionId, '');
   }
 
   SessionItemEntriesCompanion _sessionItemCompanion({
@@ -1255,6 +1438,22 @@ class SessionRepository implements SessionSyncStore {
     final text = value?.toString();
     if (text == null || text.isEmpty) return null;
     return text;
+  }
+
+  bool _boolValue(dynamic value) {
+    if (value is bool) return value;
+    if (value is num) return value != 0;
+    if (value is String) {
+      switch (value.trim().toLowerCase()) {
+        case 'true':
+        case '1':
+        case 'yes':
+          return true;
+        default:
+          return false;
+      }
+    }
+    return false;
   }
 
   bool _hasVisibleReasoningContent(Map<String, dynamic> content) {

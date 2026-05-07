@@ -5,9 +5,14 @@ import 'package:drift/drift.dart';
 import 'package:magent_app/core/storage/app_database.dart';
 
 class BootstrapRepository implements BootstrapSyncStore {
+  static final Set<String> _initializedBootstrapKeys = {};
+  static final Map<String, Future<BootstrapSnapshot>> _bootstrapLoads = {};
+
   final String agentId;
   final Dio _dio;
   final AppDatabase _db;
+  final Map<String, Map<String, dynamic>> _providerConfigCache = {};
+  final Map<String, Future<Map<String, dynamic>>> _providerConfigLoads = {};
 
   BootstrapRepository({
     required this.agentId,
@@ -40,6 +45,31 @@ class BootstrapRepository implements BootstrapSyncStore {
 
   @override
   Future<BootstrapSnapshot> refresh({bool force = false}) async {
+    final key = _bootstrapKey;
+    if (!force) {
+      if (_initializedBootstrapKeys.contains(key)) {
+        return getCachedSnapshot();
+      }
+      final inFlight = _bootstrapLoads[key];
+      if (inFlight != null) return inFlight;
+    }
+
+    final load = _refreshFromRemote(force: force);
+    _bootstrapLoads[key] = load;
+    try {
+      final snapshot = await load;
+      _initializedBootstrapKeys.add(key);
+      return snapshot;
+    } finally {
+      if (identical(_bootstrapLoads[key], load)) {
+        _bootstrapLoads.remove(key);
+      }
+    }
+  }
+
+  String get _bootstrapKey => '$agentId|${_dio.options.baseUrl}';
+
+  Future<BootstrapSnapshot> _refreshFromRemote({bool force = false}) async {
     final cachedHash = force
         ? null
         : await _db.getSyncHash(agentId, 'bootstrap', 'global');
@@ -94,7 +124,7 @@ class BootstrapRepository implements BootstrapSyncStore {
   Future<List<Map<String, dynamic>>> getProjects() async {
     final cached = await _db.getProjects(agentId);
     if (cached.isNotEmpty) {
-      refresh().catchError((_) => BootstrapSnapshot.empty());
+      unawaitedBootstrapInit();
       return cached.map(_projectToMap).toList();
     }
     return (await refresh()).projects;
@@ -107,7 +137,7 @@ class BootstrapRepository implements BootstrapSyncStore {
   Future<Map<String, dynamic>?> getProject(String id) async {
     final cached = await _db.getProjectEntry(agentId, id);
     if (cached != null) {
-      refresh().catchError((_) => BootstrapSnapshot.empty());
+      unawaitedBootstrapInit();
       return _projectToMap(cached);
     }
     await refresh();
@@ -118,7 +148,7 @@ class BootstrapRepository implements BootstrapSyncStore {
   Future<List<Map<String, dynamic>>> getProviders() async {
     final cached = await _db.getProviders(agentId);
     if (cached.isNotEmpty) {
-      refresh().catchError((_) => BootstrapSnapshot.empty());
+      unawaitedBootstrapInit();
       return _sortProviders(cached.map(_providerToMap).toList());
     }
     return (await refresh()).providers;
@@ -131,7 +161,7 @@ class BootstrapRepository implements BootstrapSyncStore {
   Future<Map<String, dynamic>?> getProvider(String name) async {
     final cached = await _db.getProviderEntry(agentId, name);
     if (cached != null) {
-      refresh().catchError((_) => BootstrapSnapshot.empty());
+      unawaitedBootstrapInit();
       return _providerToMap(cached);
     }
     await refresh();
@@ -139,8 +169,41 @@ class BootstrapRepository implements BootstrapSyncStore {
     return fresh == null ? null : _providerToMap(fresh);
   }
 
-  Future<Map<String, dynamic>> fetchProviderConfig(String name) async {
-    if (name.isEmpty) return const {};
+  void unawaitedBootstrapInit() {
+    refresh().catchError((_) => BootstrapSnapshot.empty());
+  }
+
+  Future<Map<String, dynamic>> fetchProviderConfig(
+    String name, {
+    bool force = false,
+  }) async {
+    final providerName = name.trim();
+    if (providerName.isEmpty) return const {};
+
+    if (!force) {
+      final cached = _providerConfigCache[providerName];
+      if (cached != null) return Map<String, dynamic>.from(cached);
+
+      final inFlight = _providerConfigLoads[providerName];
+      if (inFlight != null) {
+        return Map<String, dynamic>.from(await inFlight);
+      }
+    }
+
+    final load = _fetchProviderConfig(providerName);
+    _providerConfigLoads[providerName] = load;
+    try {
+      final config = await load;
+      _providerConfigCache[providerName] = Map<String, dynamic>.from(config);
+      return Map<String, dynamic>.from(config);
+    } finally {
+      if (identical(_providerConfigLoads[providerName], load)) {
+        _providerConfigLoads.remove(providerName);
+      }
+    }
+  }
+
+  Future<Map<String, dynamic>> _fetchProviderConfig(String name) async {
     final resp = await _dio.get('/api/v1/providers/$name/config');
     return Map<String, dynamic>.from(resp.data['data'] as Map? ?? {});
   }

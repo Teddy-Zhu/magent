@@ -36,6 +36,34 @@ void main() {
     expect(bootstrap.refreshCount, 1);
   });
 
+  test('foreground resume does not resync bootstrap or sessions', () async {
+    engine.start();
+    await engine.subscribeSession('s1');
+    await Future<void>.delayed(Duration.zero);
+    bootstrap.refreshCount = 0;
+    sessions.refreshedItems.clear();
+
+    await engine.handleForeground();
+
+    expect(realtime.started, isTrue);
+    expect(bootstrap.refreshCount, 0);
+    expect(sessions.refreshedItems, isEmpty);
+  });
+
+  test('server hello does not resync subscribed sessions', () async {
+    engine.start();
+    await engine.subscribeSession('s1');
+    sessions.refreshedItems.clear();
+
+    realtime.emit({
+      'type': 'server.hello',
+      'subscriptions': ['s1'],
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(sessions.refreshedItems, isEmpty);
+  });
+
   test(
     'session sync required triggers item catch-up and event dispatch',
     () async {
@@ -43,6 +71,7 @@ void main() {
       engine.start();
       final sub = engine.sessionEvents.listen(events.add);
       await engine.subscribeSession('s1');
+      await engine.completeSessionInitialItemsSync('s1');
       sessions.refreshedItems.clear();
 
       realtime.emit({'type': 'session.sync_required', 'session_id': 's1'});
@@ -59,6 +88,7 @@ void main() {
     engine.start();
     final sub = engine.sessionEvents.listen(events.add);
     await engine.subscribeSession('s1');
+    await engine.completeSessionInitialItemsSync('s1');
     sessions.refreshedItems.clear();
 
     final event = {
@@ -83,6 +113,7 @@ void main() {
       engine.start();
       final sub = engine.sessionEvents.listen(events.add);
       await engine.subscribeSession('s1');
+      await engine.completeSessionInitialItemsSync('s1');
       sessions.refreshedItems.clear();
 
       final event = {
@@ -108,13 +139,29 @@ void main() {
     await engine.subscribeSession('s1');
 
     expect(realtime.subscriptions, {'s1': 'items:10'});
-    expect(sessions.refreshedItems, ['s1']);
+    expect(sessions.refreshedItems, isEmpty);
+  });
+
+  test('subscribe does not refresh even when tail turn is active', () async {
+    sessions.revisions['s1'] = 10;
+    sessions.activeTailTurns.add('s1');
+    await engine.subscribeSession('s1');
+
+    expect(realtime.subscriptions, {'s1': 'items:10'});
+    expect(sessions.refreshedItems, isEmpty);
+  });
+
+  test('subscribe without item revision does not fetch history', () async {
+    await engine.subscribeSession('s1');
+
+    expect(realtime.subscriptions, {'s1': null});
+    expect(sessions.refreshedItems, isEmpty);
   });
 
   test('subscribe buffers websocket events until catch-up completes', () async {
     final events = <Map<String, dynamic>>[];
-    final refresh = Completer<List<Map<String, dynamic>>>();
-    sessions.refreshCompleters.add(refresh);
+    sessions.revisions['s1'] = 1;
+    sessions.activeTailTurns.add('s1');
     final sub = engine.sessionEvents.listen(events.add);
 
     final subscribe = engine.subscribeSession('s1');
@@ -132,22 +179,57 @@ void main() {
     expect(sessions.appliedEvents, isEmpty);
     expect(events, isEmpty);
 
-    refresh.complete([]);
     await subscribe;
+    await engine.completeSessionInitialItemsSync('s1');
     await Future<void>.delayed(Duration.zero);
 
     expect(sessions.appliedEvents, isEmpty);
-    expect(sessions.refreshedItems, ['s1']);
+    expect(sessions.refreshedItems, isEmpty);
     expect(events.single['type'], 'session.message_delta');
     await sub.cancel();
   });
 
   test(
+    'buffered item changes are applied after initial http sync without catch-up',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      sessions.revisions['s1'] = 1;
+      final sub = engine.sessionEvents.listen(events.add);
+
+      final subscribe = engine.subscribeSession('s1');
+      await Future<void>.delayed(Duration.zero);
+      final event = {
+        'type': 'session.items.changed',
+        'session_id': 's1',
+        'from_revision': 1,
+        'to_revision': 2,
+        'changes': [
+          {'revision': 2, 'op': 'upsert', 'item_id': 'i1'},
+        ],
+      };
+      realtime.emit(event);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(sessions.appliedItemChangeEvents, isEmpty);
+      expect(sessions.refreshedItems, isEmpty);
+
+      await subscribe;
+      await engine.completeSessionInitialItemsSync('s1');
+      await Future<void>.delayed(Duration.zero);
+
+      expect(sessions.appliedItemChangeEvents.single, event);
+      expect(sessions.refreshedItems, isEmpty);
+      expect(events.single['type'], 'session.items.changed');
+      await sub.cancel();
+    },
+  );
+
+  test(
     'buffered projection event is dropped when catch-up advances revision',
     () async {
       final events = <Map<String, dynamic>>[];
-      final refresh = Completer<List<Map<String, dynamic>>>();
-      sessions.refreshCompleters.add(refresh);
+      sessions.revisions['s1'] = 1;
+      sessions.activeTailTurns.add('s1');
       final sub = engine.sessionEvents.listen(events.add);
 
       final subscribe = engine.subscribeSession('s1');
@@ -161,12 +243,12 @@ void main() {
       });
       await Future<void>.delayed(Duration.zero);
       sessions.revisions['s1'] = 11;
-      refresh.complete([]);
       await subscribe;
+      await engine.completeSessionInitialItemsSync('s1');
       await Future<void>.delayed(Duration.zero);
 
       expect(sessions.appliedEvents, isEmpty);
-      expect(sessions.refreshedItems, ['s1']);
+      expect(sessions.refreshedItems, isEmpty);
       expect(events, isEmpty);
       await sub.cancel();
     },
@@ -179,6 +261,7 @@ void main() {
       engine.start();
       await Future<void>.delayed(Duration.zero);
       await engine.subscribeSession('s1');
+      await engine.completeSessionInitialItemsSync('s1');
       final refresh = Completer<List<Map<String, dynamic>>>();
       sessions.refreshCompleters.add(refresh);
       sessions.refreshedItems.clear();
@@ -217,6 +300,7 @@ void main() {
     engine.start();
     final sub = engine.sessionEvents.listen(events.add);
     await engine.subscribeSession('s1');
+    await engine.completeSessionInitialItemsSync('s1');
     sessions.refreshedItems.clear();
 
     final event = {
@@ -227,9 +311,93 @@ void main() {
     };
     realtime.emit(event);
     await Future<void>.delayed(Duration.zero);
+    await Future<void>.delayed(Duration.zero);
 
     expect(sessions.refreshedItems, ['s1']);
     expect(events.single['type'], 'session.items.changed');
+    await sub.cancel();
+  });
+
+  test(
+    'session items changed applies ws changes without http catch-up',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      sessions.revisions['s1'] = 1;
+      engine.start();
+      final sub = engine.sessionEvents.listen(events.add);
+      await engine.subscribeSession('s1');
+      await engine.completeSessionInitialItemsSync('s1');
+      sessions.refreshedItems.clear();
+
+      final event = {
+        'type': 'session.items.changed',
+        'session_id': 's1',
+        'from_revision': 1,
+        'to_revision': 2,
+        'ws_cursor': 'same:11',
+        'changes': [
+          {'revision': 2, 'op': 'upsert', 'item_id': 'i1'},
+        ],
+      };
+      realtime.emit(event);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(sessions.appliedItemChangeEvents.single, event);
+      expect(sessions.refreshedItems, isEmpty);
+      expect(events.single['type'], 'session.items.changed');
+      await sub.cancel();
+    },
+  );
+
+  test(
+    'session items changed falls back to http when ws changes cannot apply',
+    () async {
+      final events = <Map<String, dynamic>>[];
+      sessions.revisions['s1'] = 1;
+      sessions.applyItemChangeResults.add(false);
+      engine.start();
+      final sub = engine.sessionEvents.listen(events.add);
+      await engine.subscribeSession('s1');
+      await engine.completeSessionInitialItemsSync('s1');
+      sessions.refreshedItems.clear();
+
+      realtime.emit({
+        'type': 'session.items.changed',
+        'session_id': 's1',
+        'from_revision': 1,
+        'to_revision': 2,
+        'changes': const [],
+      });
+      await Future<void>.delayed(Duration.zero);
+      await Future<void>.delayed(Duration.zero);
+
+      expect(sessions.refreshedItems, ['s1']);
+      expect(events.single['type'], 'session.items.changed');
+      await sub.cancel();
+    },
+  );
+
+  test('covered session items changed does not trigger catch-up', () async {
+    final events = <Map<String, dynamic>>[];
+    sessions.revisions['s1'] = 46;
+    engine.start();
+    final sub = engine.sessionEvents.listen(events.add);
+    await engine.subscribeSession('s1');
+    await engine.completeSessionInitialItemsSync('s1');
+    sessions.refreshedItems.clear();
+
+    realtime.emit({
+      'type': 'session.items.changed',
+      'session_id': 's1',
+      'from_revision': 45,
+      'to_revision': 46,
+      'ws_cursor': 'same:10',
+    });
+    await Future<void>.delayed(Duration.zero);
+
+    expect(sessions.refreshedItems, isEmpty);
+    expect(events, isEmpty);
+    expect(realtime.subscriptions['s1'], 'items:46');
     await sub.cancel();
   });
 
@@ -241,6 +409,7 @@ void main() {
       engine.start();
       final sub = engine.sessionEvents.listen(events.add);
       await engine.subscribeSession('s1');
+      await engine.completeSessionInitialItemsSync('s1');
       sessions.refreshedItems.clear();
 
       final event = {
@@ -359,16 +528,33 @@ class _FakeBootstrap implements BootstrapSyncStore {
 class _FakeSessions implements SessionSyncStore {
   final cursors = <String, String?>{};
   final revisions = <String, int>{};
+  final activeTailTurns = <String>{};
   final refreshedItems = <String>[];
   final refreshedSessions = <String>[];
   final appliedEvents = <Map<String, dynamic>>[];
+  final appliedItemChangeEvents = <Map<String, dynamic>>[];
   final refreshCompleters = <Completer<List<Map<String, dynamic>>>>[];
   final applyResults = <bool>[];
+  final applyItemChangeResults = <bool>[];
 
   @override
   Future<bool> applyRealtimeEvent(Map<String, dynamic> event) async {
     appliedEvents.add(event);
     if (applyResults.isNotEmpty) return applyResults.removeAt(0);
+    return true;
+  }
+
+  @override
+  Future<bool> applyRealtimeItemChanges(
+    String sessionId,
+    Map<String, dynamic> event,
+  ) async {
+    appliedItemChangeEvents.add(event);
+    if (applyItemChangeResults.isNotEmpty) {
+      return applyItemChangeResults.removeAt(0);
+    }
+    final changes = event['changes'];
+    if (changes is! List || changes.isEmpty) return false;
     return true;
   }
 
@@ -385,6 +571,11 @@ class _FakeSessions implements SessionSyncStore {
   @override
   Future<int> getItemRevision(String sessionId) async {
     return revisions[sessionId] ?? 0;
+  }
+
+  @override
+  Future<bool> hasActiveTailTurn(String sessionId) async {
+    return activeTailTurns.contains(sessionId);
   }
 
   @override

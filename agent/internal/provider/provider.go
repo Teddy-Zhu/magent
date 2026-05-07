@@ -43,6 +43,35 @@ type ThreadListerWithOptions interface {
 	ListThreadsWithOptions(ctx context.Context, opts ThreadListOptions) ([]Session, error)
 }
 
+const (
+	PageCursorOlder = "older"
+	PageCursorNewer = "newer"
+)
+
+func EncodePageCursor(direction, cursor string) string {
+	if cursor == "" {
+		return ""
+	}
+	switch direction {
+	case PageCursorOlder:
+		return PageCursorOlder + ":" + cursor
+	case PageCursorNewer:
+		return PageCursorNewer + ":" + cursor
+	default:
+		return cursor
+	}
+}
+
+func DecodePageCursor(cursor string) (direction, raw string) {
+	for _, candidate := range []string{PageCursorOlder, PageCursorNewer} {
+		prefix := candidate + ":"
+		if len(cursor) > len(prefix) && cursor[:len(prefix)] == prefix {
+			return candidate, cursor[len(prefix):]
+		}
+	}
+	return PageCursorOlder, cursor
+}
+
 type ThreadArchiver interface {
 	ArchiveSession(ctx context.Context, sessionID string) error
 	UnarchiveSession(ctx context.Context, sessionID string) (*Session, error)
@@ -135,10 +164,14 @@ type ProviderEvent struct {
 }
 
 type EventPage struct {
-	SessionID string          `json:"session_id"`
-	Cursor    string          `json:"cursor"`
-	HasMore   bool            `json:"has_more"`
-	Events    []ProviderEvent `json:"events"`
+	SessionID   string          `json:"session_id"`
+	OlderCursor string          `json:"older_cursor,omitempty"`
+	NewerCursor string          `json:"newer_cursor,omitempty"`
+	HasOlder    bool            `json:"has_older"`
+	HasNewer    bool            `json:"has_newer,omitempty"`
+	Cursor      string          `json:"cursor,omitempty"`
+	HasMore     bool            `json:"has_more,omitempty"`
+	Events      []ProviderEvent `json:"events"`
 }
 
 type SessionItem struct {
@@ -157,10 +190,14 @@ type SessionItem struct {
 }
 
 type ItemPage struct {
-	SessionID string        `json:"session_id"`
-	Cursor    string        `json:"cursor"`
-	HasMore   bool          `json:"has_more"`
-	Items     []SessionItem `json:"items"`
+	SessionID   string        `json:"session_id"`
+	OlderCursor string        `json:"older_cursor,omitempty"`
+	NewerCursor string        `json:"newer_cursor,omitempty"`
+	HasOlder    bool          `json:"has_older"`
+	HasNewer    bool          `json:"has_newer,omitempty"`
+	Cursor      string        `json:"cursor,omitempty"`
+	HasMore     bool          `json:"has_more,omitempty"`
+	Items       []SessionItem `json:"items"`
 }
 
 type ApprovalDecision struct {

@@ -357,6 +357,18 @@ class AppLocalizationsEn extends AppLocalizations {
       'Show the last conversation when entering a session';
 
   @override
+  String get settingsSessionTurnPageSize => 'Session turn page size';
+
+  @override
+  String get settingsSessionTurnPageSizeSub =>
+      'Control how many turns are fetched when opening a session or loading older messages';
+
+  @override
+  String settingsSessionTurnPageSizeValue(int count) {
+    return '$count turns per fetch';
+  }
+
+  @override
   String get settingsShowAiCommitSessions => 'Show AI commit sessions';
 
   @override

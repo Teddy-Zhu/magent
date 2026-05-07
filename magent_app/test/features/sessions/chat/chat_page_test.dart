@@ -41,6 +41,20 @@ void main() {
     );
   });
 
+  test('active item status aliases are recognized', () {
+    for (final status in const [
+      'active',
+      'running',
+      'pending',
+      'in_progress',
+      'inProgress',
+      'inprogress',
+    ]) {
+      expect(chatItemStatusIsActive(status), isTrue);
+    }
+    expect(chatItemStatusIsActive('completed'), isFalse);
+  });
+
   test('terminal session status clears active turn from item snapshot', () {
     expect(
       chatTurnActiveFromItemSnapshot(

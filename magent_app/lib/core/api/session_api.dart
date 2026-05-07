@@ -133,7 +133,7 @@ class SessionApi implements SessionApiLike {
   Future<Map<String, dynamic>> getItemsPage(
     String sessionId, {
     String? cursor,
-    int limit = 80,
+    int limit = 1,
   }) async {
     final resp = await _dio.get(
       '$_apiPrefix/sessions/$sessionId/items',

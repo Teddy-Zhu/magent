@@ -535,18 +535,22 @@ func (p *CodexProvider) ReadThreadEvents(ctx context.Context, threadID, cursor s
 		return nil, err
 	}
 
-	turnsPage, nextCursor, hasMore, err := p.listThreadTurnsForSync(ctx, client, threadID, cursor, limit)
+	turnsPage, pageCursor, err := p.listThreadTurnsForSync(ctx, client, threadID, cursor, limit)
 	if err != nil {
 		return nil, err
 	}
 
 	events := codexTurnsToEvents(threadID, turnsPage.Turns)
-	log.Info("codex", "ReadThreadEvents: thread=%s turns=%d events=%d cursor=%s next=%s", threadID, len(turnsPage.Turns), len(events), cursor, nextCursor)
+	log.Info("codex", "ReadThreadEvents: thread=%s turns=%d events=%d cursor=%s older=%s newer=%s", threadID, len(turnsPage.Turns), len(events), cursor, pageCursor.Older, pageCursor.Newer)
 	return &provider.EventPage{
-		SessionID: threadID,
-		Cursor:    nextCursor,
-		HasMore:   hasMore,
-		Events:    events,
+		SessionID:   threadID,
+		OlderCursor: pageCursor.Older,
+		NewerCursor: pageCursor.Newer,
+		HasOlder:    pageCursor.Older != "",
+		HasNewer:    pageCursor.Newer != "",
+		Cursor:      pageCursor.Older,
+		HasMore:     pageCursor.Older != "",
+		Events:      events,
 	}, nil
 }
 
@@ -556,18 +560,22 @@ func (p *CodexProvider) ReadThreadItems(ctx context.Context, threadID, cursor st
 		return nil, err
 	}
 
-	turnsPage, nextCursor, hasMore, err := p.listThreadTurnsForSync(ctx, client, threadID, cursor, limit)
+	turnsPage, pageCursor, err := p.listThreadTurnsForSync(ctx, client, threadID, cursor, limit)
 	if err != nil {
 		return nil, err
 	}
 
 	items := codexTurnsToItems(turnsPage.Turns)
-	log.Info("codex", "ReadThreadItems: thread=%s turns=%d items=%d cursor=%q next=%q has_more=%t tail=%s", threadID, len(turnsPage.Turns), len(items), cursor, nextCursor, hasMore, codexSessionItemTailSummary(items, 8))
+	log.Info("codex", "ReadThreadItems: thread=%s turns=%d items=%d cursor=%q older=%q newer=%q tail=%s", threadID, len(turnsPage.Turns), len(items), cursor, pageCursor.Older, pageCursor.Newer, codexSessionItemTailSummary(items, 8))
 	return &provider.ItemPage{
-		SessionID: threadID,
-		Cursor:    nextCursor,
-		HasMore:   hasMore,
-		Items:     items,
+		SessionID:   threadID,
+		OlderCursor: pageCursor.Older,
+		NewerCursor: pageCursor.Newer,
+		HasOlder:    pageCursor.Older != "",
+		HasNewer:    pageCursor.Newer != "",
+		Cursor:      pageCursor.Older,
+		HasMore:     pageCursor.Older != "",
+		Items:       items,
 	}, nil
 }
 
@@ -586,41 +594,51 @@ func codexSessionItemTailSummary(items []provider.SessionItem, limit int) string
 	return "[" + strings.Join(parts, ", ") + "]"
 }
 
-func (p *CodexProvider) listThreadTurnsForSync(ctx context.Context, client *AppServerClient, threadID, cursor string, limit int) (*ThreadTurnsPage, string, bool, error) {
+type codexSyncPageCursor struct {
+	Older string
+	Newer string
+}
+
+func (p *CodexProvider) listThreadTurnsForSync(ctx context.Context, client *AppServerClient, threadID, cursor string, limit int) (*ThreadTurnsPage, codexSyncPageCursor, error) {
 	wireCursor, sortDirection := decodeCodexSyncCursor(cursor)
 	page, err := client.ListThreadTurns(ctx, threadID, wireCursor, limit, sortDirection)
 	if err != nil {
-		return nil, "", false, err
+		return nil, codexSyncPageCursor{}, err
 	}
 	if sortDirection == "desc" {
 		reverseThreadTurns(page.Turns)
 	}
-	nextCursor := encodeCodexSyncCursor(page, cursor)
-	hasMore := page.NextCursor != ""
-	if sortDirection == "asc" {
-		hasMore = page.NextCursor != ""
-	}
-	return page, nextCursor, hasMore, nil
+	return page, encodeCodexSyncCursors(page, sortDirection), nil
 }
 
 func decodeCodexSyncCursor(cursor string) (string, string) {
-	if strings.HasPrefix(cursor, "newer:") {
-		return strings.TrimPrefix(cursor, "newer:"), "asc"
+	direction, rawCursor := provider.DecodePageCursor(cursor)
+	switch direction {
+	case provider.PageCursorNewer:
+		return rawCursor, "asc"
+	default:
+		return rawCursor, "desc"
 	}
-	if cursor != "" {
-		return cursor, "asc"
-	}
-	return "", "desc"
 }
 
-func encodeCodexSyncCursor(page *ThreadTurnsPage, previous string) string {
+func encodeCodexSyncCursors(page *ThreadTurnsPage, sortDirection string) codexSyncPageCursor {
+	var cursor codexSyncPageCursor
+	if sortDirection == "asc" {
+		if page.BackwardsCursor != "" {
+			cursor.Older = provider.EncodePageCursor(provider.PageCursorOlder, page.BackwardsCursor)
+		}
+		if page.NextCursor != "" {
+			cursor.Newer = provider.EncodePageCursor(provider.PageCursorNewer, page.NextCursor)
+		}
+		return cursor
+	}
+	if page.NextCursor != "" {
+		cursor.Older = provider.EncodePageCursor(provider.PageCursorOlder, page.NextCursor)
+	}
 	if page.BackwardsCursor != "" {
-		return "newer:" + page.BackwardsCursor
+		cursor.Newer = provider.EncodePageCursor(provider.PageCursorNewer, page.BackwardsCursor)
 	}
-	if strings.HasPrefix(previous, "newer:") {
-		return previous
-	}
-	return ""
+	return cursor
 }
 
 func reverseThreadTurns(turns []ThreadTurn) {

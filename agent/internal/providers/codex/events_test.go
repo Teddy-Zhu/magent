@@ -10,6 +10,41 @@ import (
 	"github.com/Teddy-Zhu/magent/agent/internal/provider"
 )
 
+func TestCodexSyncCursorUsesOlderDirection(t *testing.T) {
+	page := &ThreadTurnsPage{
+		NextCursor:      "older-1",
+		BackwardsCursor: "newer-1",
+	}
+
+	cursor := encodeCodexSyncCursors(page, "desc")
+	if cursor.Older != "older:older-1" {
+		t.Fatalf("latest page older cursor = %q, want older:older-1", cursor.Older)
+	}
+	if cursor.Newer != "newer:newer-1" {
+		t.Fatalf("latest page newer cursor = %q, want newer:newer-1", cursor.Newer)
+	}
+	wireCursor, direction := decodeCodexSyncCursor(cursor.Older)
+	if wireCursor != "older-1" || direction != "desc" {
+		t.Fatalf("older cursor decodes to cursor=%q direction=%q, want older-1 desc", wireCursor, direction)
+	}
+}
+
+func TestCodexNewerSyncCursorKeepsNewerDirection(t *testing.T) {
+	page := &ThreadTurnsPage{NextCursor: "newer-2", BackwardsCursor: "older-2"}
+
+	cursor := encodeCodexSyncCursors(page, "asc")
+	if cursor.Newer != "newer:newer-2" {
+		t.Fatalf("newer page newer cursor = %q, want newer:newer-2", cursor.Newer)
+	}
+	if cursor.Older != "older:older-2" {
+		t.Fatalf("newer page older cursor = %q, want older:older-2", cursor.Older)
+	}
+	wireCursor, direction := decodeCodexSyncCursor(cursor.Newer)
+	if wireCursor != "newer-2" || direction != "asc" {
+		t.Fatalf("newer cursor decodes to cursor=%q direction=%q, want newer-2 asc", wireCursor, direction)
+	}
+}
+
 func TestHandleNotificationMapsCodexEventsToCanonicalEvents(t *testing.T) {
 	tests := []struct {
 		name       string

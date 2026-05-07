@@ -113,11 +113,7 @@ class _ProjectDetailPageState extends ConsumerState<ProjectDetailPage> {
         setState(() => _loading = false);
       }
 
-      // 2. Sync from API in background
-      await _repo!.refreshSessions(
-        widget.projectId,
-        archived: _showArchivedSessions,
-      );
+      // 2. getSessions() already schedules one API sync in the repository.
     } catch (e) {
       if (mounted) setState(() => _loading = false);
     }

@@ -263,18 +263,24 @@ func (h *SessionHandler) GetEvents(c *gin.Context) {
 	}
 
 	log.Debug("session", "getEvents id=%s cursor=%s returned=%d", id, cursor, len(page.Events))
+	olderCursor := firstNonEmptyAPI(page.OlderCursor, page.Cursor)
+	hasOlder := page.HasOlder || page.HasMore
 	OK(c, gin.H{
-		"session_id": page.SessionID,
-		"cursor":     page.Cursor,
-		"has_more":   page.HasMore,
-		"events":     eventsToAPIEvents(page.Events, cursor),
+		"session_id":   page.SessionID,
+		"older_cursor": olderCursor,
+		"newer_cursor": page.NewerCursor,
+		"has_older":    hasOlder,
+		"has_newer":    page.HasNewer,
+		"cursor":       olderCursor,
+		"has_more":     hasOlder,
+		"events":       eventsToAPIEvents(page.Events, cursor),
 	})
 }
 
 func (h *SessionHandler) GetItems(c *gin.Context) {
 	id := c.Param("id")
 	cursor := c.Query("cursor")
-	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "80"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "1"))
 
 	page, err := h.manager.GetItems(c.Request.Context(), id, cursor, limit)
 	if err != nil {
@@ -283,12 +289,27 @@ func (h *SessionHandler) GetItems(c *gin.Context) {
 		return
 	}
 
+	olderCursor := firstNonEmptyAPI(page.OlderCursor, page.Cursor)
+	hasOlder := page.HasOlder || page.HasMore
 	OK(c, gin.H{
-		"session_id": page.SessionID,
-		"cursor":     page.Cursor,
-		"has_more":   page.HasMore,
-		"items":      itemsToAPIItems(page.Items),
+		"session_id":   page.SessionID,
+		"older_cursor": olderCursor,
+		"newer_cursor": page.NewerCursor,
+		"has_older":    hasOlder,
+		"has_newer":    page.HasNewer,
+		"cursor":       olderCursor,
+		"has_more":     hasOlder,
+		"items":        itemsToAPIItems(page.Items),
 	})
+}
+
+func firstNonEmptyAPI(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (h *SessionHandler) GetItemChanges(c *gin.Context) {

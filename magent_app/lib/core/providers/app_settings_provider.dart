@@ -16,6 +16,11 @@ final showAiCommitSessionsControllerProvider =
       ShowAiCommitSessionsController.new,
     );
 
+final sessionTurnPageSizeControllerProvider =
+    AsyncNotifierProvider<SessionTurnPageSizeController, int>(
+      SessionTurnPageSizeController.new,
+    );
+
 final viewerFontScaleControllerProvider =
     AsyncNotifierProvider<ViewerFontScaleController, double>(
       ViewerFontScaleController.new,
@@ -46,6 +51,21 @@ class ShowAiCommitSessionsController extends AsyncNotifier<bool> {
   }
 }
 
+class SessionTurnPageSizeController extends AsyncNotifier<int> {
+  @override
+  Future<int> build() {
+    return ref.read(appSettingsServiceProvider).getSessionTurnPageSize();
+  }
+
+  Future<void> setPageSize(int value) async {
+    await ref.read(appSettingsServiceProvider).setSessionTurnPageSize(value);
+    final current = await ref
+        .read(appSettingsServiceProvider)
+        .getSessionTurnPageSize();
+    state = AsyncData(current);
+  }
+}
+
 class ViewerFontScaleController extends AsyncNotifier<double> {
   @override
   Future<double> build() {
@@ -54,7 +74,9 @@ class ViewerFontScaleController extends AsyncNotifier<double> {
 
   Future<void> setScale(double value) async {
     await ref.read(appSettingsServiceProvider).setViewerFontScale(value);
-    final current = await ref.read(appSettingsServiceProvider).getViewerFontScale();
+    final current = await ref
+        .read(appSettingsServiceProvider)
+        .getViewerFontScale();
     state = AsyncData(current);
   }
 }

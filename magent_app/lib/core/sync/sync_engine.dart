@@ -39,10 +39,13 @@ class SyncEngine {
       final gate = entry.value;
       if (!gate.subscribed) continue;
       gate.subscriptionSent = false;
-      _beginSessionCatchUp(
-        entry.key,
-        beforeRefresh: () => _sendSessionSubscription(entry.key, gate),
-      );
+      if (gate.syncing) {
+        gate.catchUpQueued = true;
+        continue;
+      }
+      _sendSessionSubscription(entry.key, gate).catchError((error) {
+        debugPrint('SyncEngine: session resubscribe failed: $error');
+      });
     }
   }
 
@@ -60,14 +63,18 @@ class SyncEngine {
 
   Future<void> handleForeground() async {
     start();
-    _resyncSubscribedSessions();
     realtime.resume();
-    await syncBootstrap();
   }
 
   void handleBackground() {
     for (final gate in _sessionGates.values) {
       gate.subscriptionSent = false;
+      gate.initialSyncPending = false;
+      gate.catchUpQueued = false;
+      gate.syncStartRevision = null;
+      gate.syncFuture = null;
+      gate.syncing = false;
+      gate.buffer.clear();
     }
     realtime.pause();
   }
@@ -76,11 +83,59 @@ class SyncEngine {
     start();
     final gate = _gateFor(sessionId);
     gate.subscribed = true;
-    final sync = _beginSessionCatchUp(
-      sessionId,
-      beforeRefresh: () => _sendSessionSubscription(sessionId, gate),
-    );
-    await sync;
+    gate.initialSyncPending = true;
+    gate.syncing = true;
+    try {
+      gate.syncStartRevision = await sessions.getItemRevision(sessionId);
+    } catch (error) {
+      gate.syncStartRevision = 0;
+      debugPrint('SyncEngine: read session item revision failed: $error');
+    }
+    try {
+      await _sendSessionSubscription(sessionId, gate);
+    } catch (error) {
+      debugPrint('SyncEngine: session subscribe failed: $error');
+    }
+  }
+
+  Future<void> completeSessionInitialItemsSync(String sessionId) async {
+    final gate = _sessionGates[sessionId];
+    if (gate == null || !gate.initialSyncPending) return;
+    gate.initialSyncPending = false;
+    final startRevision =
+        gate.syncStartRevision ?? await sessions.getItemRevision(sessionId);
+    try {
+      await gate.applyTail;
+      final hadQueuedCatchUp = gate.catchUpQueued;
+      if (hadQueuedCatchUp && gate.subscribed) {
+        gate.catchUpQueued = false;
+        gate.subscriptionSent = false;
+        await _sendSessionSubscription(sessionId, gate);
+        await sessions.refreshItems(sessionId);
+      }
+      final endRevision = await sessions.getItemRevision(sessionId);
+      await _drainBufferedSessionEvents(
+        sessionId,
+        gate,
+        startRevision: startRevision,
+        endRevision: endRevision,
+      );
+    } catch (error) {
+      debugPrint('SyncEngine: initial session sync completion failed: $error');
+      if (gate.subscribed) {
+        gate.catchUpQueued = true;
+        gate.subscriptionSent = false;
+      }
+    } finally {
+      gate.syncing = false;
+      gate.syncFuture = null;
+      gate.syncStartRevision = null;
+    }
+    if (gate.catchUpQueued && gate.subscribed) {
+      gate.catchUpQueued = false;
+      gate.subscriptionSent = false;
+      unawaited(_beginSessionCatchUp(sessionId));
+    }
   }
 
   void unsubscribeSession(String sessionId) {
@@ -88,15 +143,17 @@ class SyncEngine {
     if (gate != null) {
       gate.subscribed = false;
       gate.subscriptionSent = false;
+      gate.initialSyncPending = false;
+      gate.catchUpQueued = false;
+      gate.syncStartRevision = null;
       gate.buffer.clear();
     }
     realtime.unsubscribeSession(sessionId);
   }
 
-  void _handleRealtimeEvent(Map<String, dynamic> event) {
+  Future<void> _handleRealtimeEvent(Map<String, dynamic> event) async {
     final type = event['type']?.toString() ?? '';
     if (type == 'server.hello') {
-      _handleServerHello(event);
       return;
     }
     final sessionId = event['session_id']?.toString();
@@ -118,7 +175,17 @@ class SyncEngine {
       return;
     }
     if (type == 'session.items.changed') {
-      _beginSessionCatchUp(sessionId);
+      final toRevision = _eventInt(event['to_revision'] ?? event['toRevision']);
+      final currentRevision = await sessions.getItemRevision(sessionId);
+      if (toRevision != null && currentRevision >= toRevision) {
+        await _trackAppliedRealtimeCursor(sessionId, event);
+        return;
+      }
+      final applied = await sessions.applyRealtimeItemChanges(sessionId, event);
+      await _trackAppliedRealtimeCursor(sessionId, event);
+      if (!applied) {
+        _beginSessionCatchUp(sessionId);
+      }
       _sessionEvents.add(event);
       return;
     }
@@ -127,31 +194,6 @@ class SyncEngine {
 
   _SessionRealtimeGate _gateFor(String sessionId) {
     return _sessionGates.putIfAbsent(sessionId, _SessionRealtimeGate.new);
-  }
-
-  void _handleServerHello(Map<String, dynamic> event) {
-    final sessionIds = _serverHelloSessionIds(event);
-    for (final sessionId in sessionIds) {
-      final gate = _sessionGates[sessionId];
-      if (gate == null || !gate.subscribed) continue;
-      _beginSessionCatchUp(sessionId);
-    }
-  }
-
-  Iterable<String> _serverHelloSessionIds(Map<String, dynamic> event) {
-    final subscriptions = event['subscriptions'];
-    if (subscriptions is! Iterable) return const [];
-    return subscriptions
-        .map((subscription) {
-          if (subscription is String) return subscription;
-          if (subscription is Map) {
-            return subscription['session_id']?.toString() ??
-                subscription['sessionId']?.toString();
-          }
-          return null;
-        })
-        .whereType<String>()
-        .where((sessionId) => sessionId.isNotEmpty);
   }
 
   Future<void> _sendSessionSubscription(
@@ -172,6 +214,7 @@ class SyncEngine {
   }) {
     final gate = _gateFor(sessionId);
     if (gate.syncing) {
+      gate.catchUpQueued = true;
       if (beforeRefresh != null && !gate.subscriptionSent) {
         beforeRefresh().catchError((error) {
           debugPrint('SyncEngine: session subscribe failed: $error');
@@ -181,10 +224,16 @@ class SyncEngine {
     }
 
     gate.syncing = true;
+    gate.catchUpQueued = false;
+    final shouldResubscribe = gate.subscribed && !gate.subscriptionSent;
     final sync = _runSessionCatchUp(
       sessionId,
       gate,
-      beforeRefresh: beforeRefresh,
+      beforeRefresh:
+          beforeRefresh ??
+          (shouldResubscribe
+              ? () => _sendSessionSubscription(sessionId, gate)
+              : null),
     );
     gate.syncFuture = sync;
     return sync;
@@ -199,14 +248,16 @@ class SyncEngine {
     var startRevision = 0;
     var endRevision = 0;
     try {
+      startRevision = await sessions.getItemRevision(sessionId);
       if (beforeRefresh != null) {
         await beforeRefresh();
       }
-      startRevision = await sessions.getItemRevision(sessionId);
-      await gate.applyTail;
-      await sessions.refreshItems(sessionId);
-      endRevision = await sessions.getItemRevision(sessionId);
-      refreshed = true;
+      if (!refreshed) {
+        await gate.applyTail;
+        await sessions.refreshItems(sessionId);
+        endRevision = await sessions.getItemRevision(sessionId);
+        refreshed = true;
+      }
     } catch (error) {
       debugPrint('SyncEngine: session catch-up failed: $error');
     }
@@ -297,7 +348,12 @@ class SyncEngine {
           currentRevision >= toRevision) {
         return;
       }
-      await sessions.refreshItems(sessionId);
+      final applied = await sessions.applyRealtimeItemChanges(sessionId, event);
+      await _trackAppliedRealtimeCursor(sessionId, event);
+      if (!applied) {
+        await sessions.refreshItems(sessionId);
+        await _trackAppliedRealtimeCursor(sessionId, event);
+      }
       _sessionEvents.add(event);
       return;
     }
@@ -417,7 +473,10 @@ class _SessionRealtimeGate {
   final buffer = <Map<String, dynamic>>[];
   Future<void> applyTail = Future<void>.value();
   Future<void>? syncFuture;
+  int? syncStartRevision;
   bool subscribed = false;
   bool subscriptionSent = false;
   bool syncing = false;
+  bool initialSyncPending = false;
+  bool catchUpQueued = false;
 }

@@ -352,6 +352,17 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsSessionOpenAtBottomSub => '打开会话时自动显示最后一条对话';
 
   @override
+  String get settingsSessionTurnPageSize => '会话每次拉取 Turn 数';
+
+  @override
+  String get settingsSessionTurnPageSizeSub => '控制进入会话和加载更早消息时每次拉取的 turn 数量';
+
+  @override
+  String settingsSessionTurnPageSizeValue(int count) {
+    return '每次 $count 个 turn';
+  }
+
+  @override
   String get settingsShowAiCommitSessions => '显示 AI 生成提交信息会话';
 
   @override

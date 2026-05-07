@@ -118,6 +118,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   icon: Icons.chat_bubble_outline,
                   children: [
                     _buildSessionOpenAtBottomTile(l10n),
+                    _buildSessionTurnPageSizeTile(l10n),
                     _buildShowAiCommitSessionsTile(l10n),
                   ],
                 ),
@@ -194,6 +195,145 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
   }
 
+  Widget _buildSessionTurnPageSizeTile(AppLocalizations l10n) {
+    final pageSize = ref
+        .watch(sessionTurnPageSizeControllerProvider)
+        .maybeWhen(
+          data: (v) => v,
+          orElse: () => AppSettingsService.sessionTurnPageSizeDefault,
+        );
+    return AppListTile(
+      leadingIcon: Icons.format_list_numbered,
+      title: Text(l10n.settingsSessionTurnPageSize),
+      subtitle: Text(
+        '${l10n.settingsSessionTurnPageSizeSub}\n'
+        '${l10n.settingsSessionTurnPageSizeValue(pageSize)}',
+      ),
+      onTap: () => _showSessionTurnPageSizePicker(l10n),
+      showChevron: true,
+    );
+  }
+
+  void _showSessionTurnPageSizePicker(AppLocalizations l10n) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(0, 0, 0, 16),
+            child: Consumer(
+              builder: (context, ref, _) {
+                final pageSize = ref
+                    .watch(sessionTurnPageSizeControllerProvider)
+                    .maybeWhen(
+                      data: (v) => v,
+                      orElse: () =>
+                          AppSettingsService.sessionTurnPageSizeDefault,
+                    );
+                return Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    AppSheetHeader(
+                      title: l10n.settingsSessionTurnPageSize,
+                      subtitle: l10n.settingsSessionTurnPageSizeSub,
+                      icon: Icons.format_list_numbered,
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 20, 20, 4),
+                      child: _SessionTurnPageSizePreview(pageSize: pageSize),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 12),
+                      child: Row(
+                        children: [
+                          Text(
+                            AppSettingsService.sessionTurnPageSizeMin
+                                .toString(),
+                            style: TextStyle(
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                          Expanded(
+                            child: Slider(
+                              min: AppSettingsService.sessionTurnPageSizeMin
+                                  .toDouble(),
+                              max: AppSettingsService.sessionTurnPageSizeMax
+                                  .toDouble(),
+                              divisions:
+                                  AppSettingsService.sessionTurnPageSizeMax -
+                                  AppSettingsService.sessionTurnPageSizeMin,
+                              value: pageSize.toDouble(),
+                              label: pageSize.toString(),
+                              onChanged: (v) => ref
+                                  .read(
+                                    sessionTurnPageSizeControllerProvider
+                                        .notifier,
+                                  )
+                                  .setPageSize(v.round()),
+                            ),
+                          ),
+                          Text(
+                            AppSettingsService.sessionTurnPageSizeMax
+                                .toString(),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 16),
+                      child: Row(
+                        children: [
+                          _SessionTurnPageSizePresetButton(
+                            label: '1',
+                            value: 1,
+                            current: pageSize,
+                          ),
+                          const SizedBox(width: 8),
+                          _SessionTurnPageSizePresetButton(
+                            label: '5',
+                            value: 5,
+                            current: pageSize,
+                          ),
+                          const SizedBox(width: 8),
+                          _SessionTurnPageSizePresetButton(
+                            label: '20',
+                            value: 20,
+                            current: pageSize,
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed:
+                                pageSize ==
+                                    AppSettingsService
+                                        .sessionTurnPageSizeDefault
+                                ? null
+                                : () => ref
+                                      .read(
+                                        sessionTurnPageSizeControllerProvider
+                                            .notifier,
+                                      )
+                                      .setPageSize(
+                                        AppSettingsService
+                                            .sessionTurnPageSizeDefault,
+                                      ),
+                            child: Text(l10n.viewerFontSizeReset),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   Widget _buildShowAiCommitSessionsTile(AppLocalizations l10n) {
     return AppListTile(
       leadingIcon: Icons.auto_fix_high,
@@ -249,9 +389,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   title: Text(_themeModeLabel(l10n, mode)),
                   leading: Icon(
                     selected ? Icons.check_circle : Icons.circle_outlined,
-                    color: selected
-                        ? scheme.primary
-                        : scheme.onSurfaceVariant,
+                    color: selected ? scheme.primary : scheme.onSurfaceVariant,
                   ),
                   onTap: () async {
                     final nav = Navigator.of(context);
@@ -332,9 +470,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                             'A',
                             style: TextStyle(
                               fontSize: 12,
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
+                              color: Theme.of(
+                                context,
+                              ).colorScheme.onSurfaceVariant,
                             ),
                           ),
                           Expanded(
@@ -345,15 +483,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                               value: scale,
                               label: '×${scale.toStringAsFixed(2)}',
                               onChanged: (v) => ref
-                                  .read(viewerFontScaleControllerProvider
-                                      .notifier)
+                                  .read(
+                                    viewerFontScaleControllerProvider.notifier,
+                                  )
                                   .setScale(v),
                             ),
                           ),
-                          const Text(
-                            'A',
-                            style: TextStyle(fontSize: 22),
-                          ),
+                          const Text('A', style: TextStyle(fontSize: 22)),
                         ],
                       ),
                     ),
@@ -383,10 +519,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                             onPressed: scale == 1.0
                                 ? null
                                 : () => ref
-                                    .read(
-                                      viewerFontScaleControllerProvider.notifier,
-                                    )
-                                    .setScale(1.0),
+                                      .read(
+                                        viewerFontScaleControllerProvider
+                                            .notifier,
+                                      )
+                                      .setScale(1.0),
                             child: Text(l10n.viewerFontSizeReset),
                           ),
                         ],
@@ -466,16 +603,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                       children: [
                         for (final provider in available)
                           _AiCommitProviderSettings(
-                            provider:
-                                Map<String, dynamic>.from(provider as Map),
+                            provider: Map<String, dynamic>.from(
+                              provider as Map,
+                            ),
                             selectedModel:
                                 _aiCommitModels[provider['name']?.toString() ??
-                                        ''] ??
-                                    '',
+                                    ''] ??
+                                '',
                             selectedEffort:
                                 _aiCommitEfforts[provider['name']?.toString() ??
-                                        ''] ??
-                                    '',
+                                    ''] ??
+                                '',
                             onChanged: _setAiCommitProviderSettings,
                             effortLabel: (effort) => _effortLabel(effort, l10n),
                           ),
@@ -535,8 +673,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       subtitle: Text(
         _defaultProvider ?? l10n.sessionsModelDefault,
         style: TextStyle(
-          color:
-              _defaultProvider != null ? null : scheme.onSurfaceVariant,
+          color: _defaultProvider != null ? null : scheme.onSurfaceVariant,
         ),
       ),
       onTap: () => _showDefaultProviderPicker(l10n, available),
@@ -792,9 +929,7 @@ class _ViewerFontPreview extends StatelessWidget {
       decoration: BoxDecoration(
         color: scheme.surfaceContainerHigh,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(
-          color: scheme.outlineVariant.withValues(alpha: 0.5),
-        ),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.5)),
       ),
       child: Text(
         '''def hello(name):
@@ -808,6 +943,86 @@ hello("Magent")''',
           color: scheme.onSurface,
         ),
       ),
+    );
+  }
+}
+
+class _SessionTurnPageSizePreview extends StatelessWidget {
+  final int pageSize;
+
+  const _SessionTurnPageSizePreview({required this.pageSize});
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: scheme.outlineVariant.withValues(alpha: 0.5)),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.format_list_numbered, color: scheme.primary),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              AppLocalizations.of(
+                context,
+              )!.settingsSessionTurnPageSizeValue(pageSize),
+              style: Theme.of(context).textTheme.titleMedium,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SessionTurnPageSizePresetButton extends StatelessWidget {
+  final String label;
+  final int value;
+  final int current;
+
+  const _SessionTurnPageSizePresetButton({
+    required this.label,
+    required this.value,
+    required this.current,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final selected = current == value;
+    return Consumer(
+      builder: (context, ref, _) {
+        final style = selected
+            ? FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+              )
+            : OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
+              );
+        Future<void> onTap() => ref
+            .read(sessionTurnPageSizeControllerProvider.notifier)
+            .setPageSize(value);
+        return selected
+            ? FilledButton(onPressed: onTap, style: style, child: Text(label))
+            : OutlinedButton(
+                onPressed: onTap,
+                style: style,
+                child: Text(label),
+              );
+      },
     );
   }
 }
@@ -830,23 +1045,23 @@ class _ViewerFontPresetButton extends StatelessWidget {
         final style = selected
             ? FilledButton.styleFrom(
                 visualDensity: VisualDensity.compact,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
               )
             : OutlinedButton.styleFrom(
                 visualDensity: VisualDensity.compact,
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
+                ),
               );
         Future<void> onTap() => ref
             .read(viewerFontScaleControllerProvider.notifier)
             .setScale(value);
         return selected
-            ? FilledButton(
-                onPressed: onTap,
-                style: style,
-                child: Text(label),
-              )
+            ? FilledButton(onPressed: onTap, style: style, child: Text(label))
             : OutlinedButton(
                 onPressed: onTap,
                 style: style,
